@@ -81,7 +81,11 @@ import * as migrationService from './services/migrationService.js';
         var end = schedule.frequency === 'monthly'
           ? stepDate(addMonths(cursor, 1), -1)
           : stepDate(cursor, periodLengthDays(schedule.frequency) - 1);
-        periods.push({ periodStart: cursor, periodEnd: end, dueDate: end });
+        // El alquiler se paga POR ADELANTADO: lo que corresponde a un periodo se debe pagar
+        // desde el primer día de ese periodo, no al final — por eso dueDate = periodStart, no
+        // periodEnd. Así, si el move-in fue ayer, hoy ese periodo ya aparece "overdue" (1 día
+        // atrasado) en vez de esperar a que termine toda la semana/quincena/mes.
+        periods.push({ periodStart: cursor, periodEnd: end, dueDate: cursor });
         if (cursor > asOfIso) break;
         cursor = schedule.frequency === 'monthly' ? addMonths(cursor, 1) : stepDate(cursor, periodLengthDays(schedule.frequency));
       }
