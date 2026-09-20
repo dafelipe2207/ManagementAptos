@@ -242,12 +242,13 @@ import * as migrationService from './services/migrationService.js';
   }
   recomputeRentCharges();
 
-  /** Records a payment against Supabase; only mutates the in-memory ledger once the insert succeeds. Returns true on success. */
-  async function recordPayment(tenantId, amount){
+  /** Records a payment against Supabase; only mutates the in-memory ledger once the insert succeeds. Returns true on success.
+   *  `date` defaults to today but can be set to whenever the tenant actually paid (may be earlier than today). */
+  async function recordPayment(tenantId, amount, date){
     amount = Math.round(amount*100)/100;
     if (!(amount > 0)) return false;
     try {
-      var saved = await paymentService.create({ tenantId:tenantId, amount:amount, date:TODAY });
+      var saved = await paymentService.create({ tenantId:tenantId, amount:amount, date: date || TODAY });
       paymentRecords.push(saved);
       recomputeRentCharges();
       showToast('Payment recorded.', 'success');
@@ -279,7 +280,7 @@ import * as migrationService from './services/migrationService.js';
     render();
   }
 
-  /* ---------- Modal: Partial payment ---------- */
+  /* ---------- Modal: Record a payment (partial or full, with the actual date it was paid) ---------- */
   var partialModalChargeId = null;
   function openPartialModal(chargeId){
     var charge = rentCharges.find(function(c){ return c.id===chargeId; });
@@ -291,6 +292,8 @@ import * as migrationService from './services/migrationService.js';
     var input = document.getElementById('partial-modal-input');
     input.value = '';
     input.max = charge.remaining;
+    var dateInput = document.getElementById('partial-modal-date');
+    if (dateInput) dateInput.value = TODAY; // editable: the tenant may have paid on a different day than today
     document.getElementById('partial-modal').hidden = false;
     input.focus();
   }
@@ -303,34 +306,102 @@ import * as migrationService from './services/migrationService.js';
     var charge = rentCharges.find(function(c){ return c.id===chargeId; });
     var input = document.getElementById('partial-modal-input');
     var amount = parseFloat(input.value);
+    var dateInput = document.getElementById('partial-modal-date');
+    var date = (dateInput && dateInput.value) ? dateInput.value : TODAY;
     closePartialModal();
     if (!charge || !isFinite(amount) || amount <= 0) return;
     if (amount > charge.remaining) amount = charge.remaining; // no se admite sobrepago
-    await recordPayment(charge.tenantId, amount);
+    await recordPayment(charge.tenantId, amount, date);
     render();
   }
 
-  /* ---------- Modal: Payment history ---------- */
-  function openHistoryModal(tenantId){
+  /* ---------- Modal: Payment history (view, correct a mistaken entry, or remove) ---------- */
+  var historyModalTenantId = null;
+  var historyModalEditingId = null; // payment currently shown in inline edit mode, or null
+  function historyRowHtml(p){
+    if (p.id === historyModalEditingId){
+      return '<div class="history-row" style="align-items:flex-end;gap:8px;">'+
+        '<span style="display:flex;flex-direction:column;gap:4px;">'+
+          '<label style="font-size:10.5px;color:var(--text-faint);">Amount</label>'+
+          '<input id="history-edit-amount" class="modal-input" type="number" min="0" step="0.01" value="'+p.amount+'" style="width:100px;" />'+
+        '</span>'+
+        '<span style="display:flex;flex-direction:column;gap:4px;">'+
+          '<label style="font-size:10.5px;color:var(--text-faint);">Date paid</label>'+
+          '<input id="history-edit-date" class="modal-input" type="date" value="'+p.date+'" style="width:140px;" />'+
+        '</span>'+
+        '<span style="display:flex;gap:4px;">'+
+          '<button class="mini-btn" onclick="cancelEditPayment()">Cancel</button>'+
+          '<button class="mini-btn primary" onclick="saveEditedPayment(\''+p.id+'\')">Save</button>'+
+        '</span>'+
+      '</div>';
+    }
+    return '<div class="history-row"><span>'+fullDate(p.date)+'</span>'+
+      '<span style="display:flex;align-items:center;gap:6px;font-weight:600;">'+money(p.amount)+
+      '<button class="del" title="Correct this payment" style="color:var(--text-dim);" onclick="startEditPayment(\''+p.id+'\')">✎</button>'+
+      '<button class="del" title="Remove payment" onclick="removePaymentAndRefresh(\''+p.id+'\')">✕</button></span></div>';
+  }
+  /** Re-renders just the history modal's body from current state (historyModalTenantId /
+   *  historyModalEditingId), without resetting which row (if any) is mid-edit — used by
+   *  startEditPayment/cancelEditPayment/saveEditedPayment so they don't clobber their own edit state. */
+  function renderHistoryModalBody(){
+    var tenantId = historyModalTenantId;
     var t = tenantOf(tenantId);
     var pays = paymentRecords.filter(function(p){ return p.tenantId===tenantId; })
       .slice().sort(function(a,b){ return b.date.localeCompare(a.date); });
     document.getElementById('history-modal-title').textContent = (t?t.fullName:'') + ' — Payment history';
     document.getElementById('history-modal-body').innerHTML = pays.length===0
       ? '<p style="font-size:13px;color:var(--text-faint);margin:8px 0;">No payments recorded yet.</p>'
-      : pays.map(function(p){
-          return '<div class="history-row"><span>'+fullDate(p.date)+'</span>'+
-            '<span style="display:flex;align-items:center;gap:6px;font-weight:600;">'+money(p.amount)+
-            '<button class="del" title="Remove payment" onclick="removePaymentAndRefresh(\''+p.id+'\')">✕</button></span></div>';
-        }).join('');
+      : pays.map(historyRowHtml).join('');
+  }
+  function openHistoryModal(tenantId){
+    historyModalTenantId = tenantId;
+    historyModalEditingId = null;
+    renderHistoryModalBody();
     document.getElementById('history-modal').hidden = false;
   }
-  function closeHistoryModal(){ document.getElementById('history-modal').hidden = true; }
+  function closeHistoryModal(){
+    document.getElementById('history-modal').hidden = true;
+    historyModalTenantId = null;
+    historyModalEditingId = null;
+  }
   async function removePaymentAndRefresh(paymentId){
     var payment = paymentRecords.find(function(p){ return p.id===paymentId; });
     await removePayment(paymentId);
     render();
     if (payment) openHistoryModal(payment.tenantId);
+  }
+  /** Lets the admin fix a payment that was recorded by mistake (wrong amount, or the tenant
+   *  actually hadn't paid yet) without deleting and re-entering it — switches that one row
+   *  in the history list into an inline amount+date editor. */
+  function startEditPayment(paymentId){
+    historyModalEditingId = paymentId;
+    renderHistoryModalBody();
+  }
+  function cancelEditPayment(){
+    historyModalEditingId = null;
+    renderHistoryModalBody();
+  }
+  async function saveEditedPayment(paymentId){
+    var amountInput = document.getElementById('history-edit-amount');
+    var dateInput = document.getElementById('history-edit-date');
+    var amount = parseFloat(amountInput.value);
+    var date = dateInput.value;
+    if (!isFinite(amount) || amount <= 0 || !date){
+      showToast('Enter a valid amount and date.', 'error');
+      return;
+    }
+    try {
+      var saved = await paymentService.update(paymentId, { amount: Math.round(amount*100)/100, date: date });
+      var idx = paymentRecords.findIndex(function(p){ return p.id === paymentId; });
+      if (idx >= 0) paymentRecords[idx] = saved;
+      recomputeRentCharges();
+      showToast('Payment corrected.', 'success');
+    } catch(err){
+      showToast('Could not update the payment. ' + friendlyErrorMessage(err), 'error');
+    }
+    historyModalEditingId = null;
+    render();
+    if (historyModalTenantId) renderHistoryModalBody();
   }
 
   window.markChargeAsPaid = markChargeAsPaid;
@@ -340,7 +411,11 @@ import * as migrationService from './services/migrationService.js';
   window.openHistoryModal = openHistoryModal;
   window.closeHistoryModal = closeHistoryModal;
   window.removePaymentAndRefresh = removePaymentAndRefresh;
+  window.startEditPayment = startEditPayment;
+  window.cancelEditPayment = cancelEditPayment;
+  window.saveEditedPayment = saveEditedPayment;
   window.setPaymentsFilter = setPaymentsFilter;
+  window.setPaymentsTenantFilter = setPaymentsTenantFilter;
   window.setBillsFilter = setBillsFilter;
 
   var bills = [];
@@ -917,13 +992,27 @@ import * as migrationService from './services/migrationService.js';
   }
 
   var paymentsFilter = 'all';
+  var paymentsTenantFilter = 'all';
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
   function setPaymentsFilter(f){ paymentsFilter = f; render(); }
+  function setPaymentsTenantFilter(tenantId){ paymentsTenantFilter = tenantId; render(); }
   function chargeMatchesFilter(c, filter){
     if (filter==='paid') return c.status==='paid';
     if (filter==='overdue') return c.status==='overdue';
     if (filter==='due') return c.status==='due' || c.status==='partially_paid';
     return true; // 'all' — incluye también 'upcoming', que no tiene chip propio
+  }
+
+  /** Cada obligación de bill pendiente de un inquilino (para mostrarla junto a su alquiler en Payments). */
+  function unpaidBillAllocationsFor(tenantId){
+    var out = [];
+    bills.forEach(function(b){
+      if (!b.allocations) return;
+      b.allocations.forEach(function(a){
+        if (a.tenantId===tenantId && !a.paid) out.push({ bill:b, alloc:a });
+      });
+    });
+    return out.sort(function(x,y){ return (x.bill.dueDate||'').localeCompare(y.bill.dueDate||''); });
   }
 
   function renderPayments(){
@@ -941,7 +1030,17 @@ import * as migrationService from './services/migrationService.js';
       return '<button class="chip'+(paymentsFilter===f[0]?' active':'')+'" onclick="setPaymentsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
     }).join('') + '</div>';
 
-    var filtered = rentCharges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); });
+    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>All tenants</option>'+
+      tenants.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
+        return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
+      }).join('');
+    var tenantFilterHtml = '<div style="margin:10px 0;">'+
+      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
+      '<select class="modal-input" style="max-width:280px;" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
+      '</div>';
+
+    var charges = paymentsTenantFilter==='all' ? rentCharges : rentCharges.filter(function(c){ return c.tenantId===paymentsTenantFilter; });
+    var filtered = charges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); });
 
     var rows = filtered.length===0
       ? (rentCharges.length===0
@@ -967,7 +1066,31 @@ import * as migrationService from './services/migrationService.js';
             '</div>';
         }).join('');
 
-    return pageHeader('Payments', "What tenants owe, what they've paid, and what's outstanding.") + statHtml + chipsHtml + rows;
+    // Bills each tenant still owes a share of — surfaced here too so payments and bill
+    // obligations don't live in two disconnected tabs.
+    var relevantTenants = paymentsTenantFilter==='all' ? tenants : tenants.filter(function(t){ return t.id===paymentsTenantFilter; });
+    var billRows = relevantTenants.reduce(function(acc, t){
+      var owed = unpaidBillAllocationsFor(t.id);
+      if (!owed.length) return acc;
+      var rowsHtml = owed.map(function(o){
+        var b = o.bill, a = o.alloc;
+        var overdue = b.dueDate && b.dueDate < TODAY;
+        return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
+          '<div class="who"><div>'+esc(b.provider)+'</div><div class="meta">'+(b.dueDate?('Due '+shortDate(b.dueDate)):'No due date')+'</div></div>'+
+          '<div style="display:flex;align-items:center;gap:10px;">'+
+          (overdue ? badge('overdue','Overdue') : badge('due','Unpaid'))+
+          '<b>'+money(a.amount)+'</b>'+
+          '<button class="mini-btn primary" onclick="markAllocationPaid(\''+b.id+'\',\''+t.id+'\')">Mark as paid</button>'+
+          '</div></div>';
+      }).join('');
+      acc.push('<div class="card"><div class="who" style="margin-bottom:6px;"><div class="name">'+esc(t.fullName)+'</div></div>'+rowsHtml+'</div>');
+      return acc;
+    }, []);
+    var billsSectionHtml = billRows.length
+      ? '<h3 style="font-size:12.5px;color:var(--text-faint);margin:18px 0 6px;text-transform:uppercase;letter-spacing:.04em;">Bills owed</h3>' + billRows.join('')
+      : '';
+
+    return pageHeader('Payments', "What tenants owe, what they've paid, and what's outstanding.") + statHtml + chipsHtml + tenantFilterHtml + rows + billsSectionHtml;
   }
 
   var billsFilter = 'all';
