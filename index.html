@@ -1263,14 +1263,43 @@
   window.setPaymentsFilter = setPaymentsFilter;
   window.setBillsFilter = setBillsFilter;
 
-  var bills = [
+  var SEED_BILLS = [
     { id:'bill-electricity-sep', propertyId:'prop-belmont', provider:'Synergy', billType:'electricity', invoiceNumber:'SYN-88213', issueDate:'2026-09-10', dueDate:'2026-09-28', billingPeriodStart:'2026-09-01', billingPeriodEnd:'2026-09-30', amount:320, status:'pending', notes:'' },
     { id:'bill-water-aug', propertyId:'prop-belmont', provider:'Water Corporation', billType:'water', invoiceNumber:'WC-410095', issueDate:'2026-08-05', dueDate:'2026-08-22', billingPeriodStart:'2026-08-01', billingPeriodEnd:'2026-08-31', amount:180, status:'paid', notes:'Paid by bank transfer on 20 August.' },
     { id:'bill-internet-sep', propertyId:'prop-belmont', provider:'Telstra', billType:'internet', invoiceNumber:'TL-772341', issueDate:'2026-09-03', dueDate:'2026-09-17', billingPeriodStart:'2026-09-01', billingPeriodEnd:'2026-09-30', amount:90, status:'allocated', notes:'Split equally between the 3 tenants.',
       allocationMethod:'equal',
-      allocations:[ { tenantId:'tenant-john', amount:30 }, { tenantId:'tenant-maria', amount:30 }, { tenantId:'tenant-pedro', amount:30 } ] },
+      allocations:[ { tenantId:'tenant-john', amount:30, paid:false, paidDate:null }, { tenantId:'tenant-maria', amount:30, paid:true, paidDate:'2026-09-05' }, { tenantId:'tenant-pedro', amount:30, paid:false, paidDate:null } ] },
     { id:'bill-gas-jul', propertyId:'prop-belmont', provider:'AGL', billType:'gas', invoiceNumber:'AGL-560172', issueDate:'2026-07-08', dueDate:'2026-07-25', billingPeriodStart:'2026-06-01', billingPeriodEnd:'2026-07-31', amount:145, status:'pending', notes:'Payment was missed; check for late fees.' }
   ];
+  /**
+   * Persistencia de bills en localStorage, mismo patrón que el resto de
+   * entidades (ver `loadPayments`/`savePayments` más arriba). Ademas de
+   * cargar, se ejecuta una migración de datos: cualquier bill que ya tenga
+   * `allocations` guardadas de una versión anterior (sin `paid`/`paidDate`
+   * por tenant) recibe esos campos por defecto sin tocar los importes, para
+   * que los datos ya guardados en el navegador del usuario no se rompan ni
+   * se muestren como ya pagados por error.
+   */
+  var BILLS_STORAGE_KEY = 'belmont-manager-bills-v1';
+  function loadBills(){
+    try { var raw = localStorage.getItem(BILLS_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveBills(list){ try { localStorage.setItem(BILLS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  function migrateBillAllocations(list){
+    list.forEach(function(b){
+      if (Array.isArray(b.allocations)){
+        b.allocations.forEach(function(a){
+          if (typeof a.paid !== 'boolean') a.paid = false;
+          if (a.paidDate === undefined) a.paidDate = null;
+        });
+      }
+    });
+  }
+  var bills = loadBills();
+  if (!bills){ bills = SEED_BILLS.slice(); }
+  migrateBillAllocations(bills);
+  saveBills(bills);
   /* ============ Utils ============ */
   var currencyFmt = new Intl.NumberFormat('en-AU', { style:'currency', currency:'AUD', minimumFractionDigits:2 });
   function money(n){ return currencyFmt.format(n); }
@@ -1300,7 +1329,7 @@
     var received = rentCharges.reduce(function(s,c){ return s+c.amountPaid; },0);
     var outstanding = rentCharges.reduce(function(s,c){ return s+c.remaining; },0);
     var overdueCount = rentCharges.filter(function(c){ return c.status==='overdue'; }).length;
-    var billsPending = bills.filter(function(b){ return b.status==='pending' || b.status==='partially_allocated'; }).length;
+    var billsPending = bills.filter(function(b){ return billEffectiveStatus(b) !== 'paid'; }).length;
     return {
       totalProperties: properties.length,
       occupiedRooms: occupied,
@@ -1312,14 +1341,39 @@
       billsPendingCount: billsPending
     };
   }
+  /** Cuotas individuales de bills todavía sin pagar cuyo bill ya está vencido (para el dashboard y, más adelante, Reports). */
+  function getOverdueUnpaidBillShares(){
+    var items = [];
+    bills.forEach(function(b){
+      if (!b.allocations || !b.allocations.length) return;
+      if (billEffectiveStatus(b) !== 'overdue') return;
+      var property = properties.find(function(p){ return p.id === b.propertyId; });
+      b.allocations.forEach(function(a){
+        if (a.paid) return;
+        var tenant = tenants.find(function(t){ return t.id===a.tenantId; });
+        items.push({
+          type: 'bill',
+          billId: b.id,
+          tenantId: a.tenantId,
+          tenantName: tenant ? tenant.fullName : 'Unknown tenant',
+          propertyName: property ? property.name : '—',
+          provider: b.provider,
+          amountRemaining: a.amount,
+          daysOverdue: Math.max(0, daysBetween(b.dueDate, TODAY))
+        });
+      });
+    });
+    return items;
+  }
   function getNeedsAttention(){
-    return rentCharges
+    var rentItems = rentCharges
       .filter(function(c){ return c.status==='overdue' || c.status==='partially_paid'; })
       .map(function(c){
         var tenant = tenants.find(function(t){ return t.id===c.tenantId; });
         var room = rooms.find(function(r){ return r.id === (tenant && tenant.roomId); });
         var property = properties.find(function(p){ return p.id === (tenant && tenant.propertyId); });
         return {
+          type: 'rent',
           chargeId: c.id,
           tenantName: tenant ? tenant.fullName : 'Unknown tenant',
           propertyName: property ? property.name : '—',
@@ -1334,6 +1388,12 @@
         if (a.status==='overdue') return b.daysOverdue - a.daysOverdue;
         return b.amountRemaining - a.amountRemaining;
       });
+    var billItems = getOverdueUnpaidBillShares()
+      .sort(function(a,b){
+        if (a.daysOverdue !== b.daysOverdue) return b.daysOverdue - a.daysOverdue;
+        return b.amountRemaining - a.amountRemaining;
+      });
+    return rentItems.concat(billItems);
   }
   function getUpcomingEvents(withinDays){
     withinDays = withinDays || 14;
@@ -1365,13 +1425,30 @@
       });
     });
     bills.forEach(function(b){
-      if (b.status === 'paid') return;
-      events.push({
-        date: b.dueDate,
-        kind: billEffectiveStatus(b) === 'overdue' ? 'overdue' : 'due',
-        title: b.provider + ' — Bill due',
-        href: '#/bills/' + b.id
-      });
+      if (billEffectiveStatus(b) === 'paid') return;
+      var kind = billEffectiveStatus(b) === 'overdue' ? 'overdue' : 'due';
+      if (b.allocations && b.allocations.length){
+        // Un bill ya repartido: un evento por CADA cuota de inquilino sin pagar,
+        // en vez de un único evento genérico (así cada inquilino ve lo que le toca).
+        b.allocations.forEach(function(a){
+          if (a.paid) return;
+          var t = tenantOf(a.tenantId);
+          if (!t) return;
+          events.push({
+            date: b.dueDate,
+            kind: kind,
+            title: t.fullName + ' owes ' + money(a.amount) + ' — ' + b.provider,
+            href: '#/bills/' + b.id
+          });
+        });
+      } else {
+        events.push({
+          date: b.dueDate,
+          kind: kind,
+          title: b.provider + ' — Bill due',
+          href: '#/bills/' + b.id
+        });
+      }
     });
     tenants.forEach(function(t){
       if (t.rentAmount <= 0) return; // owner: no genera eventos de tenancy
@@ -1540,6 +1617,17 @@
       (needs.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing needs attention right now.</p>'
         : needs.map(function(item){
+            if (item.type === 'bill'){
+              var billBadge = badge('overdue', item.daysOverdue+' days overdue');
+              return '<div class="row"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
+                '<div class="meta">'+esc(item.propertyName)+' • '+esc(item.provider)+' bill</div></div>'+
+                '<div style="display:flex;align-items:center;gap:10px;">'+
+                '<div class="amount">'+money(item.amountRemaining)+'<br/>'+billBadge+'</div>'+
+                '<div style="display:flex;flex-direction:column;gap:6px;">'+
+                '<button class="view-btn" onclick="markAllocationPaid(\''+item.billId+'\',\''+item.tenantId+'\')">MARK AS PAID</button>'+
+                '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/bills/'+item.billId+'\'">View</button>'+
+                '</div></div></div>';
+            }
             var b = item.status==='overdue'
               ? badge('overdue', item.daysOverdue+' days overdue')
               : badge('due', 'Partially Paid');
@@ -1738,11 +1826,30 @@
   }
   /** Estado efectivo de un bill: si sigue pendiente y ya pasó su fecha de vencimiento, se muestra como overdue. */
   function billEffectiveStatus(b){
-    if (b.status === 'pending' && b.dueDate < TODAY) return 'overdue';
+    if (b.status === 'paid') return 'paid';
+    if (b.dueDate && b.dueDate < TODAY) return 'overdue';
     return b.status;
   }
+  /**
+   * Importe de un bill que ya está realmente cobrado: si tiene allocations,
+   * la suma de las cuotas marcadas como pagadas (soporta pago parcial); si
+   * no tiene allocations, el importe completo solo si el bill entero está
+   * marcado 'paid' a mano (comportamiento histórico, sin allocations no hay
+   * nada más fino que mostrar).
+   */
+  function billPaidAmount(b){
+    if (b.allocations && b.allocations.length){
+      return round2(b.allocations.filter(function(a){ return a.paid; }).reduce(function(s,a){ return s+a.amount; }, 0));
+    }
+    return b.status === 'paid' ? b.amount : 0;
+  }
+  /** Lo que falta por cobrar de un bill (importe total menos lo ya pagado, nunca negativo). */
+  function billOutstandingAmount(b){
+    return Math.max(0, round2(b.amount - billPaidAmount(b)));
+  }
   function billStatusBadge(b){
-    var map = { paid:['paid','Paid'], pending:['due','Pending'], overdue:['overdue','Overdue'], allocated:['upcoming','Allocated'], partially_allocated:['due','Partially Allocated'] };
+    var map = { paid:['paid','Paid'], pending:['due','Pending'], overdue:['overdue','Overdue'], allocated:['upcoming','Allocated'],
+      partially_allocated:['due','Partially Allocated'], partially_paid:['due','Partially Paid'] };
     var m = map[billEffectiveStatus(b)] || ['neutral', b.status];
     return badge(m[0], m[1]);
   }
@@ -1813,7 +1920,7 @@
   }
 
   var billsFilter = 'all';
-  var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['paid','Paid']];
+  var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['partially_paid','Partially Paid'], ['paid','Paid']];
   function setBillsFilter(f){ billsFilter = f; render(); }
   function billMatchesFilter(b, filter){
     if (filter==='all') return true;
@@ -1963,7 +2070,7 @@
       return;
     }
 
-    bills.push({
+    var newBill = {
       id: 'bill-import-' + Date.now(),
       propertyId: document.getElementById('review-property').value,
       provider: provider,
@@ -1976,10 +2083,29 @@
       amount: Math.round(amount*100)/100,
       status: 'pending',
       notes: 'Imported from ' + (importQueue.find(function(i){ return i.id===reviewItemId; })||{}).fileName + ' (details extracted automatically and reviewed before saving).'
-    });
+    };
+    // Auto-allocate: reparte el bill entre los inquilinos que pagan renta en
+    // esta propiedad ahora mismo (split 'equal'), en vez de dejarlo sin
+    // repartir a la espera de un paso manual aparte. Si la propiedad no
+    // tiene inquilinos pagando, no hay nada sensible que repartir todavía y
+    // se conserva el comportamiento anterior ('pending', sin allocations).
+    var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
+    if (propTenantsForBill.length > 0){
+      var autoRows = computeAllocationRows(newBill, 'equal');
+      newBill.allocations = autoRows.map(function(r){ return { tenantId:r.tenantId, amount:round2(r.amount), paid:false, paidDate:null }; });
+      newBill.allocationMethod = 'equal';
+      newBill.status = 'allocated';
+    }
+    bills.push(newBill);
+    saveBills(bills);
     removeImportQueueItem(reviewItemId);
     closeReviewModal();
-    location.hash = '#/bills';
+    // Paso 7 del flujo (revisar y confirmar el reparto): en vez de aterrizar
+    // en el listado de Bills, se abre directamente el detalle del bill recién
+    // creado, donde la tarjeta de Allocation ya muestra el reparto por
+    // inquilino calculado automáticamente (o el botón "Allocate" si la
+    // propiedad no tenía inquilinos pagando).
+    location.hash = '#/bills/' + newBill.id;
     render();
   }
 
@@ -2121,9 +2247,19 @@
       errorEl.hidden = false;
       return;
     }
-    bill.allocations = allocationDraft.rows.map(function(r){ return { tenantId:r.tenantId, amount:round2(r.amount) }; });
+    // Conserva el estado de "pagado" de cada inquilino que ya estaba en la
+    // asignación anterior (por tenantId), aunque cambie el importe o el
+    // método — reasignar no debería des-marcar como pagado a alguien que ya
+    // pagó su parte.
+    var oldPaidByTenant = {};
+    (bill.allocations || []).forEach(function(a){ oldPaidByTenant[a.tenantId] = { paid: !!a.paid, paidDate: a.paidDate || null }; });
+    bill.allocations = allocationDraft.rows.map(function(r){
+      var prev = oldPaidByTenant[r.tenantId];
+      return { tenantId:r.tenantId, amount:round2(r.amount), paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null };
+    });
     bill.allocationMethod = allocationDraft.method;
-    if (bill.status === 'pending') bill.status = 'allocated';
+    recomputeBillStatus(bill);
+    saveBills(bills);
     closeAllocateModal();
     render();
   }
@@ -2132,6 +2268,47 @@
   window.setAllocationMethod = setAllocationMethod;
   window.updateAllocationRow = updateAllocationRow;
   window.confirmAllocation = confirmAllocation;
+
+  /**
+   * Estado global de un bill derivado de sus cuotas por inquilino: si no
+   * tiene allocations, el estado no cambia (sigue 'pending', igual que
+   * antes). Si las tiene, se deriva de cuántas están pagadas: ninguna ->
+   * 'allocated', todas -> 'paid', algunas -> 'partially_paid'.
+   */
+  function recomputeBillStatus(bill){
+    if (!bill.allocations || !bill.allocations.length) return;
+    var total = bill.allocations.length;
+    var paidCount = bill.allocations.filter(function(a){ return a.paid; }).length;
+    if (paidCount === 0) bill.status = 'allocated';
+    else if (paidCount === total) bill.status = 'paid';
+    else bill.status = 'partially_paid';
+  }
+  /** Marca la cuota de un inquilino en un bill como pagada hoy, y recalcula el estado general del bill. */
+  function markAllocationPaid(billId, tenantId){
+    var bill = billOf(billId);
+    if (!bill || !bill.allocations) return;
+    var alloc = bill.allocations.find(function(a){ return a.tenantId===tenantId; });
+    if (!alloc) return;
+    alloc.paid = true;
+    alloc.paidDate = TODAY;
+    recomputeBillStatus(bill);
+    saveBills(bills);
+    render();
+  }
+  /** Deshace el marcado de pagado de la cuota de un inquilino en un bill. */
+  function unmarkAllocationPaid(billId, tenantId){
+    var bill = billOf(billId);
+    if (!bill || !bill.allocations) return;
+    var alloc = bill.allocations.find(function(a){ return a.tenantId===tenantId; });
+    if (!alloc) return;
+    alloc.paid = false;
+    alloc.paidDate = null;
+    recomputeBillStatus(bill);
+    saveBills(bills);
+    render();
+  }
+  window.markAllocationPaid = markAllocationPaid;
+  window.unmarkAllocationPaid = unmarkAllocationPaid;
 
   /* ---------- FASE 12: Documents (lease agreements, ID copies, otros) ---------- */
   var tenantDocuments = [];
@@ -2248,9 +2425,13 @@
   }
 
   function renderBills(){
-    var pendingTotal = bills.filter(function(b){ return b.status!=='paid'; }).reduce(function(s,b){ return s+b.amount; },0);
+    // "Pending" y "Paid" usan el importe REALMENTE cobrado (billPaidAmount),
+    // no un corte todo-o-nada por bill.status: un bill parcialmente pagado
+    // aporta su parte cobrada a "Paid" y el resto a "Pending", igual que
+    // Reports (billPaidAmount/billOutstandingAmount más arriba).
+    var pendingTotal = bills.reduce(function(s,b){ return s+billOutstandingAmount(b); },0);
     var overdueCount = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).length;
-    var paidTotal = bills.filter(function(b){ return b.status==='paid'; }).reduce(function(s,b){ return s+b.amount; },0);
+    var paidTotal = bills.reduce(function(s,b){ return s+billPaidAmount(b); },0);
 
     var statHtml = '<div class="stat-grid cols-3">'+
       '<div class="stat"><div class="label">Pending</div><div class="value'+(pendingTotal>0?' warn':'')+'">'+money(pendingTotal)+'</div></div>'+
@@ -2304,7 +2485,18 @@
     if (b.allocations && b.allocations.length){
       var rows = b.allocations.map(function(a){
         var t = tenantOf(a.tenantId);
-        return '<div class="alloc-summary-row"><span>'+esc(t?t.fullName:a.tenantId)+'</span><span style="font-weight:650;">'+money(a.amount)+'</span></div>';
+        var paidBit = a.paid
+          ? badge('paid', 'Paid'+(a.paidDate ? ' ' + shortDate(a.paidDate) : ''))
+          : badge('due', 'Unpaid');
+        var actionBtn = a.paid
+          ? '<button class="mini-btn" onclick="unmarkAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as unpaid</button>'
+          : '<button class="mini-btn primary" onclick="markAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
+        return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
+          '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div></div>'+
+          '<div style="display:flex;align-items:center;gap:10px;">'+
+          '<div style="text-align:right;"><div style="font-weight:650;">'+money(a.amount)+'</div>'+paidBit+'</div>'+
+          actionBtn+
+          '</div></div>';
       }).join('');
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;">Allocation</h2>'+
@@ -2380,9 +2572,14 @@
           '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>');
     }
     var s = getDashboardSummary();
-    var billsPaidTotal = bills.filter(function(b){ return b.status==='paid'; }).reduce(function(sum,b){ return sum+b.amount; },0);
-    var billsOverdueTotal = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).reduce(function(sum,b){ return sum+b.amount; },0);
-    var billsOutstandingTotal = bills.filter(function(b){ return b.status!=='paid'; }).reduce(function(sum,b){ return sum+b.amount; },0);
+    // Ledger real de bills: suma de lo REALMENTE cobrado por allocation
+    // (billPaidAmount) en vez de todo-o-nada por bill.status, para que un
+    // bill parcialmente pagado se refleje correctamente en vez de contar
+    // como "0% pagado" hasta que la última cuota se marque.
+    var billsPaidTotal = bills.reduce(function(sum,b){ return sum+billPaidAmount(b); },0);
+    var billsOutstandingTotal = bills.reduce(function(sum,b){ return sum+billOutstandingAmount(b); },0);
+    var billsOverdueTotal = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; })
+      .reduce(function(sum,b){ return sum+billOutstandingAmount(b); },0);
     var netCashflow = s.totalRentReceived - billsPaidTotal;
     var occupancyRate = s.occupiedRooms + s.vacantRooms > 0 ? Math.round(100 * s.occupiedRooms / (s.occupiedRooms + s.vacantRooms)) : 0;
 
@@ -2597,7 +2794,13 @@
         if (Array.isArray(data.bonds)){ bonds = data.bonds; saveBonds(bonds); }
         if (Array.isArray(data.rentSchedules)){ rentSchedules = data.rentSchedules; saveRentSchedules(rentSchedules); }
         if (Array.isArray(data.paymentRecords)){ paymentRecords = data.paymentRecords; savePayments(paymentRecords); }
-        if (Array.isArray(data.bills)){ bills = data.bills; }
+        if (Array.isArray(data.bills)){
+          bills = data.bills;
+          // Mismo saneo que al cargar de localStorage: un backup antiguo puede
+          // traer allocations sin paid/paidDate por inquilino.
+          migrateBillAllocations(bills);
+          saveBills(bills);
+        }
         if (Array.isArray(data.notifReadIds)){ notifReadIds = data.notifReadIds; saveNotifRead(notifReadIds); }
         recomputeRentCharges();
         refreshStaticSelects();
