@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Belmont Manager</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 <div id="app">
@@ -80,6 +80,19 @@
       <div class="modal-actions">
         <button class="mini-btn" onclick="closePartialModal()">Cancel</button>
         <button class="mini-btn primary" onclick="confirmPartialModal()">Add payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="alloc-paid-modal" hidden>
+    <div class="card modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Confirm payment</h2>
+      <p id="alloc-paid-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Date paid</label>
+      <input id="alloc-paid-modal-date" class="modal-input" type="date" />
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeAllocPaidModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="confirmAllocPaidModal()">Mark as paid</button>
       </div>
     </div>
   </div>
@@ -366,6 +379,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=3"></script>
 </body>
 </html>
