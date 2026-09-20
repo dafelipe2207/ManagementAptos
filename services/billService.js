@@ -1,7 +1,14 @@
 // services/billService.js
 // Maps the camelCase `bill` shape (propertyId, billType, provider,
 // invoiceNumber, issueDate, dueDate, billingPeriodStart, billingPeriodEnd,
-// amount, status, allocationMethod, receiptPath, notes) to/from `bills`.
+// amount, status, allocationMethod, receiptPath, notes, adminPaid,
+// adminPaidDate, adminReceiptPath) to/from `bills`.
+// `receiptPath` is the original bill/invoice document. `adminPaid`/
+// `adminPaidDate`/`adminReceiptPath` track a SEPARATE payment: the admin
+// forwarding the money to the provider (only allowed once tenants have
+// paid their shares — see billReadyForAdminPayment in app.js) — distinct
+// from each tenant's own allocation.paid/paidDate/receiptPath in
+// billAllocationService.js.
 // Allocations live in a separate table — see billAllocationService.js;
 // app.js attaches `bill.allocations` after loading both in parallel.
 import { supabase } from '../lib/supabaseClient.js';
@@ -20,10 +27,13 @@ function fromRow(row) {
     billingPeriodEnd: row.billing_period_end,
     amount: Number(row.amount) || 0,
     status: row.status,
-    notes: row.notes || ''
+    notes: row.notes || '',
+    adminPaid: !!row.admin_paid,
+    adminPaidDate: row.admin_paid_date || null
   };
   if (row.allocation_method) b.allocationMethod = row.allocation_method;
   if (row.receipt_path) b.receiptPath = row.receipt_path;
+  if (row.admin_receipt_path) b.adminReceiptPath = row.admin_receipt_path;
   return b;
 }
 
@@ -41,7 +51,10 @@ function toRow(b) {
     status: b.status,
     allocation_method: b.allocationMethod || null,
     receipt_path: b.receiptPath || null,
-    notes: b.notes || null
+    notes: b.notes || null,
+    admin_paid: !!b.adminPaid,
+    admin_paid_date: b.adminPaidDate || null,
+    admin_receipt_path: b.adminReceiptPath || null
   };
 }
 
