@@ -2160,10 +2160,18 @@ import * as migrationService from './services/migrationService.js';
     document.getElementById('room-modal-title').textContent = r ? 'Edit room' : 'Add room';
     document.getElementById('room-name').value = r ? r.name : '';
     document.getElementById('room-modal-error').hidden = true;
-    document.getElementById('room-modal').hidden = false;
+    var roomModalEl = document.getElementById('room-modal');
+    // Stack above another already-open modal (e.g. quickAddRoomFromTenantForm opens
+    // this on top of #tenant-modal) — both share the same base z-index in source
+    // order, so without this the modal opened first would still paint on top.
+    var tenantModalOpen = document.getElementById('tenant-modal') && !document.getElementById('tenant-modal').hidden;
+    roomModalEl.style.zIndex = tenantModalOpen ? '60' : '';
+    roomModalEl.hidden = false;
   }
   function closeRoomModal(){
-    document.getElementById('room-modal').hidden = true;
+    var roomModalEl = document.getElementById('room-modal');
+    roomModalEl.hidden = true;
+    roomModalEl.style.zIndex = '';
     roomModalEditId = null; roomModalPropertyId = null;
   }
   async function saveRoomForm(){
@@ -2189,7 +2197,15 @@ import * as migrationService from './services/migrationService.js';
       }
       closeRoomModal();
       showToast('Room saved successfully.', 'success');
-      render();
+      // If "Add tenant" was left open underneath (quickAddRoomFromTenantForm), refresh its
+      // Room dropdown in place and select the new room, instead of losing that in-progress form.
+      var tenantModalEl = document.getElementById('tenant-modal');
+      var tenantPropertySelect = document.getElementById('tenant-property');
+      if (tenantModalEl && !tenantModalEl.hidden && tenantPropertySelect && created && tenantPropertySelect.value === created.propertyId){
+        document.getElementById('tenant-room').innerHTML = tenantRoomOptionsHtml(created.propertyId, created.id);
+      } else {
+        render();
+      }
     } catch(err){
       errorEl.textContent = 'Could not save this room. ' + friendlyErrorMessage(err);
       errorEl.hidden = false;
@@ -2254,6 +2270,16 @@ import * as migrationService from './services/migrationService.js';
     var propertyId = document.getElementById('tenant-property').value;
     document.getElementById('tenant-room').innerHTML = tenantRoomOptionsHtml(propertyId, null);
   }
+  /** Lets the user add a room without leaving the "Add tenant" form — opens the Room
+   *  modal on top of it for whichever property is currently selected; saveRoomForm()
+   *  detects the tenant modal is still open underneath and refreshes its Room dropdown
+   *  in place instead of requiring the user to back out and start over. */
+  function quickAddRoomFromTenantForm(){
+    var propertyId = document.getElementById('tenant-property').value;
+    if (!propertyId) return;
+    openRoomModal(propertyId);
+  }
+  window.quickAddRoomFromTenantForm = quickAddRoomFromTenantForm;
   function paymentDayOptionsHtml(frequency, selected){
     var opts = '', d;
     if (frequency==='monthly'){
