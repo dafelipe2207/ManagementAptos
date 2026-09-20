@@ -75,6 +75,8 @@
       <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Partial payment</h2>
       <p id="partial-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
       <input id="partial-modal-input" class="modal-input" type="number" min="0" step="0.01" placeholder="0.00" />
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Date paid</label>
+      <input id="partial-modal-date" class="modal-input" type="date" />
       <div class="modal-actions">
         <button class="mini-btn" onclick="closePartialModal()">Cancel</button>
         <button class="mini-btn primary" onclick="confirmPartialModal()">Add payment</button>
