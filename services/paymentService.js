@@ -24,6 +24,15 @@ export async function create(p) {
   return fromRow(data);
 }
 
+export async function update(id, p) {
+  const patch = {};
+  if (p.amount !== undefined) patch.amount = p.amount;
+  if (p.date !== undefined) patch.payment_date = p.date;
+  const { data, error } = await supabase.from('payments').update(patch).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
 export async function remove(id) {
   const { error } = await supabase.from('payments').delete().eq('id', id);
   if (error) throw error;
