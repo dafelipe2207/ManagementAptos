@@ -371,6 +371,10 @@
   .report-table th:first-child, .report-table td:first-child{text-align:left;}
   .report-table td{text-align:right;padding:8px 0;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;}
   .report-table td.warn{color:var(--status-overdue);font-weight:650;}
+  .bills-table{min-width:560px;}
+  .bills-table th, .bills-table td{text-align:left;vertical-align:top;padding-right:14px;}
+  .report-row-link{cursor:pointer;}
+  .report-row-link:hover td{background:var(--border-soft,var(--border));}
 
   .notif-row{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);}
   .notif-row:last-child{border-bottom:none;}
