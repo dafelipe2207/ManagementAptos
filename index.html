@@ -1,0 +1,3165 @@
+<meta charset="utf-8">
+<title>Belmont Manager</title>
+<style>
+  :root{
+    color-scheme: light dark;
+    --bg: #f5f6fa;
+    --bg-elevated: #ffffff;
+    --border: #e2e4ec;
+    --text: #14161f;
+    --text-dim: #63677a;
+    --text-faint: #9599ac;
+    --accent: #2557d6;
+    --accent-bg: #e8eefd;
+    --sidebar-bg: #ffffff;
+    --shadow: 0 1px 2px rgba(20,22,31,0.04), 0 1px 3px rgba(20,22,31,0.06);
+    --status-paid: #1a9c5b;
+    --status-paid-bg: #e5f7ee;
+    --status-due: #b9750a;
+    --status-due-bg: #fbf0dd;
+    --status-overdue: #d8393f;
+    --status-overdue-bg: #fbe7e7;
+    --status-upcoming: #2557d6;
+    --status-upcoming-bg: #e8eefd;
+    --status-move: #8b3fd1;
+    --status-move-bg: #f2e8fc;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg: #0d1017;
+      --bg-elevated: #161a24;
+      --border: #262b38;
+      --text: #eef0f6;
+      --text-dim: #a7abbd;
+      --text-faint: #6d7185;
+      --accent: #5b8cf0;
+      --accent-bg: #1b2740;
+      --sidebar-bg: #10131c;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.3);
+      --status-paid: #3fbf82;
+      --status-paid-bg: #12281d;
+      --status-due: #dba13c;
+      --status-due-bg: #2c2312;
+      --status-overdue: #ef6b6f;
+      --status-overdue-bg: #2c1618;
+      --status-upcoming: #5b8cf0;
+      --status-upcoming-bg: #1b2740;
+      --status-move: #b183ea;
+      --status-move-bg: #26193a;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg: #0d1017;
+    --bg-elevated: #161a24;
+    --border: #262b38;
+    --text: #eef0f6;
+    --text-dim: #a7abbd;
+    --text-faint: #6d7185;
+    --accent: #5b8cf0;
+    --accent-bg: #1b2740;
+    --sidebar-bg: #10131c;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.3);
+    --status-paid: #3fbf82;
+    --status-paid-bg: #12281d;
+    --status-due: #dba13c;
+    --status-due-bg: #2c2312;
+    --status-overdue: #ef6b6f;
+    --status-overdue-bg: #2c1618;
+    --status-upcoming: #5b8cf0;
+    --status-upcoming-bg: #1b2740;
+    --status-move: #b183ea;
+    --status-move-bg: #26193a;
+  }
+
+  *{box-sizing:border-box;}
+  [hidden]{display:none!important;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  #app{min-height:100%;}
+  .shell{display:flex;min-height:100dvh;}
+
+  /* ---------- Sidebar (desktop) ---------- */
+  .sidebar{
+    display:none;
+    width:248px;flex-shrink:0;
+    background:var(--sidebar-bg);
+    border-right:1px solid var(--border);
+    flex-direction:column;
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:20px 20px 16px;}
+  .brand-mark{
+    width:36px;height:36px;border-radius:10px;flex-shrink:0;
+    background:var(--text);color:var(--bg);
+    display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:13px;
+  }
+  .brand-name{font-size:14px;font-weight:600;line-height:1.2;}
+  .brand-sub{font-size:12px;color:var(--text-faint);}
+  .nav{flex:1;padding:4px 12px;display:flex;flex-direction:column;gap:2px;}
+  .nav a{
+    display:flex;align-items:center;gap:12px;
+    padding:9px 12px;border-radius:9px;
+    font-size:13.5px;font-weight:500;color:var(--text-dim);text-decoration:none;
+  }
+  .nav a svg{width:18px;height:18px;flex-shrink:0;}
+  .nav a{transition:background-color .15s ease,color .15s ease;}
+  .nav a.active{background:var(--accent-bg);color:var(--accent);}
+  .nav a:hover:not(.active){background:var(--border);color:var(--text);}
+  .nav a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .sidebar-foot{padding:14px 20px;font-size:11.5px;color:var(--text-faint);border-top:1px solid var(--border);}
+
+  /* ---------- Main column ---------- */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .topbar{
+    position:sticky;top:env(safe-area-inset-top,0px);z-index:5;
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:12px 16px;
+    background:color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border);
+  }
+  .search{
+    display:flex;align-items:center;gap:8px;
+    background:var(--bg-elevated);border:1px solid var(--border);
+    border-radius:9px;padding:7px 12px;color:var(--text-faint);font-size:13px;
+    max-width:280px;flex:1;cursor:pointer;font-family:inherit;text-align:left;
+    transition:border-color .15s ease,background-color .15s ease;
+  }
+  .search:hover, .search:focus-visible{background:var(--border);color:var(--text-dim);}
+  .search:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+  .search svg{width:15px;height:15px;flex-shrink:0;}
+  .icon-btn{
+    width:34px;height:34px;border-radius:999px;border:1px solid var(--border);
+    background:var(--bg-elevated);color:var(--text-dim);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    cursor:pointer;transition:background-color .15s ease;
+  }
+  .icon-btn svg{width:17px;height:17px;}
+  .icon-btn:hover{background:var(--border);}
+  .icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+  /* ---------- Search modal ---------- */
+  .search-modal-card{width:100%;max-width:420px;max-height:80vh;display:flex;flex-direction:column;}
+  .search-input-row{display:flex;align-items:center;gap:8px;border:1px solid var(--border);
+    border-radius:9px;padding:8px 12px;background:var(--bg);margin-top:2px;}
+  .search-input-row svg{width:16px;height:16px;color:var(--text-faint);flex-shrink:0;}
+  .search-input-row input{flex:1;border:none;background:none;color:var(--text);font-size:14px;
+    font-family:inherit;outline:none;min-width:0;}
+  .search-results{margin-top:10px;overflow-y:auto;max-height:50vh;}
+  .search-result-row{
+    display:flex;align-items:center;gap:10px;padding:10px 4px;border-radius:9px;
+    text-decoration:none;color:inherit;cursor:pointer;transition:background-color .15s ease;
+  }
+  .search-result-row:hover, .search-result-row:focus-visible{background:var(--border);}
+  .search-result-row .srch-icon{
+    width:32px;height:32px;border-radius:50%;background:var(--accent-bg);color:var(--accent);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .search-result-row .srch-icon svg{width:16px;height:16px;}
+  .search-result-row .name{font-size:13.5px;font-weight:600;}
+  .search-result-row .meta{font-size:12px;color:var(--text-faint);}
+  .search-empty{padding:18px 4px;text-align:center;color:var(--text-faint);font-size:13px;}
+
+  main.content{flex:1;padding:16px 16px 96px;}
+  @media (min-width:768px){ main.content{padding:24px 32px 40px;} }
+  .content-inner{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:20px;}
+
+  h1.page-title{font-size:22px;font-weight:650;letter-spacing:-0.01em;margin:0;}
+  p.page-sub{margin:4px 0 0;color:var(--text-dim);font-size:13.5px;}
+
+  .card{
+    background:var(--bg-elevated);border:1px solid var(--border);
+    border-radius:16px;padding:16px;box-shadow:var(--shadow);
+  }
+  a.card{display:block;transition:border-color .15s ease,box-shadow .15s ease;}
+  a.card:hover{border-color:var(--accent);}
+  a.card:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .prop-card{transition:border-color .15s ease;}
+  .prop-card:has(.prop-head:hover){border-color:var(--accent);}
+  .card h2{margin:0 0 12px;font-size:13px;font-weight:650;color:var(--text-dim);
+    text-transform:uppercase;letter-spacing:.04em;}
+
+  .stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+  @media (min-width:640px){ .stat-grid{grid-template-columns:repeat(4,1fr);} }
+  .stat-grid.cols-3{grid-template-columns:repeat(2,1fr);}
+  @media (min-width:420px){ .stat-grid.cols-3{grid-template-columns:repeat(3,1fr);} }
+  .stat{background:var(--bg-elevated);border:1px solid var(--border);border-radius:14px;
+    padding:13px 14px;box-shadow:var(--shadow);}
+  .stat .label{font-size:11.5px;color:var(--text-faint);}
+  .stat .value{margin-top:3px;font-size:19px;font-weight:650;font-variant-numeric:tabular-nums;}
+  .stat .value.warn{color:var(--status-overdue);}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:11px 0;border-bottom:1px solid var(--border);}
+  .row:last-child{border-bottom:none;padding-bottom:0;}
+  .row:first-child{padding-top:0;}
+  .row .who{min-width:0;}
+  .row .who .name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row .who .meta{font-size:12px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row .amount{font-size:13.5px;font-weight:650;font-variant-numeric:tabular-nums;text-align:right;}
+
+  .badge{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;
+  }
+  .badge .dot{width:6px;height:6px;border-radius:999px;}
+  .badge.paid{color:var(--status-paid);background:var(--status-paid-bg);}
+  .badge.paid .dot{background:var(--status-paid);}
+  .badge.due{color:var(--status-due);background:var(--status-due-bg);}
+  .badge.due .dot{background:var(--status-due);}
+  .badge.overdue{color:var(--status-overdue);background:var(--status-overdue-bg);}
+  .badge.overdue .dot{background:var(--status-overdue);}
+  .badge.upcoming{color:var(--status-upcoming);background:var(--status-upcoming-bg);}
+  .badge.upcoming .dot{background:var(--status-upcoming);}
+  .badge.move{color:var(--status-move);background:var(--status-move-bg);}
+  .badge.move .dot{background:var(--status-move);}
+
+  .view-btn{
+    flex-shrink:0;background:var(--text);color:var(--bg);border:none;
+    font-size:11px;font-weight:700;letter-spacing:.03em;
+    padding:7px 11px;border-radius:8px;cursor:pointer;transition:opacity .15s ease;
+  }
+  .view-btn:hover{opacity:.85;}
+  .view-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+  .filter-chips{display:flex;gap:8px;flex-wrap:wrap;}
+  .chip{
+    border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-dim);
+    font-size:12.5px;font-weight:600;padding:6px 13px;border-radius:999px;cursor:pointer;
+    transition:background-color .15s ease,color .15s ease,border-color .15s ease;
+  }
+  .chip:hover:not(.active){background:var(--border);color:var(--text);}
+  .chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+  .chip.active{background:var(--text);color:var(--bg);border-color:var(--text);}
+
+  .mini-btn{
+    border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);
+    font-size:12px;font-weight:650;padding:7px 12px;border-radius:8px;cursor:pointer;
+    transition:background-color .15s ease,opacity .15s ease,border-color .15s ease;
+  }
+  .mini-btn:hover{background:var(--border);}
+  .mini-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .mini-btn.primary{background:var(--text);color:var(--bg);border-color:var(--text);}
+  .mini-btn.primary:hover{opacity:.88;background:var(--text);}
+  :root[data-theme="dark"] .mini-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .mini-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);} }
+
+  .text-link{
+    display:block;margin-top:9px;border:none;background:none;color:var(--accent);
+    font-size:12px;font-weight:600;cursor:pointer;padding:0;transition:opacity .15s ease;
+  }
+  .text-link:hover{opacity:.75;text-decoration:underline;}
+  .text-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+  .import-picker{display:flex;flex-direction:column;gap:8px;margin:10px 0 4px;}
+  .import-option{
+    display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:10px;background:var(--bg-elevated);color:var(--text);font-size:13.5px;font-weight:600;
+    cursor:pointer;text-align:left;width:100%;
+  }
+  .import-option:hover{background:var(--border);}
+  .import-option svg{width:18px;height:18px;flex-shrink:0;color:var(--text-dim);}
+  .import-preview-box{
+    border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg-elevated);
+    display:flex;align-items:center;justify-content:center;min-height:130px;margin:10px 0 6px;
+  }
+  .import-preview-box img{max-width:100%;max-height:220px;display:block;}
+  .import-file-chip{display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--text-dim);font-size:12.5px;padding:22px;}
+  .import-file-chip svg{width:26px;height:26px;}
+
+  .form-row{margin:9px 0;}
+  .form-row label{
+    display:block;font-size:11px;color:var(--text-faint);text-transform:uppercase;
+    letter-spacing:0.03em;margin-bottom:4px;font-weight:650;
+  }
+  .form-row input, .form-row select{
+    width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font-size:13.5px;font-family:inherit;
+  }
+  .form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  @media (max-width:360px){ .form-row-2{grid-template-columns:1fr;} }
+  .form-row input:focus-visible, .form-row select:focus-visible, .form-row textarea:focus-visible,
+  .modal-input:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent);}
+  .form-row textarea{
+    width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font-size:13.5px;font-family:inherit;
+    resize:vertical;min-height:56px;
+  }
+  .form-error{color:var(--status-overdue);font-size:12px;margin:6px 0 0;}
+  .mini-btn.danger{background:var(--status-overdue);color:#fff;border-color:var(--status-overdue);}
+  .mini-btn.danger:hover{opacity:.88;background:var(--status-overdue);}
+  .actions-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .actions-row .mini-btn.danger{margin-left:auto;}
+
+  .alloc-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
+  .alloc-row:last-child{border-bottom:none;}
+  .alloc-row .meta{font-size:11.5px;color:var(--text-faint);}
+  .alloc-amount-input{
+    width:96px;padding:6px 8px;border-radius:7px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font-size:13px;text-align:right;
+    font-variant-numeric:tabular-nums;font-family:inherit;
+  }
+  .alloc-total-row{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 0 2px;font-size:13px;font-weight:650;}
+  .alloc-total-row .diff-ok{color:var(--status-paid);}
+  .alloc-total-row .diff-bad{color:var(--status-overdue);}
+  .alloc-summary-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
+  .alloc-summary-row:last-child{border-bottom:none;}
+
+  .modal-overlay{
+    position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+    background:rgba(10,12,18,0.5);padding:16px;
+  }
+  .modal-card{width:100%;max-width:320px;max-height:80vh;overflow-y:auto;}
+  .modal-card h2{margin-top:0;}
+  .modal-input{
+    width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font-size:14px;margin:10px 0;font-variant-numeric:tabular-nums;
+  }
+  .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
+  .history-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:9px 0;border-bottom:1px solid var(--border);font-size:13px;}
+  .history-row:last-child{border-bottom:none;}
+  .history-row .del{border:none;background:none;color:var(--status-overdue);cursor:pointer;font-size:15px;padding:2px 4px;}
+
+  .upcoming-row{display:flex;align-items:baseline;gap:12px;padding:7px 0;font-size:13.5px;}
+  .upcoming-row .date{width:52px;flex-shrink:0;color:var(--text-faint);font-variant-numeric:tabular-nums;}
+  .upcoming-row .title{font-weight:550;}
+
+  .cal-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+  .cal-month-label{flex:1;text-align:center;font-weight:650;font-size:14.5px;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+  .cal-weekday{text-align:center;font-size:10px;font-weight:650;color:var(--text-faint);
+    text-transform:uppercase;letter-spacing:.03em;padding-bottom:6px;}
+  .cal-days{margin-bottom:12px;}
+  .cal-daycell{
+    border:1px solid var(--border);border-radius:8px;min-height:44px;padding:3px 3px;
+    display:flex;flex-direction:column;gap:2px;overflow:hidden;background:var(--bg);
+  }
+  .cal-daycell.empty{border-color:transparent;background:none;}
+  .cal-daycell.today{border-color:var(--accent);border-width:1.5px;}
+  .cal-daynum{font-size:10.5px;color:var(--text-faint);font-weight:650;padding:0 1px;}
+  .cal-daycell.today .cal-daynum{color:var(--accent);}
+  .cal-pill{
+    display:block;font-size:9px;line-height:1.5;padding:0 3px;border-radius:4px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;font-weight:600;
+    transition:opacity .15s ease;
+  }
+  .cal-pill:hover, .cal-pill:focus-visible{opacity:.7;}
+  .cal-daycell{transition:border-color .15s ease;}
+  .cal-pill.overdue{background:var(--status-overdue-bg);color:var(--status-overdue);}
+  .cal-pill.due{background:var(--status-due-bg);color:var(--status-due);}
+  .cal-pill.move{background:var(--status-move-bg);color:var(--status-move);}
+  .cal-more{font-size:9px;color:var(--text-faint);padding:0 3px;}
+  .cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11.5px;color:var(--text-dim);}
+  .cal-legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;position:relative;top:-1px;}
+  .cal-legend .dot.overdue{background:var(--status-overdue);}
+  .cal-legend .dot.due{background:var(--status-due);}
+  .cal-legend .dot.move{background:var(--status-move);}
+
+  .bar-row{margin:10px 0;}
+  .bar-row .bar-label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-dim);margin-bottom:5px;}
+  .bar-track{background:var(--border);border-radius:6px;height:9px;overflow:hidden;}
+  .bar-fill{height:100%;border-radius:6px;background:var(--status-paid);}
+  .report-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .report-table{width:100%;border-collapse:collapse;font-size:13px;min-width:360px;}
+  .report-table th{text-align:right;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;
+    letter-spacing:.03em;font-weight:650;padding:0 0 8px;}
+  .report-table th:first-child, .report-table td:first-child{text-align:left;}
+  .report-table td{text-align:right;padding:8px 0;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;}
+  .report-table td.warn{color:var(--status-overdue);font-weight:650;}
+
+  .notif-row{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);}
+  .notif-row:last-child{border-bottom:none;}
+  .notif-row.read{opacity:.55;}
+  .notif-icon{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .notif-icon svg{width:15px;height:15px;}
+  .notif-icon.overdue{background:var(--status-overdue-bg);color:var(--status-overdue);}
+  .notif-icon.due{background:var(--status-due-bg);color:var(--status-due);}
+  .notif-icon.move{background:var(--status-move-bg);color:var(--status-move);}
+  .notif-dot-btn{border:none;background:none;cursor:pointer;padding:6px;flex-shrink:0;border-radius:50%;transition:background-color .15s ease;}
+  .notif-dot-btn:hover{background:var(--border);}
+  .notif-dot-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+  .notif-dot{display:block;width:9px;height:9px;border-radius:50%;background:var(--border);}
+  .notif-dot.unread{background:var(--accent);}
+  .card > a, .card.prop-card > a:first-child{transition:opacity .15s ease;}
+  @media (min-width:640px){
+    .cal-daycell{min-height:78px;padding:5px 5px;gap:3px;}
+    .cal-daynum{font-size:12px;}
+    .cal-pill{font-size:11px;padding:1px 5px;border-radius:5px;}
+    .cal-more{font-size:10.5px;}
+  }
+
+  .placeholder-box{
+    border:1.5px dashed var(--border);border-radius:16px;padding:28px 22px;text-align:center;
+  }
+  .placeholder-box p{margin:0;font-size:13.5px;font-weight:600;color:var(--text-dim);}
+  .placeholder-box p.sub{margin-top:4px;font-weight:400;font-size:12px;color:var(--text-faint);
+    max-width:320px;margin-left:auto;margin-right:auto;}
+  .placeholder-box .ph-icon{
+    width:44px;height:44px;margin:0 auto 12px;color:var(--text-faint);
+    background:var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;
+  }
+  .placeholder-box .ph-icon svg{width:22px;height:22px;}
+  .placeholder-box .mini-btn{margin-top:14px;}
+
+  .prop-card .prop-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+  .prop-card .prop-name{font-size:15px;font-weight:650;}
+  .prop-card .prop-addr{font-size:12px;color:var(--text-faint);margin-top:1px;}
+  .prop-card .prop-meta{font-size:12px;color:var(--text-faint);margin-top:4px;}
+  .prop-card .occ{text-align:right;font-size:11.5px;font-weight:600;}
+  .prop-card .occ .vacant{color:var(--text-faint);font-weight:500;}
+  .room-row{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;
+    border-top:1px solid var(--border);}
+  .room-row:first-of-type{border-top:1px solid var(--border);margin-top:10px;}
+  .room-row .rname{font-weight:600;}
+  .room-row .rtenant{color:var(--text-faint);}
+  .room-row.linked{cursor:pointer;text-decoration:none;color:inherit;border-radius:8px;transition:background-color .15s ease;}
+  .room-row.linked:hover{background:var(--border);}
+  .room-row.linked:hover .rtenant{color:var(--accent);}
+  .room-row.linked:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+  .room-line{display:flex;align-items:center;gap:4px;border-top:1px solid var(--border);}
+  .room-line:first-child{margin-top:10px;}
+  .room-line .room-row{border:none;padding:7px 0;margin-top:0;flex:1;min-width:0;}
+  .icon-mini-btn{
+    border:none;background:none;color:var(--text-dim);cursor:pointer;font-size:14px;
+    padding:4px 7px;border-radius:6px;flex-shrink:0;line-height:1;
+  }
+  .icon-mini-btn{transition:background-color .15s ease,color .15s ease;}
+  .icon-mini-btn:hover{background:var(--border);color:var(--text);}
+  .icon-mini-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+  .icon-mini-btn.danger{color:var(--status-overdue);}
+  .icon-mini-btn:disabled{opacity:.35;cursor:not-allowed;}
+  .icon-mini-btn:disabled:hover{background:none;color:var(--text-dim);}
+
+  .back-link{
+    display:inline-flex;align-items:center;gap:4px;
+    font-size:12.5px;font-weight:600;color:var(--text-dim);text-decoration:none;
+    transition:color .15s ease;
+  }
+  .back-link svg{width:14px;height:14px;}
+  .back-link:hover{color:var(--accent);}
+  .back-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+  .detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:8px;}
+  .detail-head h1{margin:0;}
+
+  .field-list{display:flex;flex-direction:column;}
+  .field-row{display:flex;justify-content:space-between;gap:16px;padding:10px 0;
+    border-bottom:1px solid var(--border);font-size:13.5px;}
+  .field-row:last-child{border-bottom:none;}
+  .field-row .k{color:var(--text-faint);flex-shrink:0;}
+  .field-row .v{font-weight:600;text-align:right;}
+  .field-row a{text-decoration:none;color:var(--accent);}
+  .field-row a:hover{text-decoration:underline;}
+  .field-row a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+  .badge.neutral{color:var(--text-dim);background:var(--border);}
+  .badge.neutral .dot{background:var(--text-faint);}
+
+  .more-list a{
+    display:flex;align-items:center;gap:12px;padding:13px 14px;
+    text-decoration:none;color:var(--text);font-size:13.5px;font-weight:550;
+    border-bottom:1px solid var(--border);transition:background-color .15s ease;
+  }
+  .more-list a:last-child{border-bottom:none;}
+  .more-list a:hover{background:var(--border);}
+  .more-list a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+  .more-list a svg{width:18px;height:18px;color:var(--text-dim);flex-shrink:0;}
+  .more-list a .chev{margin-left:auto;width:14px;height:14px;color:var(--text-faint);}
+  .more-list{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--bg-elevated);}
+
+  /* ---------- Bottom nav (mobile) ---------- */
+  .bottomnav{
+    display:grid;grid-template-columns:repeat(5,1fr);
+    position:fixed;left:0;right:0;bottom:0;z-index:10;
+    background:color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+    backdrop-filter:blur(10px);
+    border-top:1px solid var(--border);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  .bottomnav a{
+    display:flex;flex-direction:column;align-items:center;gap:2px;
+    padding:8px 2px 7px;text-decoration:none;color:var(--text-faint);font-size:10.5px;font-weight:600;
+    transition:color .15s ease;
+  }
+  .bottomnav a svg{width:22px;height:22px;}
+  .bottomnav a:hover{color:var(--text-dim);}
+  .bottomnav a.active{color:var(--accent);}
+  .bottomnav a.active:hover{color:var(--accent);}
+  .bottomnav a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+
+  @media (min-width:768px){
+    .sidebar{display:flex;}
+    .bottomnav{display:none;}
+    main.content{padding-bottom:40px;}
+  }
+
+  a{color:inherit;}
+  ::selection{background:var(--accent-bg);}
+</style>
+
+<div id="app">
+  <div class="modal-overlay" id="lock-screen" hidden style="z-index:100;background:var(--bg);">
+    <div class="card modal-card" style="text-align:center;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:16px;">Belmont Manager</h2>
+      <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Enter your PIN to continue. (Local screen lock only — not real encryption.)</p>
+      <input id="lock-pin-input" type="password" inputmode="numeric" maxlength="6" class="modal-input"
+        style="text-align:center;font-size:18px;letter-spacing:6px;" placeholder="••••" />
+      <p id="lock-error" class="form-error" hidden>Incorrect PIN. Try again.</p>
+      <div class="modal-actions" style="justify-content:center;">
+        <button class="mini-btn primary" onclick="attemptUnlock()">Unlock</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">BM</div>
+        <div>
+          <div class="brand-name">Belmont Manager</div>
+          <div class="brand-sub">Belmont &amp; more</div>
+        </div>
+      </div>
+      <nav class="nav" id="sidebar-nav"></nav>
+      <div class="sidebar-foot">Sample data · preview</div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="search" id="search-trigger" type="button" onclick="openSearchModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <span>Search properties, tenants…</span>
+        </button>
+        <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" type="button"></button>
+      </header>
+      <main class="content"><div class="content-inner" id="content"></div></main>
+    </div>
+
+    <nav class="bottomnav" id="bottom-nav"></nav>
+  </div>
+
+  <div class="modal-overlay" id="partial-modal" hidden>
+    <div class="card modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Partial payment</h2>
+      <p id="partial-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <input id="partial-modal-input" class="modal-input" type="number" min="0" step="0.01" placeholder="0.00" />
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closePartialModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="confirmPartialModal()">Add payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="history-modal" hidden>
+    <div class="card modal-card">
+      <h2 id="history-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
+      <div id="history-modal-body"></div>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeHistoryModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="import-modal" hidden>
+    <div class="card modal-card" style="max-width:340px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add bill</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Import a photo or PDF of the bill. A mock analysis service will extract the details for you.</p>
+      <div id="import-modal-picker" class="import-picker">
+        <button class="import-option" type="button" onclick="triggerImportInput('camera')"></button>
+        <button class="import-option" type="button" onclick="triggerImportInput('gallery')"></button>
+        <button class="import-option" type="button" onclick="triggerImportInput('pdf')"></button>
+      </div>
+      <div id="import-modal-preview" hidden>
+        <div class="import-preview-box">
+          <img id="import-preview-img" hidden alt="Bill preview" />
+          <div id="import-preview-file" class="import-file-chip" hidden></div>
+        </div>
+        <div id="import-preview-name" style="font-size:12.5px;color:var(--text-dim);word-break:break-all;"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeImportModal()">Cancel</button>
+        <button class="mini-btn primary" id="import-modal-confirm" hidden onclick="confirmImportBill()">Add to queue</button>
+      </div>
+      <input type="file" id="import-input-camera" accept="image/*" capture="environment" hidden onchange="handleImportFile(event)" />
+      <input type="file" id="import-input-gallery" accept="image/*" hidden onchange="handleImportFile(event)" />
+      <input type="file" id="import-input-pdf" accept="application/pdf" hidden onchange="handleImportFile(event)" />
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="review-modal" hidden>
+    <div class="card modal-card" style="max-width:360px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Review extracted data</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Check and correct what the automatic analysis detected before saving this bill.</p>
+      <div class="form-row">
+        <label for="review-property">Property</label>
+        <select id="review-property"></select>
+      </div>
+      <div class="form-row">
+        <label for="review-billtype">Bill type</label>
+        <select id="review-billtype">
+          <option value="electricity">Electricity</option>
+          <option value="water">Water</option>
+          <option value="gas">Gas</option>
+          <option value="internet">Internet</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="review-provider">Provider</label>
+        <input id="review-provider" type="text" />
+      </div>
+      <div class="form-row">
+        <label for="review-invoice">Invoice number</label>
+        <input id="review-invoice" type="text" />
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="review-issue">Issue date</label><input id="review-issue" type="date" /></div>
+        <div><label for="review-due">Due date</label><input id="review-due" type="date" /></div>
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="review-period-start">Period start</label><input id="review-period-start" type="date" /></div>
+        <div><label for="review-period-end">Period end</label><input id="review-period-end" type="date" /></div>
+      </div>
+      <div class="form-row">
+        <label for="review-amount">Amount</label>
+        <input id="review-amount" type="number" min="0" step="0.01" />
+      </div>
+      <p id="review-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions" style="justify-content:space-between;">
+        <button class="mini-btn" onclick="discardReviewItem()">Discard</button>
+        <div style="display:flex;gap:8px;">
+          <button class="mini-btn" onclick="closeReviewModal()">Cancel</button>
+          <button class="mini-btn primary" onclick="confirmReviewedBill()">Save bill</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="doc-modal" hidden>
+    <div class="card modal-card" style="max-width:340px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add document</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Save a photo or PDF of a lease agreement, ID or other tenant document.</p>
+      <div class="form-row">
+        <label for="doc-tenant">Tenant</label>
+        <select id="doc-tenant"></select>
+      </div>
+      <div class="form-row">
+        <label for="doc-type">Document type</label>
+        <select id="doc-type">
+          <option value="lease">Lease agreement</option>
+          <option value="id">ID copy</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div id="doc-modal-picker" class="import-picker">
+        <button class="import-option" type="button" onclick="triggerDocInput('camera')"></button>
+        <button class="import-option" type="button" onclick="triggerDocInput('gallery')"></button>
+        <button class="import-option" type="button" onclick="triggerDocInput('pdf')"></button>
+      </div>
+      <div id="doc-modal-preview" hidden>
+        <div class="import-preview-box">
+          <img id="doc-preview-img" hidden alt="Document preview" />
+          <div id="doc-preview-file" class="import-file-chip" hidden></div>
+        </div>
+        <div id="doc-preview-name" style="font-size:12.5px;color:var(--text-dim);word-break:break-all;"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeDocModal()">Cancel</button>
+        <button class="mini-btn primary" id="doc-modal-confirm" hidden onclick="confirmAddDocument()">Add document</button>
+      </div>
+      <input type="file" id="doc-input-camera" accept="image/*" capture="environment" hidden onchange="handleDocFile(event)" />
+      <input type="file" id="doc-input-gallery" accept="image/*" hidden onchange="handleDocFile(event)" />
+      <input type="file" id="doc-input-pdf" accept="application/pdf" hidden onchange="handleDocFile(event)" />
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="allocate-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Allocate bill</h2>
+      <p id="allocate-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <div class="filter-chips" id="allocate-method-chips" style="margin:10px 0 4px;">
+        <button class="chip" type="button" onclick="setAllocationMethod('equal')">Equal split</button>
+        <button class="chip" type="button" onclick="setAllocationMethod('days')">By days occupied</button>
+        <button class="chip" type="button" onclick="setAllocationMethod('custom')">Custom</button>
+      </div>
+      <p id="allocate-method-note" style="font-size:11.5px;color:var(--text-faint);margin:2px 0 6px;"></p>
+      <div id="allocate-rows"></div>
+      <div class="alloc-total-row">
+        <span>Allocated</span>
+        <span id="allocate-total-text"></span>
+      </div>
+      <p id="allocate-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeAllocateModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="confirmAllocation()">Confirm allocation</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="pin-modal" hidden>
+    <div class="card modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Set app PIN</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">4 to 6 digits. This is just a local lock screen — it does not encrypt your data.</p>
+      <div class="form-row"><label for="pin-input-1">PIN</label><input id="pin-input-1" type="password" inputmode="numeric" maxlength="6" /></div>
+      <div class="form-row"><label for="pin-input-2">Confirm PIN</label><input id="pin-input-2" type="password" inputmode="numeric" maxlength="6" /></div>
+      <p id="pin-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeSetPinModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="confirmSetPin()">Save PIN</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="confirm-modal" hidden>
+    <div class="card modal-card">
+      <h2 id="confirm-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
+      <p id="confirm-modal-body" style="font-size:13px;color:var(--text-dim);margin:0;"></p>
+      <p id="confirm-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeConfirmModal()">Cancel</button>
+        <button class="mini-btn primary" id="confirm-modal-confirm-btn" onclick="runConfirmModalAction()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="property-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 id="property-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add property</h2>
+      <div class="form-row"><label for="property-name">Name</label><input id="property-name" type="text" /></div>
+      <div class="form-row"><label for="property-address">Address</label><input id="property-address" type="text" /></div>
+      <div class="form-row form-row-2">
+        <div><label for="property-bedrooms">Bedrooms</label><input id="property-bedrooms" type="number" min="0" step="1" /></div>
+        <div><label for="property-bathrooms">Bathrooms</label><input id="property-bathrooms" type="number" min="0" step="1" /></div>
+      </div>
+      <div class="form-row"><label for="property-notes">Notes</label><textarea id="property-notes"></textarea></div>
+      <p id="property-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closePropertyModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="savePropertyForm()">Save property</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="room-modal" hidden>
+    <div class="card modal-card">
+      <h2 id="room-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add room</h2>
+      <div class="form-row"><label for="room-name">Room name</label><input id="room-name" type="text" /></div>
+      <p id="room-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeRoomModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveRoomForm()">Save room</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="tenant-modal" hidden>
+    <div class="card modal-card" style="max-width:400px;">
+      <h2 id="tenant-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add tenant</h2>
+      <div class="form-row"><label for="tenant-fullname">Full name</label><input id="tenant-fullname" type="text" /></div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-phone">Phone</label><input id="tenant-phone" type="text" /></div>
+        <div><label for="tenant-email">Email</label><input id="tenant-email" type="email" /></div>
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-property">Property</label><select id="tenant-property" onchange="onTenantPropertyChange()"></select></div>
+        <div><label for="tenant-room">Room</label><select id="tenant-room"></select></div>
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-movein">Move-in date</label><input id="tenant-movein" type="date" /></div>
+        <div><label for="tenant-moveout-expected">Expected move-out</label><input id="tenant-moveout-expected" type="date" /></div>
+      </div>
+      <div class="form-row"><label for="tenant-moveout-actual">Actual move-out (if already moved out)</label><input id="tenant-moveout-actual" type="date" /></div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-rent-amount">Rent amount</label><input id="tenant-rent-amount" type="number" min="0" step="0.01" /></div>
+        <div><label for="tenant-rent-frequency">Frequency</label>
+          <select id="tenant-rent-frequency" onchange="onTenantFrequencyChange()">
+            <option value="weekly">Weekly</option>
+            <option value="fortnightly">Fortnightly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row"><label for="tenant-payment-day">Payment day</label><select id="tenant-payment-day"></select></div>
+      <div class="form-row"><label for="tenant-notes">Notes</label><textarea id="tenant-notes"></textarea></div>
+      <p id="tenant-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeTenantModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveTenantForm()">Save tenant</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="search-modal" hidden onclick="if(event.target===this)closeSearchModal();">
+    <div class="card modal-card search-modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Search</h2>
+      <div class="search-input-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="search-modal-input" type="text" placeholder="Search properties or tenants…" oninput="runSearch(this.value)" autocomplete="off" />
+      </div>
+      <div class="search-results" id="search-modal-results"></div>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeSearchModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="bond-modal" hidden>
+    <div class="card modal-card">
+      <h2 id="bond-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add bond</h2>
+      <div class="form-row form-row-2">
+        <div><label for="bond-required">Amount required</label><input id="bond-required" type="number" min="0" step="0.01" /></div>
+        <div><label for="bond-paid">Amount paid</label><input id="bond-paid" type="number" min="0" step="0.01" /></div>
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="bond-returned">Amount returned</label><input id="bond-returned" type="number" min="0" step="0.01" /></div>
+        <div><label for="bond-deduction">Deduction</label><input id="bond-deduction" type="number" min="0" step="0.01" /></div>
+      </div>
+      <div class="form-row"><label for="bond-status">Status</label>
+        <select id="bond-status">
+          <option value="pending">Pending</option>
+          <option value="paid">Paid</option>
+          <option value="partially_returned">Partially Returned</option>
+          <option value="fully_returned">Fully Returned</option>
+        </select>
+      </div>
+      <p id="bond-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeBondModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveBondForm()">Save bond</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============ Mock data (espejo del proyecto React FASE 1+2) ============ */
+  var TODAY = '2026-09-20';
+
+  var SEED_PROPERTIES = [
+    { id:'prop-belmont', name:'Belmont', address:'123 Example Street, Belmont WA 6104', bedrooms:3, bathrooms:2,
+      notes:'Main house, close to the train station.' }
+  ];
+  var SEED_ROOMS = [
+    { id:'room-master', propertyId:'prop-belmont', name:'Master' },
+    { id:'room-2', propertyId:'prop-belmont', name:'Room 2' },
+    { id:'room-3', propertyId:'prop-belmont', name:'Room 3' }
+  ];
+  var SEED_TENANTS = [
+    { id:'tenant-owner', fullName:'Owner (yo)', propertyId:'prop-belmont', roomId:'room-master',
+      moveInDate:'2024-01-01', rentAmount:0, rentFrequency:'monthly', paymentDay:1,
+      notes:"Owner's room — doesn't generate rent charges." },
+    { id:'tenant-john', fullName:'John Smith', phone:'+61 4 1111 2222', email:'john.smith@example.com',
+      propertyId:'prop-belmont', roomId:'room-2', moveInDate:'2025-03-01', rentAmount:390,
+      rentFrequency:'weekly', paymentDay:4, bondId:'bond-john',
+      notes:'Pays on time most weeks.' },
+    { id:'tenant-maria', fullName:'Maria Garcia', phone:'+61 4 3333 4444', email:'maria.garcia@example.com',
+      propertyId:'prop-belmont', roomId:'room-3', moveInDate:'2025-02-15', expectedMoveOutDate:'2026-09-20',
+      rentAmount:420, rentFrequency:'weekly', paymentDay:1, bondId:'bond-maria',
+      notes:'Moving out at the end of September.' },
+    { id:'tenant-pedro', fullName:'Pedro Rodriguez', phone:'+61 4 5555 6666', email:'pedro.rodriguez@example.com',
+      propertyId:'prop-belmont', roomId:'room-3', moveInDate:'2026-09-21', rentAmount:780,
+      rentFrequency:'fortnightly', paymentDay:1, bondId:'bond-pedro',
+      notes:"Moving into Maria's room right when she leaves." }
+  ];
+  var SEED_BONDS = [
+    { id:'bond-john', tenantId:'tenant-john', amountRequired:1560, amountPaid:1560, amountReturned:0, deduction:0, status:'paid' },
+    { id:'bond-maria', tenantId:'tenant-maria', amountRequired:1680, amountPaid:1680, amountReturned:0, deduction:0, status:'paid' },
+    { id:'bond-pedro', tenantId:'tenant-pedro', amountRequired:1560, amountPaid:0, amountReturned:0, deduction:0, status:'pending' }
+  ];
+  /**
+   * FASE 15 — Persistencia de properties/rooms/tenants/bonds/rentSchedules en
+   * localStorage, mismo patrón que ya usa `paymentRecords` (ver más abajo):
+   * una clave `*_STORAGE_KEY`, un `load*()` que intenta leer y devuelve null
+   * si no hay nada o falla, un `save*(list)` que intenta escribir, y una
+   * variable de nivel superior que parte de los datos SEED_* la primera vez
+   * que se abre la app en este navegador.
+   */
+  var PROPERTIES_STORAGE_KEY = 'belmont-manager-properties-v1';
+  function loadProperties(){
+    try { var raw = localStorage.getItem(PROPERTIES_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveProperties(list){ try { localStorage.setItem(PROPERTIES_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var properties = loadProperties();
+  if (!properties){ properties = SEED_PROPERTIES.slice(); saveProperties(properties); }
+
+  var ROOMS_STORAGE_KEY = 'belmont-manager-rooms-v1';
+  function loadRooms(){
+    try { var raw = localStorage.getItem(ROOMS_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveRooms(list){ try { localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var rooms = loadRooms();
+  if (!rooms){ rooms = SEED_ROOMS.slice(); saveRooms(rooms); }
+
+  var TENANTS_STORAGE_KEY = 'belmont-manager-tenants-v1';
+  function loadTenants(){
+    try { var raw = localStorage.getItem(TENANTS_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveTenants(list){ try { localStorage.setItem(TENANTS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var tenants = loadTenants();
+  if (!tenants){ tenants = SEED_TENANTS.slice(); saveTenants(tenants); }
+
+  var BONDS_STORAGE_KEY = 'belmont-manager-bonds-v1';
+  function loadBonds(){
+    try { var raw = localStorage.getItem(BONDS_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveBonds(list){ try { localStorage.setItem(BONDS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var bonds = loadBonds();
+  if (!bonds){ bonds = SEED_BONDS.slice(); saveBonds(bonds); }
+  /**
+   * Convierte un objeto Date (construido en hora LOCAL, p.ej. con
+   * `new Date(iso+'T00:00:00')`) de vuelta a 'YYYY-MM-DD' usando sus
+   * componentes locales. `toISOString()` NO sirve para esto: convierte a
+   * UTC primero, así que en cualquier zona horaria con offset positivo
+   * (Perth, UTC+8, por ejemplo) una fecha calculada como "30 de septiembre
+   * medianoche local" se convierte a "29 de septiembre, 16:00 UTC" y el
+   * slice(0,10) devuelve el día equivocado. Todo el cálculo de fechas de la
+   * app (rent periods, dueDates, extracción de bills) pasa por aquí.
+   */
+  function toIsoLocal(d){
+    var y = d.getFullYear();
+    var m = String(d.getMonth()+1).padStart(2,'0');
+    var day = String(d.getDate()).padStart(2,'0');
+    return y+'-'+m+'-'+day;
+  }
+
+  /**
+   * rentService — genera rent charges a partir de un RentSchedule.
+   * Aislado del resto de la lógica (sección 35 del brief: servicios propios
+   * para "Rent calculations").
+   */
+  var rentService = (function(){
+    function stepDate(iso, days){
+      var d = new Date(iso + 'T00:00:00');
+      d.setDate(d.getDate() + days);
+      return toIsoLocal(d);
+    }
+    function addMonths(iso, months){
+      var d = new Date(iso + 'T00:00:00');
+      d.setMonth(d.getMonth() + months);
+      return toIsoLocal(d);
+    }
+    function periodLengthDays(freq){
+      return freq==='weekly' ? 7 : freq==='fortnightly' ? 14 : null;
+    }
+    function round2(n){ return Math.round(n*100)/100; }
+
+    /**
+     * Genera TODOS los periodos desde `schedule.startDate` hasta el primer
+     * periodo que empieza después de `asOfIso` (un único periodo "futuro"),
+     * respetando la fecha de salida del inquilino si existe (sección 32:
+     * nunca generar cargos para cuando el inquilino ya no vive ahí).
+     */
+    function generateAllPeriods(schedule, tenant, asOfIso){
+      var periods = [];
+      var cutoff = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || null;
+      var cursor = schedule.startDate;
+      while (true){
+        if (cutoff && cursor > cutoff) break;
+        var end = schedule.frequency === 'monthly'
+          ? stepDate(addMonths(cursor, 1), -1)
+          : stepDate(cursor, periodLengthDays(schedule.frequency) - 1);
+        periods.push({ periodStart: cursor, periodEnd: end, dueDate: end });
+        if (cursor > asOfIso) break;
+        cursor = schedule.frequency === 'monthly' ? addMonths(cursor, 1) : stepDate(cursor, periodLengthDays(schedule.frequency));
+      }
+      return periods;
+    }
+
+    /** Ventana reciente: el último periodo ya vencido, el actual y el próximo (los que existan). */
+    function selectRecentWindow(periods, asOfIso){
+      var past = periods.filter(function(p){ return p.periodEnd < asOfIso; });
+      var current = periods.filter(function(p){ return p.periodStart <= asOfIso && p.periodEnd >= asOfIso; });
+      var future = periods.filter(function(p){ return p.periodStart > asOfIso; });
+      var win = [];
+      if (past.length) win.push(past[past.length-1]);
+      if (current.length) win.push(current[0]);
+      if (future.length) win.push(future[0]);
+      return win;
+    }
+
+    function computeStatus(period, amountPaid, remaining, asOfIso){
+      if (remaining <= 0.004) return 'paid';
+      if (amountPaid > 0) return 'partially_paid';
+      if (period.dueDate < asOfIso) return 'overdue';
+      if (period.periodStart > asOfIso) return 'upcoming';
+      return 'due';
+    }
+
+    /** Reparte los pagos de un inquilino contra sus periodos, en orden cronológico (FIFO). */
+    function generateChargesForTenant(tenant, schedule, asOfIso, allPayments){
+      if (!schedule || tenant.rentAmount <= 0) return [];
+      var periods = generateAllPeriods(schedule, tenant, asOfIso);
+      var win = selectRecentWindow(periods, asOfIso);
+      var pays = allPayments
+        .filter(function(p){ return p.tenantId === tenant.id; })
+        .slice()
+        .sort(function(a,b){ return a.date.localeCompare(b.date); });
+      var payIdx = 0, payLeft = pays.length ? pays[0].amount : 0;
+
+      return win.map(function(period){
+        var amountDue = schedule.amount;
+        var need = amountDue, amountPaid = 0;
+        while (need > 0.004 && payIdx < pays.length){
+          var take = Math.min(need, payLeft);
+          amountPaid += take; need -= take; payLeft -= take;
+          if (payLeft <= 0.004){ payIdx++; payLeft = payIdx < pays.length ? pays[payIdx].amount : 0; }
+        }
+        amountPaid = round2(amountPaid);
+        var remaining = round2(amountDue - amountPaid);
+        return {
+          id: tenant.id + '-' + period.periodStart,
+          tenantId: tenant.id,
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+          dueDate: period.dueDate,
+          amountDue: amountDue,
+          amountPaid: amountPaid,
+          remaining: remaining,
+          status: computeStatus(period, amountPaid, remaining, asOfIso)
+        };
+      });
+    }
+
+    return { generateChargesForTenant: generateChargesForTenant };
+  })();
+
+  /**
+   * FASE 8 — OCR/AI bill extraction (sección de "Import Bill" del brief):
+   * servicio aislado que simula lo que haría un backend real de OCR/AI al
+   * analizar la foto o PDF de una factura. Como no hay backend, `extract()`
+   * genera datos plausibles (proveedor, tipo, importe, fechas) de forma
+   * determinista a partir del propio archivo, con una demora simulada, para
+   * que la arquitectura (cola -> "analizando" -> datos listos para revisar
+   * -> confirmar/editar) ya sea la misma que usaría un servicio real cuando
+   * se conecte más adelante.
+   */
+  var mockOcrService = (function(){
+    var TEMPLATES = [
+      { billType:'electricity', provider:'Synergy', amountRange:[180,360] },
+      { billType:'water', provider:'Water Corporation', amountRange:[90,200] },
+      { billType:'internet', provider:'Telstra', amountRange:[70,110] },
+      { billType:'gas', provider:'AGL', amountRange:[60,170] }
+    ];
+    function hashStr(s){
+      var h = 0;
+      for (var i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) | 0; }
+      return Math.abs(h);
+    }
+    function shiftDate(iso, days){
+      var d = new Date(iso + 'T00:00:00');
+      d.setDate(d.getDate() + days);
+      return toIsoLocal(d);
+    }
+    function monthStart(iso){ return iso.slice(0,7) + '-01'; }
+    function monthEnd(iso){
+      var d = new Date(iso + 'T00:00:00');
+      d.setMonth(d.getMonth()+1); d.setDate(0);
+      return toIsoLocal(d);
+    }
+    function round2(n){ return Math.round(n*100)/100; }
+
+    /** Simula analizar el archivo y devuelve campos estructurados editables antes de confirmar. */
+    function extract(item){
+      var seed = hashStr(item.id + '|' + (item.fileName||''));
+      var tpl = TEMPLATES[seed % TEMPLATES.length];
+      var span = tpl.amountRange[1] - tpl.amountRange[0];
+      var amount = round2(tpl.amountRange[0] + (seed % (span*100)) / 100);
+      var issueDate = shiftDate(TODAY, -(3 + (seed % 8)));
+      var dueDate = shiftDate(TODAY, 10 + (seed % 10));
+      return {
+        propertyId: 'prop-belmont',
+        billType: tpl.billType,
+        provider: tpl.provider,
+        invoiceNumber: tpl.provider.slice(0,3).toUpperCase() + '-' + (10000 + (seed % 89999)),
+        issueDate: issueDate,
+        dueDate: dueDate,
+        billingPeriodStart: monthStart(issueDate),
+        billingPeriodEnd: monthEnd(issueDate),
+        amount: amount
+      };
+    }
+    /** Demora simulada de "analizando…" antes de entregar el resultado (arquitectura async, igual que un servicio real). */
+    function analyze(item, callback){
+      setTimeout(function(){ callback(extract(item)); }, 900);
+    }
+    return { analyze: analyze };
+  })();
+
+  /**
+   * FASE 4 — Rent system (sección 9 del brief): los rent charges ya NO se
+   * escriben a mano. `rentService` (más abajo) los genera automáticamente a
+   * partir de un `RentSchedule` por inquilino (frecuencia, importe, fecha de
+   * inicio), aplicando los pagos registrados en orden cronológico (FIFO) para
+   * derivar amountPaid/remaining/status. Solo se conserva una ventana
+   * reciente por inquilino (el periodo anterior, el actual y el próximo) en
+   * vez de todo el historial desde el move-in, igual que haría la app real
+   * antes de tener una pantalla de "ver historial completo" (FASE 5).
+   */
+  var SEED_RENTSCHEDULES = [
+    { tenantId:'tenant-john', frequency:'weekly', amount:390, startDate:'2025-03-01' },
+    { tenantId:'tenant-maria', frequency:'weekly', amount:420, startDate:'2025-02-15' },
+    { tenantId:'tenant-pedro', frequency:'fortnightly', amount:780, startDate:'2026-09-21' }
+  ];
+  var RENTSCHEDULES_STORAGE_KEY = 'belmont-manager-rentschedules-v1';
+  function loadRentSchedules(){
+    try { var raw = localStorage.getItem(RENTSCHEDULES_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveRentSchedules(list){ try { localStorage.setItem(RENTSCHEDULES_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var rentSchedules = loadRentSchedules();
+  if (!rentSchedules){ rentSchedules = SEED_RENTSCHEDULES.slice(); saveRentSchedules(rentSchedules); }
+  // Pagos ya registrados (independientes de los rent charges: el generador
+  // los reparte contra los periodos que va creando). Maria paga religiosamente
+  // pero adelantó solo parte de la semana en curso; John no ha pagado nada
+  // recientemente, lo que da el ejemplo de "overdue" del brief.
+  var SEED_PAYMENTS = [
+    { id:'payment-maria-0', tenantId:'tenant-maria', amount:420, date:'2026-09-06' },
+    { id:'payment-maria-1', tenantId:'tenant-maria', amount:200, date:'2026-09-18' }
+  ];
+
+  /**
+   * FASE 5 — Payments (secciones 24-25 del brief): "Mark as Paid" y "Partial
+   * Payment" necesitan que los pagos sean estado real, no solo mock data.
+   * Se guardan en localStorage (misma limitación de seguridad que el resto
+   * de la app: solo en este navegador, sin cifrar — ver Settings). Si nunca
+   * se ha usado la app en este navegador, se parte de los pagos de ejemplo.
+   */
+  var PAYMENTS_STORAGE_KEY = 'belmont-manager-payments-v1';
+  function loadPayments(){
+    try {
+      var raw = localStorage.getItem(PAYMENTS_STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e){ /* localStorage no disponible: seguimos solo con datos de ejemplo */ }
+    return null;
+  }
+  function savePayments(list){
+    try { localStorage.setItem(PAYMENTS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ }
+  }
+  var paymentRecords = loadPayments();
+  if (!paymentRecords){ paymentRecords = SEED_PAYMENTS.slice(); savePayments(paymentRecords); }
+
+  /* ---------- FASE 13: Notifications (estado leído/no-leído persistido) ---------- */
+  var NOTIF_READ_KEY = 'belmont-manager-notif-read-v1';
+  function loadNotifRead(){
+    try { var raw = localStorage.getItem(NOTIF_READ_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return [];
+  }
+  function saveNotifRead(list){ try { localStorage.setItem(NOTIF_READ_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var notifReadIds = loadNotifRead();
+
+  var rentCharges = [];
+  function recomputeRentCharges(){
+    rentCharges = tenants
+      .filter(function(t){ return t.rentAmount > 0; })
+      .reduce(function(acc, t){
+        var schedule = rentSchedules.find(function(s){ return s.tenantId===t.id; });
+        return acc.concat(rentService.generateChargesForTenant(t, schedule, TODAY, paymentRecords));
+      }, [])
+      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+  }
+  recomputeRentCharges();
+
+  var paymentIdSeq = 0;
+  function recordPayment(tenantId, amount){
+    amount = Math.round(amount*100)/100;
+    if (!(amount > 0)) return;
+    paymentIdSeq++;
+    paymentRecords.push({ id:'payment-manual-'+TODAY+'-'+paymentIdSeq, tenantId:tenantId, amount:amount, date:TODAY });
+    savePayments(paymentRecords);
+    recomputeRentCharges();
+  }
+  function removePayment(paymentId){
+    paymentRecords = paymentRecords.filter(function(p){ return p.id !== paymentId; });
+    savePayments(paymentRecords);
+    recomputeRentCharges();
+  }
+  /** Paga esta charge y cualquier periodo anterior sin pagar del mismo inquilino (el ledger es FIFO). */
+  function markChargeAsPaid(chargeId){
+    var charge = rentCharges.find(function(c){ return c.id===chargeId; });
+    if (!charge) return;
+    var owed = rentCharges
+      .filter(function(c){ return c.tenantId===charge.tenantId && c.periodStart<=charge.periodStart; })
+      .reduce(function(sum,c){ return sum + c.remaining; }, 0);
+    recordPayment(charge.tenantId, owed);
+    render();
+  }
+
+  /* ---------- Modal: Partial payment ---------- */
+  var partialModalChargeId = null;
+  function openPartialModal(chargeId){
+    var charge = rentCharges.find(function(c){ return c.id===chargeId; });
+    if (!charge) return;
+    var t = tenantOf(charge.tenantId);
+    partialModalChargeId = chargeId;
+    document.getElementById('partial-modal-sub').textContent =
+      (t?t.fullName:'') + ' • remaining ' + money(charge.remaining);
+    var input = document.getElementById('partial-modal-input');
+    input.value = '';
+    input.max = charge.remaining;
+    document.getElementById('partial-modal').hidden = false;
+    input.focus();
+  }
+  function closePartialModal(){
+    document.getElementById('partial-modal').hidden = true;
+    partialModalChargeId = null;
+  }
+  function confirmPartialModal(){
+    var chargeId = partialModalChargeId;
+    var charge = rentCharges.find(function(c){ return c.id===chargeId; });
+    var input = document.getElementById('partial-modal-input');
+    var amount = parseFloat(input.value);
+    closePartialModal();
+    if (!charge || !isFinite(amount) || amount <= 0) return;
+    if (amount > charge.remaining) amount = charge.remaining; // no se admite sobrepago
+    recordPayment(charge.tenantId, amount);
+    render();
+  }
+
+  /* ---------- Modal: Payment history ---------- */
+  function openHistoryModal(tenantId){
+    var t = tenantOf(tenantId);
+    var pays = paymentRecords.filter(function(p){ return p.tenantId===tenantId; })
+      .slice().sort(function(a,b){ return b.date.localeCompare(a.date); });
+    document.getElementById('history-modal-title').textContent = (t?t.fullName:'') + ' — Payment history';
+    document.getElementById('history-modal-body').innerHTML = pays.length===0
+      ? '<p style="font-size:13px;color:var(--text-faint);margin:8px 0;">No payments recorded yet.</p>'
+      : pays.map(function(p){
+          return '<div class="history-row"><span>'+fullDate(p.date)+'</span>'+
+            '<span style="display:flex;align-items:center;gap:6px;font-weight:600;">'+money(p.amount)+
+            '<button class="del" title="Remove payment" onclick="removePaymentAndRefresh(\''+p.id+'\')">✕</button></span></div>';
+        }).join('');
+    document.getElementById('history-modal').hidden = false;
+  }
+  function closeHistoryModal(){ document.getElementById('history-modal').hidden = true; }
+  function removePaymentAndRefresh(paymentId){
+    var payment = paymentRecords.find(function(p){ return p.id===paymentId; });
+    removePayment(paymentId);
+    render();
+    if (payment) openHistoryModal(payment.tenantId);
+  }
+
+  window.markChargeAsPaid = markChargeAsPaid;
+  window.openPartialModal = openPartialModal;
+  window.closePartialModal = closePartialModal;
+  window.confirmPartialModal = confirmPartialModal;
+  window.openHistoryModal = openHistoryModal;
+  window.closeHistoryModal = closeHistoryModal;
+  window.removePaymentAndRefresh = removePaymentAndRefresh;
+  window.setPaymentsFilter = setPaymentsFilter;
+  window.setBillsFilter = setBillsFilter;
+
+  var bills = [
+    { id:'bill-electricity-sep', propertyId:'prop-belmont', provider:'Synergy', billType:'electricity', invoiceNumber:'SYN-88213', issueDate:'2026-09-10', dueDate:'2026-09-28', billingPeriodStart:'2026-09-01', billingPeriodEnd:'2026-09-30', amount:320, status:'pending', notes:'' },
+    { id:'bill-water-aug', propertyId:'prop-belmont', provider:'Water Corporation', billType:'water', invoiceNumber:'WC-410095', issueDate:'2026-08-05', dueDate:'2026-08-22', billingPeriodStart:'2026-08-01', billingPeriodEnd:'2026-08-31', amount:180, status:'paid', notes:'Paid by bank transfer on 20 August.' },
+    { id:'bill-internet-sep', propertyId:'prop-belmont', provider:'Telstra', billType:'internet', invoiceNumber:'TL-772341', issueDate:'2026-09-03', dueDate:'2026-09-17', billingPeriodStart:'2026-09-01', billingPeriodEnd:'2026-09-30', amount:90, status:'allocated', notes:'Split equally between the 3 tenants.',
+      allocationMethod:'equal',
+      allocations:[ { tenantId:'tenant-john', amount:30 }, { tenantId:'tenant-maria', amount:30 }, { tenantId:'tenant-pedro', amount:30 } ] },
+    { id:'bill-gas-jul', propertyId:'prop-belmont', provider:'AGL', billType:'gas', invoiceNumber:'AGL-560172', issueDate:'2026-07-08', dueDate:'2026-07-25', billingPeriodStart:'2026-06-01', billingPeriodEnd:'2026-07-31', amount:145, status:'pending', notes:'Payment was missed; check for late fees.' }
+  ];
+  /* ============ Utils ============ */
+  var currencyFmt = new Intl.NumberFormat('en-AU', { style:'currency', currency:'AUD', minimumFractionDigits:2 });
+  function money(n){ return currencyFmt.format(n); }
+  function shortDate(iso){
+    var d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-AU', { day:'2-digit', month:'short' });
+  }
+  function fullDate(iso){
+    var d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' });
+  }
+  function daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  /* ============ dashboardService (misma lógica que src/services/dashboardService.ts) ============ */
+  function isRoomOccupied(room){
+    return tenants.some(function(t){
+      if (t.roomId !== room.id || t.rentAmount <= 0) return false;
+      var movedIn = t.moveInDate <= TODAY;
+      var movedOut = t.actualMoveOutDate ? t.actualMoveOutDate <= TODAY : false;
+      return movedIn && !movedOut;
+    });
+  }
+  function getDashboardSummary(){
+    var occupied = rooms.filter(isRoomOccupied).length;
+    var expected = rentCharges.reduce(function(s,c){ return s+c.amountDue; },0);
+    var received = rentCharges.reduce(function(s,c){ return s+c.amountPaid; },0);
+    var outstanding = rentCharges.reduce(function(s,c){ return s+c.remaining; },0);
+    var overdueCount = rentCharges.filter(function(c){ return c.status==='overdue'; }).length;
+    var billsPending = bills.filter(function(b){ return b.status==='pending' || b.status==='partially_allocated'; }).length;
+    return {
+      totalProperties: properties.length,
+      occupiedRooms: occupied,
+      vacantRooms: rooms.length - occupied,
+      totalRentExpected: expected,
+      totalRentReceived: received,
+      totalOutstanding: outstanding,
+      overduePaymentsCount: overdueCount,
+      billsPendingCount: billsPending
+    };
+  }
+  function getNeedsAttention(){
+    return rentCharges
+      .filter(function(c){ return c.status==='overdue' || c.status==='partially_paid'; })
+      .map(function(c){
+        var tenant = tenants.find(function(t){ return t.id===c.tenantId; });
+        var room = rooms.find(function(r){ return r.id === (tenant && tenant.roomId); });
+        var property = properties.find(function(p){ return p.id === (tenant && tenant.propertyId); });
+        return {
+          chargeId: c.id,
+          tenantName: tenant ? tenant.fullName : 'Unknown tenant',
+          propertyName: property ? property.name : '—',
+          roomName: room ? room.name : '—',
+          amountRemaining: c.remaining,
+          status: c.status,
+          daysOverdue: c.status==='overdue' ? Math.max(0, daysBetween(c.dueDate, TODAY)) : 0
+        };
+      })
+      .sort(function(a,b){
+        if (a.status !== b.status) return a.status==='overdue' ? -1 : 1;
+        if (a.status==='overdue') return b.daysOverdue - a.daysOverdue;
+        return b.amountRemaining - a.amountRemaining;
+      });
+  }
+  function getUpcomingEvents(withinDays){
+    withinDays = withinDays || 14;
+    var limit = new Date(TODAY + 'T00:00:00'); limit.setDate(limit.getDate()+withinDays);
+    var limitIso = toIsoLocal(limit);
+    return buildCalendarEvents()
+      .filter(function(e){ return e.date >= TODAY && e.date <= limitIso; })
+      .sort(function(a,b){ return a.date.localeCompare(b.date); });
+  }
+  /**
+   * FASE 10 — Calendar (sección del brief): en vez de una lista de eventos
+   * escrita a mano, los eventos del calendario se DERIVAN de los mismos
+   * datos que ya generan Payments y Bills (rent charges, bills, tenants),
+   * igual que rentService genera los rent charges a partir del schedule.
+   * Así el calendario nunca puede quedar desincronizado de un pago
+   * registrado o un bill marcado como pagado.
+   */
+  function buildCalendarEvents(){
+    var events = [];
+    rentCharges.forEach(function(c){
+      if (c.status === 'paid') return; // ya resuelto, no aporta al calendario
+      var t = tenantOf(c.tenantId);
+      if (!t) return;
+      events.push({
+        date: c.dueDate,
+        kind: c.status === 'overdue' ? 'overdue' : 'due',
+        title: t.fullName + ' — Rent due',
+        href: '#/payments'
+      });
+    });
+    bills.forEach(function(b){
+      if (b.status === 'paid') return;
+      events.push({
+        date: b.dueDate,
+        kind: billEffectiveStatus(b) === 'overdue' ? 'overdue' : 'due',
+        title: b.provider + ' — Bill due',
+        href: '#/bills/' + b.id
+      });
+    });
+    tenants.forEach(function(t){
+      if (t.rentAmount <= 0) return; // owner: no genera eventos de tenancy
+      events.push({ date: t.moveInDate, kind: 'move', title: t.fullName + ' — Move-in', href: '#/tenants/' + t.id });
+      var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
+      if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: '#/tenants/' + t.id });
+    });
+    return events;
+  }
+  function pad2(n){ return n < 10 ? '0'+n : ''+n; }
+  /** Cuadrícula de un mes calendario ('YYYY-MM'): null = celda vacía de relleno; Lunes como primer día de la semana. */
+  function buildMonthGrid(yearMonth){
+    var year = parseInt(yearMonth.slice(0,4), 10);
+    var month = parseInt(yearMonth.slice(5,7), 10) - 1;
+    var firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Sun=0..Sat=6 -> Mon=0..Sun=6
+    var daysInMonth = new Date(year, month+1, 0).getDate();
+    var cells = [];
+    for (var i=0;i<firstWeekday;i++) cells.push(null);
+    for (var d=1; d<=daysInMonth; d++) cells.push(year+'-'+pad2(month+1)+'-'+pad2(d));
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }
+  var CALENDAR_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var calendarMonth = TODAY.slice(0,7);
+  function calendarShiftMonth(delta){
+    var year = parseInt(calendarMonth.slice(0,4), 10);
+    var month = parseInt(calendarMonth.slice(5,7), 10) - 1;
+    var d = new Date(year, month + delta, 1);
+    calendarMonth = d.getFullYear() + '-' + pad2(d.getMonth()+1);
+    render();
+  }
+  function calendarGoToday(){ calendarMonth = TODAY.slice(0,7); render(); }
+  window.calendarShiftMonth = calendarShiftMonth;
+  window.calendarGoToday = calendarGoToday;
+
+  /* ============ Icons ============ */
+  var ICONS = {
+    dashboard:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+    building:'<path d="M4 21V6l8-3 8 3v15"/><path d="M4 21h16"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1"/>',
+    tenants:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.4"/><path d="M14.8 12.5c2.4.1 4.4 2.3 4.7 5.5"/>',
+    payments:'<rect x="2.5" y="6" width="19" height="13" rx="2"/><path d="M2.5 10.5h19"/><path d="M6 15h4"/>',
+    receipt:'<path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5V3z"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+    calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+    chart:'<path d="M4 20V10M11 20V4M18 20v-7"/><path d="M2 20h20"/>',
+    document:'<path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/>',
+    bell:'<path d="M6 8a6 6 0 1 1 12 0c0 4 1.5 5.5 2 6.5H4c.5-1 2-2.5 2-6.5z"/><path d="M10 18.5a2 2 0 0 0 4 0"/>',
+    settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9c.2.6.8 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    more:'<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+    chevron:'<path d="M9 5l7 7-7 7"/>',
+    sun:'<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>',
+    moon:'<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+    camera:'<path d="M4 8h3l1.6-2.4A1 1 0 0 1 9.4 5h5.2a1 1 0 0 1 .8.6L16.8 8H20a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.4"/>',
+    gallery:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 16.5l-5.2-5.2-4 4-2.8-2.8L3 17"/>',
+    plus:'<path d="M12 5v14M5 12h14"/>',
+    inbox:'<path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13l3 7v8a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-8z"/>'
+  };
+  function svg(name, extra){
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'+(extra?' '+extra:'')+'>'+ICONS[name]+'</svg>';
+  }
+
+  /* ============ Navegación ============ */
+  var NAV = [
+    { hash:'#/', label:'Dashboard', icon:'dashboard', primary:true },
+    { hash:'#/properties', label:'Properties', icon:'building', primary:true },
+    { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:true },
+    { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
+    { hash:'#/bills', label:'Bills', icon:'receipt', primary:false },
+    { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
+    { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
+    { hash:'#/documents', label:'Documents', icon:'document', primary:false },
+    { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
+    { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
+  ];
+  var MORE = { hash:'#/more', label:'More', icon:'more' };
+
+  var sidebarNav = document.getElementById('sidebar-nav');
+  sidebarNav.innerHTML = NAV.map(function(item){
+    return '<a href="'+item.hash+'" data-hash="'+item.hash+'">'+svg(item.icon)+item.label+'</a>';
+  }).join('');
+
+  var bottomNav = document.getElementById('bottom-nav');
+  bottomNav.innerHTML = NAV.filter(function(i){ return i.primary; }).map(function(item){
+    return '<a href="'+item.hash+'" data-hash="'+item.hash+'">'+svg(item.icon)+item.label+'</a>';
+  }).join('') + '<a href="'+MORE.hash+'" data-hash="'+MORE.hash+'" data-more="1">'+svg(MORE.icon)+MORE.label+'</a>';
+
+  var importPickerBtns = document.querySelectorAll('#import-modal-picker .import-option');
+  var IMPORT_OPTIONS = [
+    ['camera','Take a photo'],
+    ['gallery','Choose from photos'],
+    ['pdf','Upload PDF']
+  ];
+  importPickerBtns.forEach(function(btn, i){
+    var opt = IMPORT_OPTIONS[i];
+    btn.innerHTML = svg(opt[0]==='pdf' ? 'document' : opt[0]) + '<span>'+opt[1]+'</span>';
+  });
+  document.getElementById('import-preview-file').innerHTML = svg('document') + '<span>PDF file</span>';
+
+  var reviewPropertySelect = document.getElementById('review-property');
+  reviewPropertySelect.innerHTML = properties.map(function(p){
+    return '<option value="'+p.id+'">'+esc(p.name)+'</option>';
+  }).join('');
+
+  var docTenantSelect = document.getElementById('doc-tenant');
+  docTenantSelect.innerHTML = tenants.filter(function(t){ return t.rentAmount>0; }).map(function(t){
+    return '<option value="'+t.id+'">'+esc(t.fullName)+'</option>';
+  }).join('');
+  document.getElementById('doc-preview-file').innerHTML = svg('document') + '<span>PDF file</span>';
+
+  function setActiveNav(hash){
+    var moreHashes = NAV.filter(function(i){ return !i.primary; }).map(function(i){ return i.hash; });
+    document.querySelectorAll('#sidebar-nav a, #bottom-nav a').forEach(function(a){
+      var h = a.getAttribute('data-hash');
+      var isMoreBtn = a.hasAttribute('data-more');
+      var isSection = h !== '#/' && hash.indexOf(h + '/') === 0;
+      var active = h === hash || isSection || (isMoreBtn && (hash === MORE.hash || moreHashes.indexOf(hash) > -1));
+      a.classList.toggle('active', active);
+    });
+  }
+
+  /* ============ Badges / filas reutilizables ============ */
+  function badge(status, label){
+    return '<span class="badge '+status+'"><span class="dot"></span>'+esc(label)+'</span>';
+  }
+
+  /* ============ Páginas ============ */
+  function pageHeader(title, sub){
+    return '<div><h1 class="page-title">'+title+'</h1><p class="page-sub">'+sub+'</p></div>';
+  }
+  /** Friendly empty state: icon (from ICONS/svg), a short headline, a one-line explanation, and an optional action button/link. */
+  function emptyState(iconName, title, sub, actionHtml){
+    return '<div class="placeholder-box">'+
+      '<div class="ph-icon">'+svg(iconName)+'</div>'+
+      '<p>'+esc(title)+'</p>'+
+      '<p class="sub">'+esc(sub)+'</p>'+
+      (actionHtml || '') +
+      '</div>';
+  }
+  /** Estado para un id de ruta dinámica que ya no existe (borrado, o link desactualizado). */
+  function notFoundState(entityLabel, backHash, backLabel){
+    return emptyState('inbox', entityLabel + ' not found',
+      "It may have been deleted, or the link is out of date.",
+      '<a class="mini-btn primary" href="'+backHash+'" style="display:inline-block;">'+esc(backLabel)+'</a>');
+  }
+
+  function renderDashboard(){
+    var s = getDashboardSummary();
+    var needs = getNeedsAttention();
+    var upcoming = getUpcomingEvents();
+
+    var stats = [
+      ['Properties', String(s.totalProperties), false],
+      ['Occupied rooms', String(s.occupiedRooms), false],
+      ['Vacant rooms', String(s.vacantRooms), false],
+      ['Overdue payments', String(s.overduePaymentsCount), s.overduePaymentsCount>0],
+      ['Rent expected', money(s.totalRentExpected), false],
+      ['Rent received', money(s.totalRentReceived), false],
+      ['Total outstanding', money(s.totalOutstanding), s.totalOutstanding>0],
+      ['Bills pending', String(s.billsPendingCount), false]
+    ];
+
+    var statHtml = '<div class="stat-grid">' + stats.map(function(st){
+      return '<div class="stat"><div class="label">'+st[0]+'</div><div class="value'+(st[2]?' warn':'')+'">'+st[1]+'</div></div>';
+    }).join('') + '</div>';
+
+    var needsHtml = '<div class="card"><h2>Needs attention</h2>' +
+      (needs.length===0
+        ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing needs attention right now.</p>'
+        : needs.map(function(item){
+            var b = item.status==='overdue'
+              ? badge('overdue', item.daysOverdue+' days overdue')
+              : badge('due', 'Partially Paid');
+            return '<div class="row"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
+              '<div class="meta">'+esc(item.propertyName)+' • '+esc(item.roomName)+'</div></div>'+
+              '<div style="display:flex;align-items:center;gap:10px;">'+
+              '<div class="amount">'+money(item.amountRemaining)+'<br/>'+b+'</div>'+
+              '<div style="display:flex;flex-direction:column;gap:6px;">'+
+              '<button class="view-btn" onclick="markChargeAsPaid(\''+item.chargeId+'\')">MARK AS PAID</button>'+
+              '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/payments\'">View</button>'+
+              '</div></div></div>';
+          }).join('')
+      ) + '</div>';
+
+    var upcomingHtml = '<div class="card"><h2>Upcoming</h2>' +
+      (upcoming.length===0
+        ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing coming up in the next two weeks.</p>'
+        : upcoming.map(function(e){
+            return '<div class="upcoming-row"><span class="date">'+shortDate(e.date)+'</span><span class="title">'+esc(e.title)+'</span></div>';
+          }).join('')
+      ) + '</div>';
+
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + statHtml + needsHtml + upcomingHtml;
+  }
+
+  function roomsOf(propertyId){ return rooms.filter(function(r){ return r.propertyId===propertyId; }); }
+  function currentTenantOf(roomId){ return tenants.find(function(t){ return t.roomId===roomId; }); }
+  function propertyOf(id){ return properties.find(function(p){ return p.id===id; }); }
+  function tenantOf(id){ return tenants.find(function(t){ return t.id===id; }); }
+  function bondOf(tenantId){ return bonds.find(function(b){ return b.tenantId===tenantId; }); }
+  function billOf(id){ return bills.find(function(b){ return b.id===id; }); }
+  function billsOf(propertyId){ return bills.filter(function(b){ return b.propertyId===propertyId; }); }
+  function backLink(hash, label){
+    return '<a class="back-link" href="'+hash+'">'+svg('chevron','style="transform:rotate(180deg)"')+label+'</a>';
+  }
+
+  function renderProperties(){
+    if (properties.length === 0){
+      return '<div class="detail-head" style="align-items:center;">'+
+        pageHeader('Properties', 'Manage your properties, rooms and occupancy.')+'</div>'+
+        emptyState('building', 'No properties yet',
+          'Add your first property to start tracking rooms, tenants and rent.',
+          '<button class="mini-btn primary" onclick="openPropertyModal()">+ Add property</button>');
+    }
+    var cards = properties.map(function(p){
+      var propRooms = roomsOf(p.id);
+      var occupied = propRooms.filter(function(r){ var t=currentTenantOf(r.id); return t && t.rentAmount>0; }).length;
+      var roomsHtml = propRooms.map(function(r){
+        var t = currentTenantOf(r.id);
+        var isPaying = t && t.rentAmount>0;
+        var tenantLabel = isPaying
+          ? esc(t.fullName)+' · $'+t.rentAmount+'/'+(t.rentFrequency==='weekly'?'week':t.rentFrequency)
+          : (t ? esc(t.fullName) : 'Vacant');
+        var inner = '<span class="rname">'+esc(r.name)+'</span><span class="rtenant">'+tenantLabel+'</span>';
+        return isPaying
+          ? '<a class="room-row linked" href="#/tenants/'+t.id+'">'+inner+'</a>'
+          : '<div class="room-row">'+inner+'</div>';
+      }).join('');
+      return '<div class="card prop-card">'+
+        '<a href="#/properties/'+p.id+'" style="display:block;text-decoration:none;color:inherit;"><div class="prop-head">'+
+        '<div><div class="prop-name">'+esc(p.name)+'</div><div class="prop-addr">'+esc(p.address)+'</div>'+
+        '<div class="prop-meta">'+p.bedrooms+' bedrooms • '+p.bathrooms+' bathrooms</div></div>'+
+        '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
+        '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div></a>'+
+        roomsHtml+'</div>';
+    }).join('');
+    return '<div class="detail-head" style="align-items:center;">'+
+      pageHeader('Properties', 'Manage your properties, rooms and occupancy.')+
+      '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openPropertyModal()">+ Add property</button></div>'+
+      cards;
+  }
+
+  function renderPropertyDetail(id){
+    var p = propertyOf(id);
+    if (!p){ return pageHeader('Property not found', '') + notFoundState('Property', '#/properties', 'Back to properties'); }
+    var propRooms = roomsOf(p.id);
+    var occupied = propRooms.filter(function(r){ var t=currentTenantOf(r.id); return t && t.rentAmount>0; }).length;
+    var propBills = billsOf(p.id);
+
+    var roomsHtml = propRooms.length===0
+      ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No rooms yet — add the first one to get started.</p>'
+      : propRooms.map(function(r){ return roomLine(r, p.id); }).join('');
+
+    return backLink('#/properties', 'Properties') +
+      '<div class="detail-head"><div><h1 class="page-title">'+esc(p.name)+'</h1>'+
+      '<p class="page-sub">'+esc(p.address)+'</p></div>'+
+      '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
+      '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div>'+
+      '<div class="actions-row">'+
+      '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
+      '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>'+
+      '</div>'+
+      '<div class="card"><div class="field-list">'+
+      '<div class="field-row"><span class="k">Bedrooms</span><span class="v">'+p.bedrooms+'</span></div>'+
+      '<div class="field-row"><span class="k">Bathrooms</span><span class="v">'+p.bathrooms+'</span></div>'+
+      (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
+      '</div></div>'+
+      '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Rooms</h2>'+
+      '<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">+ Add room</button></div>'+roomsHtml+'</div>'+
+      '<div class="card"><h2>Bills</h2>'+
+      (propBills.length===0
+        ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No bills recorded for this property yet.</p>'
+        : propBills.map(billCard).join(''))+
+      '</div>';
+  }
+
+  function renderTenants(){
+    var paying = tenants.filter(function(t){ return t.rentAmount>0; });
+    var header = '<div class="detail-head" style="align-items:center;">'+
+      pageHeader('Tenants', 'Everyone renting from you, and their lease details.')+
+      '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openTenantModal()">+ Add tenant</button></div>';
+    if (paying.length === 0){
+      return header + emptyState('tenants', 'No tenants yet',
+        properties.length === 0
+          ? 'Add a property and a room first, then add your first tenant.'
+          : 'Add a tenant to start tracking rent, bonds and move-in dates.',
+        properties.length === 0
+          ? '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>'
+          : '<button class="mini-btn primary" onclick="openTenantModal()">+ Add tenant</button>');
+    }
+    var rows = paying.map(function(t){
+      var p = propertyOf(t.propertyId);
+      return '<a class="card" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
+        '<div class="row" style="border:none;padding:0;">'+
+        '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
+        '<div class="meta">'+esc(p?p.name:'')+' • Since '+shortDate(t.moveInDate)+'</div></div>'+
+        '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
+        '</div></a>';
+    }).join('');
+    return header + rows;
+  }
+
+  var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
+
+  function renderTenantDetail(id){
+    var t = tenantOf(id);
+    if (!t){ return pageHeader('Tenant not found', '') + notFoundState('Tenant', '#/tenants', 'Back to tenants'); }
+    var p = propertyOf(t.propertyId);
+    var room = rooms.find(function(r){ return r.id===t.roomId; });
+    var bond = bondOf(t.id);
+    var currentCharge = pickCurrentCharge(rentCharges.filter(function(c){ return c.tenantId===t.id; }), TODAY);
+
+    var tenancyBadge = '';
+    if (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY) tenancyBadge = badge('move', 'Moved out');
+    else if (t.moveInDate > TODAY) tenancyBadge = badge('move', 'Upcoming move-in');
+    else if (t.rentAmount > 0) tenancyBadge = badge('neutral', 'Current tenant');
+
+    var contactRows = '' +
+      (t.phone ? '<div class="field-row"><span class="k">Phone</span><span class="v">'+esc(t.phone)+'</span></div>' : '') +
+      (t.email ? '<div class="field-row"><span class="k">Email</span><span class="v">'+esc(t.email)+'</span></div>' : '') +
+      '<div class="field-row"><span class="k">Property</span><span class="v"><a href="#/properties/'+(p?p.id:'')+'">'+esc(p?p.name:'—')+'</a></span></div>'+
+      '<div class="field-row"><span class="k">Room</span><span class="v">'+esc(room?room.name:'—')+'</span></div>';
+
+    var datesRows = '' +
+      '<div class="field-row"><span class="k">Move-in</span><span class="v">'+fullDate(t.moveInDate)+'</span></div>'+
+      (t.expectedMoveOutDate ? '<div class="field-row"><span class="k">Expected move-out</span><span class="v">'+fullDate(t.expectedMoveOutDate)+'</span></div>' : '') +
+      (t.actualMoveOutDate ? '<div class="field-row"><span class="k">Actual move-out</span><span class="v">'+fullDate(t.actualMoveOutDate)+'</span></div>' : '');
+
+    var rentRows = t.rentAmount > 0 ? (
+      '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+t.rentFrequency+'</span></div>'+
+      '<div class="field-row"><span class="k">Payment day</span><span class="v">'+paymentDayLabel(t)+'</span></div>' +
+      (currentCharge ? '<div class="field-row"><span class="k">Current charge</span><span class="v">'+chargeStatusBadge(currentCharge)+'</span></div>' : '')
+    ) : '';
+
+    var bondRows = bond ? (
+      '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
+      '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
+      '<div class="field-row"><span class="k">Status</span><span class="v">'+esc(BOND_STATUS_LABEL[bond.status]||bond.status)+'</span></div>'
+    ) : '';
+
+    return backLink('#/tenants', 'Tenants') +
+      '<div class="detail-head"><div><h1 class="page-title">'+esc(t.fullName)+'</h1>'+
+      '<p class="page-sub">'+esc(p?p.name:'')+(room?' • '+esc(room.name):'')+'</p></div>'+
+      (tenancyBadge?'<div>'+tenancyBadge+'</div>':'')+'</div>'+
+      '<div class="actions-row">'+
+      '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
+      '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
+      '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>'+
+      '</div>'+
+      '<div class="card"><h2>Contact</h2><div class="field-list">'+contactRows+'</div></div>'+
+      (rentRows ? '<div class="card"><h2>Rent</h2><div class="field-list">'+rentRows+'</div></div>' : '') +
+      (bondRows ? '<div class="card"><h2>Bond</h2><div class="field-list">'+bondRows+'</div></div>' : '') +
+      '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
+      (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
+  }
+
+  function paymentDayLabel(t){
+    if (t.rentFrequency==='monthly') return 'Day '+t.paymentDay+' of the month';
+    var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return days[t.paymentDay] || ('Day '+t.paymentDay);
+  }
+  function chargeStatusBadge(c){
+    var map = { paid:['paid','Paid'], due:['due','Due Soon'], partially_paid:['due','Partially Paid'], overdue:['overdue','Overdue'], upcoming:['upcoming','Upcoming'] };
+    var m = map[c.status] || ['neutral', c.status];
+    return badge(m[0], m[1]);
+  }
+  /** Estado efectivo de un bill: si sigue pendiente y ya pasó su fecha de vencimiento, se muestra como overdue. */
+  function billEffectiveStatus(b){
+    if (b.status === 'pending' && b.dueDate < TODAY) return 'overdue';
+    return b.status;
+  }
+  function billStatusBadge(b){
+    var map = { paid:['paid','Paid'], pending:['due','Pending'], overdue:['overdue','Overdue'], allocated:['upcoming','Allocated'], partially_allocated:['due','Partially Allocated'] };
+    var m = map[billEffectiveStatus(b)] || ['neutral', b.status];
+    return badge(m[0], m[1]);
+  }
+  /** El cargo "actual" es el que contiene hoy; si no hay ninguno, el próximo futuro; si no, el último pasado. */
+  function pickCurrentCharge(charges, asOfIso){
+    var containing = charges.find(function(c){ return c.periodStart<=asOfIso && c.periodEnd>=asOfIso; });
+    if (containing) return containing;
+    var future = charges.filter(function(c){ return c.periodStart>asOfIso; })
+      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+    if (future.length) return future[0];
+    var past = charges.filter(function(c){ return c.periodEnd<asOfIso; })
+      .sort(function(a,b){ return b.periodEnd.localeCompare(a.periodEnd); });
+    return past[0];
+  }
+
+  var paymentsFilter = 'all';
+  var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
+  function setPaymentsFilter(f){ paymentsFilter = f; render(); }
+  function chargeMatchesFilter(c, filter){
+    if (filter==='paid') return c.status==='paid';
+    if (filter==='overdue') return c.status==='overdue';
+    if (filter==='due') return c.status==='due' || c.status==='partially_paid';
+    return true; // 'all' — incluye también 'upcoming', que no tiene chip propio
+  }
+
+  function renderPayments(){
+    var expected = rentCharges.reduce(function(s,c){ return s+c.amountDue; },0);
+    var received = rentCharges.reduce(function(s,c){ return s+c.amountPaid; },0);
+    var outstanding = rentCharges.reduce(function(s,c){ return s+c.remaining; },0);
+
+    var statHtml = '<div class="stat-grid cols-3">'+
+      '<div class="stat"><div class="label">Expected</div><div class="value">'+money(expected)+'</div></div>'+
+      '<div class="stat"><div class="label">Received</div><div class="value">'+money(received)+'</div></div>'+
+      '<div class="stat"><div class="label">Outstanding</div><div class="value'+(outstanding>0?' warn':'')+'">'+money(outstanding)+'</div></div>'+
+      '</div>';
+
+    var chipsHtml = '<div class="filter-chips">' + PAYMENTS_FILTERS.map(function(f){
+      return '<button class="chip'+(paymentsFilter===f[0]?' active':'')+'" onclick="setPaymentsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
+    }).join('') + '</div>';
+
+    var filtered = rentCharges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); });
+
+    var rows = filtered.length===0
+      ? (rentCharges.length===0
+          ? emptyState('payments', 'No rent charges yet',
+              'Add a tenant with a rent amount and charges will show up here automatically.',
+              '<a class="mini-btn primary" href="#/tenants" style="display:inline-block;">Go to tenants</a>')
+          : emptyState('payments', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every charge.', ''))
+      : filtered.map(function(c){
+          var t = tenantOf(c.tenantId);
+          var actions = c.status !== 'paid'
+            ? '<div style="display:flex;gap:8px;margin-top:10px;">'+
+              '<button class="mini-btn primary" onclick="markChargeAsPaid(\''+c.id+'\')">Mark as Paid</button>'+
+              '<button class="mini-btn" onclick="openPartialModal(\''+c.id+'\')">Partial payment</button>'+
+              '</div>'
+            : '';
+          return '<div class="card">'+
+            '<div class="row" style="border:none;padding:0;">'+
+            '<div class="who"><div class="name">'+esc(t?t.fullName:'')+'</div>'+
+            '<div class="meta">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</div></div>'+
+            '<div class="amount">'+money(c.remaining)+'<br/>'+chargeStatusBadge(c)+'</div>'+
+            '</div>'+actions+
+            '<button class="text-link" onclick="openHistoryModal(\''+c.tenantId+'\')">View history</button>'+
+            '</div>';
+        }).join('');
+
+    return pageHeader('Payments', "What tenants owe, what they've paid, and what's outstanding.") + statHtml + chipsHtml + rows;
+  }
+
+  var billsFilter = 'all';
+  var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['paid','Paid']];
+  function setBillsFilter(f){ billsFilter = f; render(); }
+  function billMatchesFilter(b, filter){
+    if (filter==='all') return true;
+    return billEffectiveStatus(b) === filter;
+  }
+
+  /* ---------- Import bill (FASE 7: solo la UI de captura; OCR llega después) ---------- */
+  var importQueue = [];
+  var pendingImportFile = null;
+
+  function triggerImportInput(kind){
+    var inputId = kind==='camera' ? 'import-input-camera' : kind==='gallery' ? 'import-input-gallery' : 'import-input-pdf';
+    document.getElementById(inputId).click();
+  }
+  function handleImportFile(evt){
+    var file = evt.target.files && evt.target.files[0];
+    evt.target.value = ''; // permite volver a elegir el mismo archivo más tarde
+    if (!file) return;
+    if (pendingImportFile && pendingImportFile.previewUrl) URL.revokeObjectURL(pendingImportFile.previewUrl);
+    var isImage = file.type.indexOf('image/') === 0;
+    pendingImportFile = {
+      fileName: file.name || (isImage ? 'photo.jpg' : 'document.pdf'),
+      kind: isImage ? 'image' : 'pdf',
+      previewUrl: URL.createObjectURL(file)
+    };
+    renderImportPreview();
+  }
+  function renderImportPreview(){
+    var picker = document.getElementById('import-modal-picker');
+    var preview = document.getElementById('import-modal-preview');
+    var img = document.getElementById('import-preview-img');
+    var fileChip = document.getElementById('import-preview-file');
+    var nameEl = document.getElementById('import-preview-name');
+    var confirmBtn = document.getElementById('import-modal-confirm');
+    if (!pendingImportFile){
+      picker.hidden = false; preview.hidden = true; confirmBtn.hidden = true;
+      img.hidden = true; fileChip.hidden = true;
+      return;
+    }
+    picker.hidden = true; preview.hidden = false; confirmBtn.hidden = false;
+    if (pendingImportFile.kind === 'image'){
+      img.src = pendingImportFile.previewUrl; img.hidden = false; fileChip.hidden = true;
+    } else {
+      img.hidden = true; fileChip.hidden = false;
+    }
+    nameEl.textContent = pendingImportFile.fileName;
+  }
+  function openImportModal(){
+    pendingImportFile = null;
+    renderImportPreview();
+    document.getElementById('import-modal').hidden = false;
+  }
+  function closeImportModal(){
+    if (pendingImportFile && pendingImportFile.previewUrl) URL.revokeObjectURL(pendingImportFile.previewUrl);
+    pendingImportFile = null;
+    document.getElementById('import-modal').hidden = true;
+  }
+  function confirmImportBill(){
+    if (!pendingImportFile) return;
+    var item = {
+      id: 'import-' + Date.now() + '-' + Math.round(Math.random()*1000),
+      fileName: pendingImportFile.fileName,
+      kind: pendingImportFile.kind,
+      previewUrl: pendingImportFile.previewUrl,
+      addedAt: TODAY,
+      status: 'processing', // 'processing' -> 'ready' (una vez que el mock OCR entrega los datos)
+      extracted: null
+    };
+    importQueue.push(item);
+    pendingImportFile = null;
+    document.getElementById('import-modal').hidden = true;
+    render();
+    mockOcrService.analyze(item, function(data){
+      var current = importQueue.find(function(i){ return i.id===item.id; });
+      if (!current) return; // se eliminó de la cola mientras se "analizaba"
+      current.status = 'ready';
+      current.extracted = data;
+      render();
+    });
+  }
+  function removeImportQueueItem(id){
+    var item = importQueue.find(function(i){ return i.id===id; });
+    if (item && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    importQueue = importQueue.filter(function(i){ return i.id!==id; });
+    render();
+  }
+  function importQueueCard(){
+    if (importQueue.length === 0) return '';
+    var rows = importQueue.map(function(item){
+      var statusBit = item.status === 'ready'
+        ? badge('upcoming', 'Ready to review')
+        : badge('neutral', 'Analyzing…');
+      var actionBtn = item.status === 'ready'
+        ? '<button class="mini-btn primary" onclick="openReviewModal(\''+item.id+'\')">Review</button>'
+        : '';
+      return '<div class="row" style="border:none;padding:8px 0;">'+
+        '<div class="who"><div class="name">'+esc(item.fileName)+'</div>'+
+        '<div class="meta">added '+shortDate(item.addedAt)+'</div></div>'+
+        '<div style="display:flex;align-items:center;gap:8px;">'+statusBit+actionBtn+
+        '<button class="del" title="Remove" onclick="removeImportQueueItem(\''+item.id+'\')">✕</button></div></div>';
+    }).join('');
+    return '<div class="card"><h2>Pending review ('+importQueue.length+')</h2>'+
+      '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 4px;">Our mock analysis service reads the details from each bill — check them before saving.</p>'+
+      rows+'</div>';
+  }
+
+  /* ---------- Review extracted data (revisar/editar antes de confirmar) ---------- */
+  var reviewItemId = null;
+  function openReviewModal(itemId){
+    var item = importQueue.find(function(i){ return i.id===itemId; });
+    if (!item || !item.extracted) return;
+    reviewItemId = itemId;
+    var d = item.extracted;
+    document.getElementById('review-property').value = d.propertyId;
+    document.getElementById('review-billtype').value = d.billType;
+    document.getElementById('review-provider').value = d.provider;
+    document.getElementById('review-invoice').value = d.invoiceNumber;
+    document.getElementById('review-issue').value = d.issueDate;
+    document.getElementById('review-due').value = d.dueDate;
+    document.getElementById('review-period-start').value = d.billingPeriodStart;
+    document.getElementById('review-period-end').value = d.billingPeriodEnd;
+    document.getElementById('review-amount').value = d.amount;
+    document.getElementById('review-modal-error').hidden = true;
+    document.getElementById('review-modal').hidden = false;
+  }
+  function closeReviewModal(){
+    reviewItemId = null;
+    document.getElementById('review-modal').hidden = true;
+  }
+  function discardReviewItem(){
+    if (reviewItemId) removeImportQueueItem(reviewItemId);
+    closeReviewModal();
+  }
+  function confirmReviewedBill(){
+    var provider = document.getElementById('review-provider').value.trim();
+    var invoiceNumber = document.getElementById('review-invoice').value.trim();
+    var issueDate = document.getElementById('review-issue').value;
+    var dueDate = document.getElementById('review-due').value;
+    var periodStart = document.getElementById('review-period-start').value;
+    var periodEnd = document.getElementById('review-period-end').value;
+    var amount = parseFloat(document.getElementById('review-amount').value);
+    var errorEl = document.getElementById('review-modal-error');
+
+    if (!provider || !issueDate || !dueDate || !periodStart || !periodEnd || !isFinite(amount) || amount <= 0){
+      errorEl.textContent = 'Add a provider, both dates and a valid amount before saving.';
+      errorEl.hidden = false;
+      return;
+    }
+
+    bills.push({
+      id: 'bill-import-' + Date.now(),
+      propertyId: document.getElementById('review-property').value,
+      provider: provider,
+      billType: document.getElementById('review-billtype').value,
+      invoiceNumber: invoiceNumber,
+      issueDate: issueDate,
+      dueDate: dueDate,
+      billingPeriodStart: periodStart,
+      billingPeriodEnd: periodEnd,
+      amount: Math.round(amount*100)/100,
+      status: 'pending',
+      notes: 'Imported from ' + (importQueue.find(function(i){ return i.id===reviewItemId; })||{}).fileName + ' (details extracted automatically and reviewed before saving).'
+    });
+    removeImportQueueItem(reviewItemId);
+    closeReviewModal();
+    location.hash = '#/bills';
+    render();
+  }
+
+  window.triggerImportInput = triggerImportInput;
+  window.handleImportFile = handleImportFile;
+  window.openImportModal = openImportModal;
+  window.closeImportModal = closeImportModal;
+  window.confirmImportBill = confirmImportBill;
+  window.removeImportQueueItem = removeImportQueueItem;
+  window.openReviewModal = openReviewModal;
+  window.closeReviewModal = closeReviewModal;
+  window.discardReviewItem = discardReviewItem;
+  window.confirmReviewedBill = confirmReviewedBill;
+
+  /* ---------- Bill allocation (FASE 9): repartir un bill entre los inquilinos que ocuparon la propiedad ---------- */
+  function tenantsOfProperty(propertyId){
+    return tenants.filter(function(t){ return t.propertyId===propertyId && t.rentAmount>0; });
+  }
+  /** Días de solapamiento (inclusive) entre la estancia de un inquilino y el periodo de un bill. */
+  function occupiedDaysInRange(tenant, rangeStart, rangeEnd){
+    var tenantEnd = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || rangeEnd;
+    var start = tenant.moveInDate > rangeStart ? tenant.moveInDate : rangeStart;
+    var end = tenantEnd < rangeEnd ? tenantEnd : rangeEnd;
+    var days = daysBetween(start, end) + 1;
+    return Math.max(0, days);
+  }
+  function round2(n){ return Math.round(n*100)/100; }
+
+  var allocationDraft = null; // { billId, method, periodDays, rows:[{tenantId,name,days,amount}] }
+
+  /** Reparte `total` entre `weights` (proporcional), ajustando el redondeo en la fila con mayor peso para que la suma cuadre exacto. */
+  function splitByWeights(total, weights){
+    var sumW = weights.reduce(function(s,w){ return s+w; }, 0);
+    if (sumW <= 0) return weights.map(function(){ return 0; });
+    var amounts = weights.map(function(w){ return round2(total * w / sumW); });
+    var diff = round2(total - amounts.reduce(function(s,a){ return s+a; }, 0));
+    if (diff !== 0){
+      var maxIdx = 0;
+      for (var i=1;i<weights.length;i++){ if (weights[i]>weights[maxIdx]) maxIdx = i; }
+      amounts[maxIdx] = round2(amounts[maxIdx] + diff);
+    }
+    return amounts;
+  }
+
+  function computeAllocationRows(bill, method){
+    var propTenants = tenantsOfProperty(bill.propertyId);
+    var days = propTenants.map(function(t){ return occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd); });
+    var amounts;
+    if (method === 'days'){
+      amounts = splitByWeights(bill.amount, days);
+    } else { // 'equal' y el punto de partida de 'custom'
+      amounts = splitByWeights(bill.amount, propTenants.map(function(){ return 1; }));
+    }
+    return propTenants.map(function(t, i){
+      return { tenantId: t.id, name: t.fullName, days: days[i], amount: amounts[i] };
+    });
+  }
+
+  function openAllocateModal(billId){
+    var bill = billOf(billId);
+    if (!bill) return;
+    var totalDays = daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1;
+    var rows = bill.allocations
+      ? bill.allocations.map(function(a){
+          var t = tenantOf(a.tenantId);
+          return { tenantId:a.tenantId, name:t?t.fullName:a.tenantId,
+            days: t?occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd):0, amount:a.amount };
+        })
+      : computeAllocationRows(bill, 'equal');
+    allocationDraft = { billId: billId, method: bill.allocations ? 'custom' : 'equal', periodDays: totalDays, rows: rows };
+    document.getElementById('allocate-modal-sub').textContent =
+      esc(bill.provider) + ' • ' + money(bill.amount) + ' • ' + shortDate(bill.billingPeriodStart) + ' – ' + shortDate(bill.billingPeriodEnd);
+    renderAllocateModal();
+    document.getElementById('allocate-modal').hidden = false;
+  }
+  function closeAllocateModal(){
+    allocationDraft = null;
+    document.getElementById('allocate-modal').hidden = true;
+  }
+  function setAllocationMethod(method){
+    if (!allocationDraft) return;
+    var bill = billOf(allocationDraft.billId);
+    allocationDraft.method = method;
+    if (method === 'custom'){
+      // Parte de la última distribución visible en pantalla en vez de resetear a cero.
+      allocationDraft.rows = allocationDraft.rows.slice();
+    } else {
+      allocationDraft.rows = computeAllocationRows(bill, method);
+    }
+    renderAllocateModal();
+  }
+  var ALLOCATION_METHOD_NOTES = {
+    equal: 'The amount is split equally between every tenant at the property.',
+    days: "The amount is split based on how many days each tenant lived there during the bill's period.",
+    custom: "Set each tenant's amount by hand. The total must match the bill's amount exactly."
+  };
+  function renderAllocateModal(){
+    if (!allocationDraft) return;
+    document.querySelectorAll('#allocate-method-chips .chip').forEach(function(btn, i){
+      var methods = ['equal','days','custom'];
+      btn.classList.toggle('active', methods[i] === allocationDraft.method);
+    });
+    document.getElementById('allocate-method-note').textContent = ALLOCATION_METHOD_NOTES[allocationDraft.method] || '';
+    document.getElementById('allocate-rows').innerHTML = allocationDraft.rows.map(function(row, i){
+      return '<div class="alloc-row"><div class="who"><div>'+esc(row.name)+'</div>'+
+        '<div class="meta">'+row.days+' / '+allocationDraft.periodDays+' days occupied</div></div>'+
+        '<input class="alloc-amount-input" type="number" min="0" step="0.01" value="'+row.amount.toFixed(2)+'" '+
+        'oninput="updateAllocationRow('+i+', this.value)" /></div>';
+    }).join('');
+    updateAllocationTotals();
+  }
+  function updateAllocationRow(index, value){
+    if (!allocationDraft) return;
+    var n = parseFloat(value);
+    allocationDraft.rows[index].amount = isFinite(n) ? n : 0;
+    updateAllocationTotals();
+  }
+  function updateAllocationTotals(){
+    if (!allocationDraft) return;
+    var bill = billOf(allocationDraft.billId);
+    var sum = round2(allocationDraft.rows.reduce(function(s,r){ return s+(r.amount||0); }, 0));
+    var diff = round2(bill.amount - sum);
+    var el = document.getElementById('allocate-total-text');
+    if (Math.abs(diff) < 0.005){
+      el.innerHTML = '<span class="diff-ok">'+money(sum)+' of '+money(bill.amount)+' ✓</span>';
+    } else {
+      el.innerHTML = '<span class="diff-bad">'+money(sum)+' of '+money(bill.amount)+' ('+(diff>0?'short by ':'over by ')+money(Math.abs(diff))+')</span>';
+    }
+    document.getElementById('allocate-modal-error').hidden = true;
+  }
+  function confirmAllocation(){
+    if (!allocationDraft) return;
+    var bill = billOf(allocationDraft.billId);
+    var sum = round2(allocationDraft.rows.reduce(function(s,r){ return s+(r.amount||0); }, 0));
+    var diff = round2(bill.amount - sum);
+    if (Math.abs(diff) >= 0.005){
+      var errorEl = document.getElementById('allocate-modal-error');
+      errorEl.textContent = 'The total allocated must match the bill amount before you confirm.';
+      errorEl.hidden = false;
+      return;
+    }
+    bill.allocations = allocationDraft.rows.map(function(r){ return { tenantId:r.tenantId, amount:round2(r.amount) }; });
+    bill.allocationMethod = allocationDraft.method;
+    if (bill.status === 'pending') bill.status = 'allocated';
+    closeAllocateModal();
+    render();
+  }
+  window.openAllocateModal = openAllocateModal;
+  window.closeAllocateModal = closeAllocateModal;
+  window.setAllocationMethod = setAllocationMethod;
+  window.updateAllocationRow = updateAllocationRow;
+  window.confirmAllocation = confirmAllocation;
+
+  /* ---------- FASE 12: Documents (lease agreements, ID copies, otros) ---------- */
+  var tenantDocuments = [];
+  var pendingDocFile = null;
+  function triggerDocInput(kind){
+    var inputId = kind==='camera' ? 'doc-input-camera' : kind==='gallery' ? 'doc-input-gallery' : 'doc-input-pdf';
+    document.getElementById(inputId).click();
+  }
+  function handleDocFile(evt){
+    var file = evt.target.files && evt.target.files[0];
+    evt.target.value = '';
+    if (!file) return;
+    if (pendingDocFile && pendingDocFile.previewUrl) URL.revokeObjectURL(pendingDocFile.previewUrl);
+    var isImage = file.type.indexOf('image/') === 0;
+    pendingDocFile = {
+      fileName: file.name || (isImage ? 'photo.jpg' : 'document.pdf'),
+      kind: isImage ? 'image' : 'pdf',
+      previewUrl: URL.createObjectURL(file)
+    };
+    renderDocPreview();
+  }
+  function renderDocPreview(){
+    var picker = document.getElementById('doc-modal-picker');
+    var preview = document.getElementById('doc-modal-preview');
+    var img = document.getElementById('doc-preview-img');
+    var fileChip = document.getElementById('doc-preview-file');
+    var nameEl = document.getElementById('doc-preview-name');
+    var confirmBtn = document.getElementById('doc-modal-confirm');
+    if (!pendingDocFile){
+      picker.hidden = false; preview.hidden = true; confirmBtn.hidden = true;
+      img.hidden = true; fileChip.hidden = true;
+      return;
+    }
+    picker.hidden = true; preview.hidden = false; confirmBtn.hidden = false;
+    if (pendingDocFile.kind === 'image'){
+      img.src = pendingDocFile.previewUrl; img.hidden = false; fileChip.hidden = true;
+    } else {
+      img.hidden = true; fileChip.hidden = false;
+    }
+    nameEl.textContent = pendingDocFile.fileName;
+  }
+  function openDocModal(){
+    pendingDocFile = null;
+    renderDocPreview();
+    document.getElementById('doc-modal').hidden = false;
+  }
+  function closeDocModal(){
+    if (pendingDocFile && pendingDocFile.previewUrl) URL.revokeObjectURL(pendingDocFile.previewUrl);
+    pendingDocFile = null;
+    document.getElementById('doc-modal').hidden = true;
+  }
+  function confirmAddDocument(){
+    if (!pendingDocFile) return;
+    tenantDocuments.push({
+      id: 'doc-' + Date.now() + '-' + Math.round(Math.random()*1000),
+      tenantId: document.getElementById('doc-tenant').value,
+      docType: document.getElementById('doc-type').value,
+      fileName: pendingDocFile.fileName,
+      kind: pendingDocFile.kind,
+      previewUrl: pendingDocFile.previewUrl,
+      addedAt: TODAY
+    });
+    pendingDocFile = null;
+    document.getElementById('doc-modal').hidden = true;
+    render();
+  }
+  function removeTenantDocument(id){
+    var doc = tenantDocuments.find(function(d){ return d.id===id; });
+    if (doc && doc.previewUrl) URL.revokeObjectURL(doc.previewUrl);
+    tenantDocuments = tenantDocuments.filter(function(d){ return d.id!==id; });
+    render();
+  }
+  window.triggerDocInput = triggerDocInput;
+  window.handleDocFile = handleDocFile;
+  window.openDocModal = openDocModal;
+  window.closeDocModal = closeDocModal;
+  window.confirmAddDocument = confirmAddDocument;
+  window.removeTenantDocument = removeTenantDocument;
+
+  var DOC_TYPE_LABEL = { lease:'Lease agreement', id:'ID copy', other:'Other' };
+  function renderDocuments(){
+    var tenantDocsHtml = tenantDocuments.length === 0
+      ? emptyState('document', 'No tenant documents yet',
+          'Save a lease agreement, ID copy or other file for a tenant.',
+          '<button class="mini-btn primary" onclick="openDocModal()">+ Add document</button>')
+      : '<div class="card">' + tenantDocuments.map(function(d){
+          var t = tenantOf(d.tenantId);
+          return '<div class="row" style="border:none;padding:8px 0;">'+
+            '<div class="who"><div class="name">'+esc(t?t.fullName:'—')+' — '+esc(DOC_TYPE_LABEL[d.docType]||'Other')+'</div>'+
+            '<div class="meta">'+esc(d.fileName)+' • added '+shortDate(d.addedAt)+'</div></div>'+
+            '<button class="del" title="Remove" onclick="removeTenantDocument(\''+d.id+'\')">✕</button></div>';
+        }).join('') + '</div>';
+
+    var billsSectionHtml = '<h2 style="margin:18px 0 10px;font-size:13px;font-weight:650;color:var(--text-dim);'+
+      'text-transform:uppercase;letter-spacing:.04em;">Bills</h2>' +
+      (bills.length === 0
+        ? emptyState('receipt', 'No bills yet', 'Bills you add will show up here too.', '')
+        : bills.map(billCard).join(''));
+
+    return pageHeader('Documents', 'Bills, leases, ID copies and everything else on file.') +
+      '<div class="detail-head" style="align-items:center;"><h2 style="margin:0;">Tenant documents</h2>'+
+      '<button class="mini-btn primary" onclick="openDocModal()">+ Add document</button></div>'+
+      tenantDocsHtml + billsSectionHtml;
+  }
+
+  function billCard(b){
+    var p = propertyOf(b.propertyId);
+    return '<a class="card" style="display:block;text-decoration:none;color:inherit;" href="#/bills/'+b.id+'">'+
+      '<div class="row" style="border:none;padding:0;">'+
+      '<div class="who"><div class="name" style="text-transform:capitalize;">'+esc(b.billType)+'</div>'+
+      '<div class="meta">'+esc(b.provider)+' • '+esc(p?p.name:'—')+' • '+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</div></div>'+
+      '<div class="amount">'+money(b.amount)+'<br/>'+billStatusBadge(b)+'</div>'+
+      '</div></a>';
+  }
+
+  function renderBills(){
+    var pendingTotal = bills.filter(function(b){ return b.status!=='paid'; }).reduce(function(s,b){ return s+b.amount; },0);
+    var overdueCount = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).length;
+    var paidTotal = bills.filter(function(b){ return b.status==='paid'; }).reduce(function(s,b){ return s+b.amount; },0);
+
+    var statHtml = '<div class="stat-grid cols-3">'+
+      '<div class="stat"><div class="label">Pending</div><div class="value'+(pendingTotal>0?' warn':'')+'">'+money(pendingTotal)+'</div></div>'+
+      '<div class="stat"><div class="label">Overdue</div><div class="value'+(overdueCount>0?' warn':'')+'">'+overdueCount+'</div></div>'+
+      '<div class="stat"><div class="label">Paid</div><div class="value">'+money(paidTotal)+'</div></div>'+
+      '</div>';
+
+    var chipsHtml = '<div class="filter-chips">' + BILLS_FILTERS.map(function(f){
+      return '<button class="chip'+(billsFilter===f[0]?' active':'')+'" onclick="setBillsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
+    }).join('') + '</div>';
+
+    var filtered = bills.filter(function(b){ return billMatchesFilter(b, billsFilter); });
+    var rows = filtered.length===0
+      ? (bills.length===0
+          ? emptyState('receipt', 'No bills yet',
+              'Add your first electricity, water, gas or internet bill to start tracking what\'s owed.',
+              '<button class="mini-btn primary" onclick="openImportModal()">+ Add bill</button>')
+          : emptyState('receipt', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every bill.', ''))
+      : filtered.map(billCard).join('');
+
+    return '<div class="detail-head">'+pageHeader('Bills', 'Electricity, gas, water, internet and more.')+
+      '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button></div>'+
+      importQueueCard() + statHtml + chipsHtml + rows;
+  }
+
+  function renderBillDetail(id){
+    var b = billOf(id);
+    if (!b){ return pageHeader('Bill not found', '') + notFoundState('Bill', '#/bills', 'Back to bills'); }
+    var p = propertyOf(b.propertyId);
+
+    return backLink('#/bills', 'Bills') +
+      '<div class="detail-head"><div><h1 class="page-title" style="text-transform:capitalize;">'+esc(b.billType)+'</h1>'+
+      '<p class="page-sub">'+esc(b.provider)+'</p></div>'+
+      '<div class="occ"><div>'+money(b.amount)+'</div><div class="vacant">'+billStatusBadge(b)+'</div></div></div>'+
+      '<div class="card"><div class="field-list">'+
+      '<div class="field-row"><span class="k">Property</span><span class="v"><a href="#/properties/'+(p?p.id:'')+'">'+esc(p?p.name:'—')+'</a></span></div>'+
+      '<div class="field-row"><span class="k">Provider</span><span class="v">'+esc(b.provider)+'</span></div>'+
+      '<div class="field-row"><span class="k">Invoice number</span><span class="v">'+esc(b.invoiceNumber||'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Issue date</span><span class="v">'+(b.issueDate?fullDate(b.issueDate):'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Due date</span><span class="v">'+(b.dueDate?fullDate(b.dueDate):'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Billing period</span><span class="v">'+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</span></div>'+
+      '<div class="field-row"><span class="k">Amount</span><span class="v">'+money(b.amount)+'</span></div>'+
+      '<div class="field-row"><span class="k">Status</span><span class="v">'+billStatusBadge(b)+'</span></div>'+
+      (b.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(b.notes)+'</span></div>' : '')+
+      '</div></div>'+
+      billAllocationCard(b);
+  }
+
+  function billAllocationCard(b){
+    var methodLabel = { equal:'Equal split', days:'By days occupied', custom:'Custom' };
+    if (b.allocations && b.allocations.length){
+      var rows = b.allocations.map(function(a){
+        var t = tenantOf(a.tenantId);
+        return '<div class="alloc-summary-row"><span>'+esc(t?t.fullName:a.tenantId)+'</span><span style="font-weight:650;">'+money(a.amount)+'</span></div>';
+      }).join('');
+      return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
+        '<h2 style="margin:0;">Allocation</h2>'+
+        '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button></div>'+
+        '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+'</p>'+
+        rows+'</div>';
+    }
+    var propTenants = tenantsOfProperty(b.propertyId);
+    if (propTenants.length === 0) return '';
+    return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
+      '<h2 style="margin:0;">Allocation</h2>'+
+      '<button class="mini-btn primary" onclick="openAllocateModal(\''+b.id+'\')">Allocate</button></div>'+
+      '<p style="font-size:13px;color:var(--text-dim);margin:0;">Split this bill between the property\'s tenants — equally, by days occupied, or a custom amount.</p></div>';
+  }
+
+  function renderCalendar(){
+    var events = buildCalendarEvents();
+    var byDate = {};
+    events.forEach(function(e){ (byDate[e.date] = byDate[e.date] || []).push(e); });
+
+    var year = parseInt(calendarMonth.slice(0,4), 10);
+    var month = parseInt(calendarMonth.slice(5,7), 10) - 1;
+    var monthLabel = CALENDAR_MONTH_NAMES[month] + ' ' + year;
+    var cells = buildMonthGrid(calendarMonth);
+
+    var toolbarHtml = '<div class="cal-toolbar">'+
+      '<button class="mini-btn" type="button" onclick="calendarShiftMonth(-1)" aria-label="Previous month">‹</button>'+
+      '<div class="cal-month-label">'+monthLabel+'</div>'+
+      '<button class="mini-btn" type="button" onclick="calendarShiftMonth(1)" aria-label="Next month">›</button>'+
+      '<button class="mini-btn" type="button" onclick="calendarGoToday()" style="margin-left:auto;">Today</button>'+
+      '</div>';
+
+    var weekdayHtml = '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){
+      return '<div class="cal-weekday">'+w+'</div>';
+    }).join('') + '</div>';
+
+    var cellsHtml = '<div class="cal-grid cal-days">' + cells.map(function(iso){
+      if (!iso) return '<div class="cal-daycell empty"></div>';
+      var dayNum = parseInt(iso.slice(8,10), 10);
+      var isToday = iso === TODAY;
+      var dayEvents = (byDate[iso] || []).slice().sort(function(a,b){
+        var rank = { overdue:0, due:1, move:2 };
+        return rank[a.kind] - rank[b.kind];
+      });
+      var shown = dayEvents.slice(0, 3);
+      var extra = dayEvents.length - shown.length;
+      var pillsHtml = shown.map(function(e){
+        return '<a class="cal-pill '+e.kind+'" href="'+e.href+'" title="'+esc(e.title)+'">'+esc(e.title)+'</a>';
+      }).join('') + (extra > 0 ? '<div class="cal-more">+'+extra+' more</div>' : '');
+      return '<div class="cal-daycell'+(isToday ? ' today' : '')+'"><div class="cal-daynum">'+dayNum+'</div>'+pillsHtml+'</div>';
+    }).join('') + '</div>';
+
+    var legendHtml = '<div class="cal-legend">'+
+      '<span><span class="dot overdue"></span>Overdue</span>'+
+      '<span><span class="dot due"></span>Due</span>'+
+      '<span><span class="dot move"></span>Move-in / Move-out</span>'+
+      '</div>';
+
+    var monthHasEvents = Object.keys(byDate).some(function(d){ return d.slice(0,7) === calendarMonth; });
+    var monthEmptyNote = monthHasEvents ? '' :
+      '<p style="font-size:12.5px;color:var(--text-faint);text-align:center;margin:12px 0 0;">Nothing due or scheduled in '+monthLabel+'.</p>';
+
+    return pageHeader('Calendar', 'Rent due dates, payments, overdue charges, move-ins/move-outs and bills — all in one place.') +
+      '<div class="card">'+toolbarHtml+weekdayHtml+cellsHtml+legendHtml+monthEmptyNote+'</div>';
+  }
+
+  /* ---------- FASE 11: Reports ---------- */
+  function renderReports(){
+    if (properties.length === 0 && tenants.length === 0){
+      return pageHeader('Reports', "Expected vs received rent, outstanding balances, bills and occupancy at a glance.") +
+        emptyState('chart', 'Nothing to report yet',
+          'Once you add properties, tenants and bills, your numbers will show up here.',
+          '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>');
+    }
+    var s = getDashboardSummary();
+    var billsPaidTotal = bills.filter(function(b){ return b.status==='paid'; }).reduce(function(sum,b){ return sum+b.amount; },0);
+    var billsOverdueTotal = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).reduce(function(sum,b){ return sum+b.amount; },0);
+    var billsOutstandingTotal = bills.filter(function(b){ return b.status!=='paid'; }).reduce(function(sum,b){ return sum+b.amount; },0);
+    var netCashflow = s.totalRentReceived - billsPaidTotal;
+    var occupancyRate = s.occupiedRooms + s.vacantRooms > 0 ? Math.round(100 * s.occupiedRooms / (s.occupiedRooms + s.vacantRooms)) : 0;
+
+    var statHtml = '<div class="stat-grid">'+
+      ['Rent expected|'+money(s.totalRentExpected)+'|0',
+       'Rent received|'+money(s.totalRentReceived)+'|0',
+       'Outstanding|'+money(s.totalOutstanding)+'|'+(s.totalOutstanding>0?1:0),
+       'Bills paid|'+money(billsPaidTotal)+'|0',
+       'Bills outstanding|'+money(billsOutstandingTotal)+'|'+(billsOutstandingTotal>0?1:0),
+       'Net cashflow|'+money(netCashflow)+'|'+(netCashflow<0?1:0)
+      ].map(function(s2){
+        var parts = s2.split('|');
+        return '<div class="stat"><div class="label">'+parts[0]+'</div><div class="value'+(parts[2]==='1'?' warn':'')+'">'+parts[1]+'</div></div>';
+      }).join('')+'</div>';
+
+    var occupancyHtml = '<div class="card"><h2>Occupancy</h2>'+
+      '<div class="bar-row"><div class="bar-label"><span>'+s.occupiedRooms+' of '+(s.occupiedRooms+s.vacantRooms)+' rooms occupied</span><span>'+occupancyRate+'%</span></div>'+
+      '<div class="bar-track"><div class="bar-fill" style="width:'+occupancyRate+'%;"></div></div></div>'+
+      '</div>';
+
+    var billsAmountTotal = bills.reduce(function(sum,b){ return sum+b.amount; },0);
+    var billsBreakdownHtml = '<div class="card"><h2>Bills breakdown</h2>'+
+      '<div class="bar-row"><div class="bar-label"><span>Paid</span><span>'+money(billsPaidTotal)+'</span></div>'+
+      '<div class="bar-track"><div class="bar-fill" style="width:'+(billsAmountTotal? Math.round(100*billsPaidTotal/billsAmountTotal):0)+'%;background:var(--status-paid);"></div></div></div>'+
+      '<div class="bar-row"><div class="bar-label"><span>Overdue</span><span>'+money(billsOverdueTotal)+'</span></div>'+
+      '<div class="bar-track"><div class="bar-fill" style="width:'+(billsAmountTotal? Math.round(100*billsOverdueTotal/billsAmountTotal):0)+'%;background:var(--status-overdue);"></div></div></div>'+
+      '</div>';
+
+    var byTenant = {};
+    rentCharges.forEach(function(c){
+      if (!byTenant[c.tenantId]) byTenant[c.tenantId] = { expected:0, received:0, outstanding:0 };
+      byTenant[c.tenantId].expected += c.amountDue;
+      byTenant[c.tenantId].received += c.amountPaid;
+      byTenant[c.tenantId].outstanding += c.remaining;
+    });
+    var tenantRows = Object.keys(byTenant).map(function(tenantId){
+      var t = tenantOf(tenantId);
+      var row = byTenant[tenantId];
+      return '<tr><td>'+esc(t?t.fullName:tenantId)+'</td><td>'+money(row.expected)+'</td><td>'+money(row.received)+'</td>'+
+        '<td'+(row.outstanding>0?' class="warn"':'')+'>'+money(row.outstanding)+'</td></tr>';
+    }).join('');
+    var tenantTableHtml = '<div class="card"><h2>By tenant (recent window)</h2>'+
+      (tenantRows
+        ? '<div class="report-table-wrap"><table class="report-table"><thead><tr><th>Tenant</th><th>Expected</th><th>Received</th><th>Outstanding</th></tr></thead>'+
+          '<tbody>'+tenantRows+'</tbody></table></div>'+
+          '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">Covers only the recent window of rent periods (previous, current and next) — not the full history since move-in.</p>'
+        : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No rent charges yet — add a paying tenant to see a breakdown here.</p>')+
+      '</div>';
+
+    return pageHeader('Reports', 'Expected vs received rent, outstanding balances, bills and occupancy at a glance.') +
+      statHtml + occupancyHtml + billsBreakdownHtml + tenantTableHtml;
+  }
+
+  /* ---------- FASE 13: Notifications ---------- */
+  function notifId(e){ return e.kind + '|' + e.date + '|' + e.title; }
+  function isNotifRead(e){ return notifReadIds.indexOf(notifId(e)) > -1; }
+  function toggleNotifRead(id){
+    var idx = notifReadIds.indexOf(id);
+    if (idx > -1) notifReadIds.splice(idx, 1); else notifReadIds.push(id);
+    saveNotifRead(notifReadIds);
+    render();
+  }
+  window.toggleNotifRead = toggleNotifRead;
+  function relativeDateLabel(dateIso){
+    var diff = daysBetween(TODAY, dateIso);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    if (diff === -1) return 'Yesterday';
+    if (diff > 1) return 'In ' + diff + ' days';
+    return Math.abs(diff) + ' days ago';
+  }
+  function renderNotifications(){
+    var events = buildCalendarEvents().filter(function(e){
+      var diff = daysBetween(TODAY, e.date);
+      return e.kind === 'overdue' || (diff >= -3 && diff <= 14);
+    }).sort(function(a,b){
+      if ((a.kind==='overdue') !== (b.kind==='overdue')) return a.kind==='overdue' ? -1 : 1;
+      return a.date.localeCompare(b.date);
+    });
+    var unreadCount = events.filter(function(e){ return !isNotifRead(e); }).length;
+
+    var rows = events.length===0
+      ? emptyState('bell', "You're all caught up", 'Nothing needs your attention right now — check back closer to your next due date.', '')
+      : '<div class="card">' + events.map(function(e){
+          var id = notifId(e);
+          var read = isNotifRead(e);
+          var iconName = e.kind==='overdue' ? 'bell' : e.kind==='move' ? 'tenants' : 'calendar';
+          return '<div class="notif-row'+(read?' read':'')+'">'+
+            '<a href="'+e.href+'" style="display:flex;gap:10px;align-items:center;flex:1;min-width:0;text-decoration:none;color:inherit;">'+
+            '<span class="notif-icon '+e.kind+'">'+svg(iconName)+'</span>'+
+            '<span style="min-width:0;"><div style="font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(e.title)+'</div>'+
+            '<div class="meta" style="font-size:11.5px;color:var(--text-faint);">'+relativeDateLabel(e.date)+' • '+shortDate(e.date)+'</div></span></a>'+
+            '<button class="notif-dot-btn" title="'+(read?'Mark as unread':'Mark as read')+'" onclick="toggleNotifRead(\''+id+'\')"><span class="notif-dot'+(read?'':' unread')+'"></span></button>'+
+            '</div>';
+        }).join('') + '</div>';
+
+    return pageHeader('Notifications', 'Reminders for rent due dates, overdue payments, bills and move-in/out.') +
+      (unreadCount>0 ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">'+unreadCount+' unread</p>' : '') +
+      rows +
+      '<div class="card" style="margin-top:14px;"><h2 style="text-transform:none;letter-spacing:0;">About notifications</h2>'+
+      "<p style=\"font-size:13px;color:var(--text-dim);margin:0;\">This is an in-app notification centre — check this screen when you open the app. Real push notifications (system alerts even when the app is closed) need a backend and browser permissions, and aren't available yet.</p></div>";
+  }
+
+  /* ---------- FASE 14: App lock (PIN local) + Backup/restore ---------- */
+  var APP_PIN_KEY = 'belmont-manager-app-pin';
+  function getAppPin(){ try { return localStorage.getItem(APP_PIN_KEY) || ''; } catch(e){ return ''; } }
+  function setAppPin(pin){ try { if (pin) localStorage.setItem(APP_PIN_KEY, pin); else localStorage.removeItem(APP_PIN_KEY); } catch(e){ /* ignorar */ } }
+  function openSetPinModal(){
+    document.getElementById('pin-input-1').value = '';
+    document.getElementById('pin-input-2').value = '';
+    document.getElementById('pin-modal-error').hidden = true;
+    document.getElementById('pin-modal').hidden = false;
+  }
+  function closeSetPinModal(){ document.getElementById('pin-modal').hidden = true; }
+  function confirmSetPin(){
+    var p1 = document.getElementById('pin-input-1').value;
+    var p2 = document.getElementById('pin-input-2').value;
+    var err = document.getElementById('pin-modal-error');
+    if (!/^\d{4,6}$/.test(p1) || p1 !== p2){
+      err.textContent = 'Enter the same 4-to-6-digit PIN in both fields.';
+      err.hidden = false;
+      return;
+    }
+    setAppPin(p1);
+    closeSetPinModal();
+    render();
+  }
+  function removeAppPin(){ setAppPin(''); render(); }
+  function attemptUnlock(){
+    var input = document.getElementById('lock-pin-input');
+    var err = document.getElementById('lock-error');
+    if (input.value === getAppPin()){
+      document.getElementById('lock-screen').hidden = true;
+      input.value = '';
+      err.hidden = true;
+    } else {
+      err.hidden = false;
+      input.value = '';
+      input.focus();
+    }
+  }
+  window.openSetPinModal = openSetPinModal;
+  window.closeSetPinModal = closeSetPinModal;
+  window.confirmSetPin = confirmSetPin;
+  window.removeAppPin = removeAppPin;
+  window.attemptUnlock = attemptUnlock;
+
+  function downloadViaAnchor(filename, json){
+    // Fallback para cuando no hay capability system (p.ej. abierto directo como file://).
+    var blob = new Blob([json], { type:'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+  function exportBackup(){
+    var data = {
+      exportedAt: TODAY,
+      properties: properties,
+      rooms: rooms,
+      tenants: tenants,
+      bonds: bonds,
+      rentSchedules: rentSchedules,
+      paymentRecords: paymentRecords,
+      bills: bills,
+      notifReadIds: notifReadIds
+    };
+    var json = JSON.stringify(data, null, 2);
+    var filename = 'belmont-manager-backup-' + TODAY + '.json';
+    // El artefacto publicado corre en un frame sin acceso a descargas directas:
+    // el archivo se ofrece al visor a través de la capability `downloads`.
+    if (window.claude && typeof window.claude.use === 'function'){
+      window.claude.use('downloads').then(function(downloads){
+        if (!downloads){
+          backupStatusMessage = "File downloads aren't available in this view.";
+          render();
+          return;
+        }
+        downloads.save({ filename: filename, data: json }).then(function(){
+          backupStatusMessage = 'Backup downloaded.';
+          render();
+        }).catch(function(err){
+          if (err && err.code === 'declined') return; // el usuario canceló, sin mensaje
+          backupStatusMessage = "Couldn't download the backup (" + (err && err.code ? err.code : 'error') + ').';
+          render();
+        });
+      });
+    } else {
+      downloadViaAnchor(filename, json);
+    }
+  }
+  var backupStatusMessage = '';
+  function handleImportBackup(evt){
+    var file = evt.target.files && evt.target.files[0];
+    evt.target.value = '';
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      // Importante: render() vuelve a dibujar toda la página (innerHTML), así que
+      // el mensaje de estado tiene que vivir en una variable y salir de renderSettings(),
+      // no escribirse directo en el <p> viejo — ese nodo desaparece en cuanto render() corre.
+      try {
+        var data = JSON.parse(reader.result);
+        if (!data || typeof data !== 'object') throw new Error('formato inválido');
+        if (Array.isArray(data.properties)){ properties = data.properties; saveProperties(properties); }
+        if (Array.isArray(data.rooms)){ rooms = data.rooms; saveRooms(rooms); }
+        if (Array.isArray(data.tenants)){ tenants = data.tenants; saveTenants(tenants); }
+        if (Array.isArray(data.bonds)){ bonds = data.bonds; saveBonds(bonds); }
+        if (Array.isArray(data.rentSchedules)){ rentSchedules = data.rentSchedules; saveRentSchedules(rentSchedules); }
+        if (Array.isArray(data.paymentRecords)){ paymentRecords = data.paymentRecords; savePayments(paymentRecords); }
+        if (Array.isArray(data.bills)){ bills = data.bills; }
+        if (Array.isArray(data.notifReadIds)){ notifReadIds = data.notifReadIds; saveNotifRead(notifReadIds); }
+        recomputeRentCharges();
+        refreshStaticSelects();
+        backupStatusMessage = 'Backup imported successfully.';
+      } catch(e){
+        backupStatusMessage = "Couldn't read that file — it doesn't look like a valid backup.";
+      }
+      render();
+    };
+    reader.readAsText(file);
+  }
+  window.exportBackup = exportBackup;
+  window.handleImportBackup = handleImportBackup;
+
+  function renderSettings(){
+    var pin = getAppPin();
+    return pageHeader('Settings', 'App lock, backup and sync, and preferences.') +
+      '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">About storage</h2>'+
+      '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your data is saved only on this device (in the browser\'s local storage), unencrypted. Online sync with a real backend is coming later; in the meantime, use the backup below so you never lose anything.</p></div>'+
+      '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">App lock (local)</h2>'+
+      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">A simple screen PIN for this app on this device. It is not encryption or real authentication — it only stops a casual glance; anyone using the browser\'s developer tools can bypass it.</p>'+
+      (pin
+        ? '<div class="field-row"><span class="k">Status</span><span class="v">PIN set</span></div>'+
+          '<div style="display:flex;gap:8px;margin-top:12px;">'+
+          '<button class="mini-btn" onclick="openSetPinModal()">Change PIN</button>'+
+          '<button class="mini-btn" onclick="removeAppPin()">Remove PIN</button></div>'
+        : '<button class="mini-btn primary" onclick="openSetPinModal()">Set a PIN</button>')+
+      '</div>'+
+      '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Backup &amp; restore</h2>'+
+      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">Export a JSON file with your properties, rooms, tenants, bonds, rent schedules, payments, bills (including allocations) and notification status. Import it to restore — this replaces the data currently on this device.</p>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+      '<button class="mini-btn primary" onclick="exportBackup()">Export backup (.json)</button>'+
+      '<button class="mini-btn" onclick="document.getElementById(\'backup-file-input\').click()">Import backup</button>'+
+      '</div>'+
+      '<input type="file" id="backup-file-input" accept="application/json" hidden onchange="handleImportBackup(event)" />'+
+      (backupStatusMessage ? '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;">'+esc(backupStatusMessage)+'</p>' : '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;"></p>')+
+      '</div>';
+  }
+
+  function renderMore(){
+    var items = NAV.filter(function(i){ return !i.primary; });
+    var rows = items.map(function(item){
+      return '<a href="'+item.hash+'">'+svg(item.icon)+'<span>'+item.label+'</span>'+svg('chevron','class="chev"')+'</a>';
+    }).join('');
+    return pageHeader('More', 'Everything else, in one place.') + '<div class="more-list">'+rows+'</div>';
+  }
+
+  /* ============ FASE 15 — CRUD: properties, rooms, tenants, bonds ============ */
+  var crudIdSeq = 0;
+  function genId(prefix){
+    crudIdSeq++;
+    return prefix + '-' + Date.now() + '-' + crudIdSeq;
+  }
+
+  /** Vuelve a poblar los <select> de property/tenant que se llenaron una sola vez al cargar la página. */
+  function refreshStaticSelects(){
+    var reviewPropertySelect = document.getElementById('review-property');
+    if (reviewPropertySelect){
+      var prevVal = reviewPropertySelect.value;
+      reviewPropertySelect.innerHTML = properties.map(function(p){
+        return '<option value="'+p.id+'">'+esc(p.name)+'</option>';
+      }).join('');
+      if (properties.some(function(p){ return p.id===prevVal; })) reviewPropertySelect.value = prevVal;
+    }
+    var docTenantSelect = document.getElementById('doc-tenant');
+    if (docTenantSelect){
+      var prevTenantVal = docTenantSelect.value;
+      docTenantSelect.innerHTML = tenants.filter(function(t){ return t.rentAmount>0; }).map(function(t){
+        return '<option value="'+t.id+'">'+esc(t.fullName)+'</option>';
+      }).join('');
+      if (tenants.some(function(t){ return t.id===prevTenantVal; })) docTenantSelect.value = prevTenantVal;
+    }
+  }
+
+  /* ---------- Modal genérico de confirmación (delete de property/room/tenant) ---------- */
+  var confirmModalAction = null;
+  function openConfirmModal(title, body, action, opts){
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-body').textContent = body;
+    var errEl = document.getElementById('confirm-modal-error');
+    errEl.hidden = true; errEl.textContent = '';
+    var btn = document.getElementById('confirm-modal-confirm-btn');
+    btn.textContent = (opts && opts.confirmLabel) || 'Confirm';
+    btn.className = 'mini-btn' + (opts && opts.danger ? ' danger' : ' primary');
+    confirmModalAction = action;
+    document.getElementById('confirm-modal').hidden = false;
+  }
+  function closeConfirmModal(){
+    document.getElementById('confirm-modal').hidden = true;
+    confirmModalAction = null;
+  }
+  /** La acción puede devolver {blocked:true, message} para mostrar un error sin cerrar el modal (p.ej. "tiene habitaciones"). */
+  function runConfirmModalAction(){
+    if (typeof confirmModalAction === 'function'){
+      var result = confirmModalAction();
+      if (result && result.blocked){
+        var errEl = document.getElementById('confirm-modal-error');
+        errEl.textContent = result.message;
+        errEl.hidden = false;
+        return;
+      }
+    }
+    closeConfirmModal();
+  }
+  window.closeConfirmModal = closeConfirmModal;
+  window.runConfirmModalAction = runConfirmModalAction;
+
+  /* ---------- Property form ---------- */
+  var propertyModalEditId = null;
+  function openPropertyModal(propertyId){
+    propertyModalEditId = propertyId || null;
+    var p = propertyId ? propertyOf(propertyId) : null;
+    document.getElementById('property-modal-title').textContent = p ? 'Edit property' : 'Add property';
+    document.getElementById('property-name').value = p ? p.name : '';
+    document.getElementById('property-address').value = p ? p.address : '';
+    document.getElementById('property-bedrooms').value = p ? p.bedrooms : '';
+    document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
+    document.getElementById('property-notes').value = p ? (p.notes||'') : '';
+    document.getElementById('property-modal-error').hidden = true;
+    document.getElementById('property-modal').hidden = false;
+  }
+  function closePropertyModal(){
+    document.getElementById('property-modal').hidden = true;
+    propertyModalEditId = null;
+  }
+  function savePropertyForm(){
+    var name = document.getElementById('property-name').value.trim();
+    var address = document.getElementById('property-address').value.trim();
+    var bedrooms = parseInt(document.getElementById('property-bedrooms').value, 10);
+    var bathrooms = parseInt(document.getElementById('property-bathrooms').value, 10);
+    var notes = document.getElementById('property-notes').value.trim();
+    var errorEl = document.getElementById('property-modal-error');
+    if (!name || !address || !isFinite(bedrooms) || bedrooms<0 || !isFinite(bathrooms) || bathrooms<0){
+      errorEl.textContent = 'Add a name, address, and bedrooms/bathrooms as whole numbers of 0 or more.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (propertyModalEditId){
+      var existing = propertyOf(propertyModalEditId);
+      existing.name = name; existing.address = address; existing.bedrooms = bedrooms;
+      existing.bathrooms = bathrooms; existing.notes = notes;
+    } else {
+      properties.push({ id: genId('prop'), name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes });
+    }
+    saveProperties(properties);
+    refreshStaticSelects();
+    closePropertyModal();
+    render();
+  }
+  function deletePropertyConfirm(propertyId){
+    var p = propertyOf(propertyId);
+    if (!p) return;
+    openConfirmModal('Delete property', 'Delete "'+p.name+'"? This cannot be undone.', function(){
+      var propRooms = roomsOf(propertyId);
+      if (propRooms.length > 0){
+        return { blocked:true, message:'This property still has '+propRooms.length+' room(s). Delete those first.' };
+      }
+      properties = properties.filter(function(x){ return x.id!==propertyId; });
+      saveProperties(properties);
+      refreshStaticSelects();
+      location.hash = '#/properties';
+      render();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.openPropertyModal = openPropertyModal;
+  window.closePropertyModal = closePropertyModal;
+  window.savePropertyForm = savePropertyForm;
+  window.deletePropertyConfirm = deletePropertyConfirm;
+
+  /* ---------- Room form ---------- */
+  var roomModalEditId = null;
+  var roomModalPropertyId = null;
+  function openRoomModal(propertyId, roomId){
+    roomModalPropertyId = propertyId;
+    roomModalEditId = roomId || null;
+    var r = roomId ? rooms.find(function(x){ return x.id===roomId; }) : null;
+    document.getElementById('room-modal-title').textContent = r ? 'Edit room' : 'Add room';
+    document.getElementById('room-name').value = r ? r.name : '';
+    document.getElementById('room-modal-error').hidden = true;
+    document.getElementById('room-modal').hidden = false;
+  }
+  function closeRoomModal(){
+    document.getElementById('room-modal').hidden = true;
+    roomModalEditId = null; roomModalPropertyId = null;
+  }
+  function saveRoomForm(){
+    var name = document.getElementById('room-name').value.trim();
+    var errorEl = document.getElementById('room-modal-error');
+    if (!name){
+      errorEl.textContent = 'Room name is required.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (roomModalEditId){
+      var r = rooms.find(function(x){ return x.id===roomModalEditId; });
+      if (r) r.name = name;
+    } else {
+      rooms.push({ id: genId('room'), propertyId: roomModalPropertyId, name: name });
+    }
+    saveRooms(rooms);
+    closeRoomModal();
+    render();
+  }
+  function deleteRoomConfirm(roomId){
+    var r = rooms.find(function(x){ return x.id===roomId; });
+    if (!r) return;
+    openConfirmModal('Delete room', 'Delete "'+r.name+'"? This cannot be undone.', function(){
+      var occupied = tenants.some(function(t){ return t.roomId===roomId; });
+      if (occupied){
+        return { blocked:true, message:'This room has a tenant assigned. Move or delete that tenant first.' };
+      }
+      rooms = rooms.filter(function(x){ return x.id!==roomId; });
+      saveRooms(rooms);
+      render();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.openRoomModal = openRoomModal;
+  window.closeRoomModal = closeRoomModal;
+  window.saveRoomForm = saveRoomForm;
+  window.deleteRoomConfirm = deleteRoomConfirm;
+
+  /** Fila de una habitación con acciones de editar/borrar (solo en Property detail; el listado de Properties no las lleva). */
+  function roomLine(r, propertyId){
+    var t = currentTenantOf(r.id);
+    var isPaying = t && t.rentAmount>0;
+    var tenantLabel = isPaying
+      ? esc(t.fullName)+' · $'+t.rentAmount+'/'+(t.rentFrequency==='weekly'?'week':t.rentFrequency)
+      : (t ? esc(t.fullName) : 'Vacant');
+    var inner = '<span class="rname">'+esc(r.name)+'</span><span class="rtenant">'+tenantLabel+'</span>';
+    var linkOrDiv = isPaying
+      ? '<a class="room-row linked" href="#/tenants/'+t.id+'">'+inner+'</a>'
+      : '<div class="room-row">'+inner+'</div>';
+    var hasAnyTenant = !!t;
+    return '<div class="room-line">'+linkOrDiv+
+      '<button type="button" class="icon-mini-btn" title="Edit room" '+
+      'onclick="event.preventDefault();event.stopPropagation();openRoomModal(\''+propertyId+'\',\''+r.id+'\')">✎</button>'+
+      '<button type="button" class="icon-mini-btn danger" title="Delete room"'+(hasAnyTenant?' disabled':'')+' '+
+      'onclick="event.preventDefault();event.stopPropagation();deleteRoomConfirm(\''+r.id+'\')">✕</button>'+
+      '</div>';
+  }
+
+  /* ---------- Tenant form ---------- */
+  var tenantModalEditId = null;
+  function tenantPropertyOptionsHtml(selectedId){
+    return properties.map(function(p){
+      return '<option value="'+p.id+'"'+(p.id===selectedId?' selected':'')+'>'+esc(p.name)+'</option>';
+    }).join('');
+  }
+  function tenantRoomOptionsHtml(propertyId, selectedRoomId){
+    var propRooms = roomsOf(propertyId);
+    if (propRooms.length===0) return '<option value="">No rooms — add one first</option>';
+    return propRooms.map(function(r){
+      return '<option value="'+r.id+'"'+(r.id===selectedRoomId?' selected':'')+'>'+esc(r.name)+'</option>';
+    }).join('');
+  }
+  function onTenantPropertyChange(){
+    var propertyId = document.getElementById('tenant-property').value;
+    document.getElementById('tenant-room').innerHTML = tenantRoomOptionsHtml(propertyId, null);
+  }
+  function paymentDayOptionsHtml(frequency, selected){
+    var opts = '', d;
+    if (frequency==='monthly'){
+      for (d=1; d<=31; d++){ opts += '<option value="'+d+'"'+(d===selected?' selected':'')+'>Day '+d+'</option>'; }
+      return opts;
+    }
+    var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return days.map(function(dayName, idx){
+      return '<option value="'+idx+'"'+(idx===selected?' selected':'')+'>'+dayName+'</option>';
+    }).join('');
+  }
+  function onTenantFrequencyChange(){
+    var freq = document.getElementById('tenant-rent-frequency').value;
+    document.getElementById('tenant-payment-day').innerHTML = paymentDayOptionsHtml(freq, freq==='monthly'?1:1);
+  }
+  function openTenantModal(tenantId, opts){
+    tenantModalEditId = tenantId || null;
+    var t = tenantId ? tenantOf(tenantId) : null;
+    document.getElementById('tenant-modal-title').textContent = t ? 'Edit tenant' : 'Add tenant';
+    document.getElementById('tenant-fullname').value = t ? t.fullName : '';
+    document.getElementById('tenant-phone').value = t ? (t.phone||'') : '';
+    document.getElementById('tenant-email').value = t ? (t.email||'') : '';
+    var defaultPropertyId = t ? t.propertyId : ((opts && opts.propertyId) || (properties[0] && properties[0].id) || '');
+    document.getElementById('tenant-property').innerHTML = tenantPropertyOptionsHtml(defaultPropertyId);
+    document.getElementById('tenant-room').innerHTML = tenantRoomOptionsHtml(defaultPropertyId, t ? t.roomId : null);
+    document.getElementById('tenant-movein').value = t ? t.moveInDate : TODAY;
+    document.getElementById('tenant-moveout-expected').value = (t && t.expectedMoveOutDate) ? t.expectedMoveOutDate : '';
+    document.getElementById('tenant-moveout-actual').value = (t && t.actualMoveOutDate) ? t.actualMoveOutDate : '';
+    document.getElementById('tenant-rent-amount').value = t ? t.rentAmount : '';
+    document.getElementById('tenant-rent-frequency').value = t ? t.rentFrequency : 'weekly';
+    document.getElementById('tenant-payment-day').innerHTML = paymentDayOptionsHtml(t ? t.rentFrequency : 'weekly', t ? t.paymentDay : 1);
+    document.getElementById('tenant-notes').value = t ? (t.notes||'') : '';
+    document.getElementById('tenant-modal-error').hidden = true;
+    document.getElementById('tenant-modal').hidden = false;
+  }
+  function closeTenantModal(){
+    document.getElementById('tenant-modal').hidden = true;
+    tenantModalEditId = null;
+  }
+  function saveTenantForm(){
+    var fullName = document.getElementById('tenant-fullname').value.trim();
+    var phone = document.getElementById('tenant-phone').value.trim();
+    var email = document.getElementById('tenant-email').value.trim();
+    var propertyId = document.getElementById('tenant-property').value;
+    var roomId = document.getElementById('tenant-room').value;
+    var moveInDate = document.getElementById('tenant-movein').value;
+    var expectedMoveOutDate = document.getElementById('tenant-moveout-expected').value;
+    var actualMoveOutDate = document.getElementById('tenant-moveout-actual').value;
+    var rentAmount = parseFloat(document.getElementById('tenant-rent-amount').value);
+    var rentFrequency = document.getElementById('tenant-rent-frequency').value;
+    var paymentDay = parseInt(document.getElementById('tenant-payment-day').value, 10);
+    var notes = document.getElementById('tenant-notes').value.trim();
+    var errorEl = document.getElementById('tenant-modal-error');
+
+    if (!fullName || !propertyId || !roomId || !moveInDate || !isFinite(rentAmount) || rentAmount<0 || !isFinite(paymentDay)){
+      errorEl.textContent = 'Add a name, property, room, move-in date and a valid rent amount (0 or more).';
+      errorEl.hidden = false;
+      return;
+    }
+    if (email && email.indexOf('@')===-1){
+      errorEl.textContent = "That email address doesn't look right.";
+      errorEl.hidden = false;
+      return;
+    }
+    if (expectedMoveOutDate && expectedMoveOutDate < moveInDate){
+      errorEl.textContent = "Expected move-out can't be before the move-in date.";
+      errorEl.hidden = false;
+      return;
+    }
+    if (actualMoveOutDate && actualMoveOutDate < moveInDate){
+      errorEl.textContent = "Actual move-out can't be before the move-in date.";
+      errorEl.hidden = false;
+      return;
+    }
+    var occupant = currentTenantOf(roomId);
+    if (occupant && occupant.id !== tenantModalEditId){
+      errorEl.textContent = 'That room already has a tenant assigned.';
+      errorEl.hidden = false;
+      return;
+    }
+
+    var tenantObj;
+    if (tenantModalEditId){
+      tenantObj = tenantOf(tenantModalEditId);
+      tenantObj.fullName = fullName;
+      if (phone) tenantObj.phone = phone; else delete tenantObj.phone;
+      if (email) tenantObj.email = email; else delete tenantObj.email;
+      tenantObj.propertyId = propertyId; tenantObj.roomId = roomId; tenantObj.moveInDate = moveInDate;
+      if (expectedMoveOutDate) tenantObj.expectedMoveOutDate = expectedMoveOutDate; else delete tenantObj.expectedMoveOutDate;
+      if (actualMoveOutDate) tenantObj.actualMoveOutDate = actualMoveOutDate; else delete tenantObj.actualMoveOutDate;
+      tenantObj.rentAmount = rentAmount; tenantObj.rentFrequency = rentFrequency; tenantObj.paymentDay = paymentDay;
+      if (notes) tenantObj.notes = notes; else delete tenantObj.notes;
+    } else {
+      tenantObj = { id: genId('tenant'), fullName:fullName, propertyId:propertyId, roomId:roomId, moveInDate:moveInDate,
+        rentAmount:rentAmount, rentFrequency:rentFrequency, paymentDay:paymentDay };
+      if (phone) tenantObj.phone = phone;
+      if (email) tenantObj.email = email;
+      if (expectedMoveOutDate) tenantObj.expectedMoveOutDate = expectedMoveOutDate;
+      if (actualMoveOutDate) tenantObj.actualMoveOutDate = actualMoveOutDate;
+      if (notes) tenantObj.notes = notes;
+      tenants.push(tenantObj);
+    }
+    saveTenants(tenants);
+
+    // rentService lee de rentSchedules, no de tenant.rentAmount/rentFrequency directamente:
+    // hay que mantener el schedule del inquilino sincronizado con lo que se guarda aquí.
+    if (rentAmount > 0){
+      var schedule = rentSchedules.find(function(s){ return s.tenantId===tenantObj.id; });
+      if (schedule){
+        schedule.frequency = rentFrequency; schedule.amount = rentAmount; schedule.startDate = moveInDate;
+      } else {
+        rentSchedules.push({ tenantId: tenantObj.id, frequency: rentFrequency, amount: rentAmount, startDate: moveInDate });
+      }
+    } else {
+      rentSchedules = rentSchedules.filter(function(s){ return s.tenantId!==tenantObj.id; });
+    }
+    saveRentSchedules(rentSchedules);
+
+    recomputeRentCharges();
+    refreshStaticSelects();
+    closeTenantModal();
+    location.hash = '#/tenants/' + tenantObj.id;
+    render();
+  }
+  function deleteTenantConfirm(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    openConfirmModal('Delete tenant', 'Delete "'+t.fullName+'" and their bond/rent schedule? This cannot be undone.', function(){
+      tenants = tenants.filter(function(x){ return x.id!==tenantId; });
+      saveTenants(tenants);
+      bonds = bonds.filter(function(x){ return x.tenantId!==tenantId; });
+      saveBonds(bonds);
+      rentSchedules = rentSchedules.filter(function(x){ return x.tenantId!==tenantId; });
+      saveRentSchedules(rentSchedules);
+      paymentRecords = paymentRecords.filter(function(x){ return x.tenantId!==tenantId; });
+      savePayments(paymentRecords);
+      recomputeRentCharges();
+      refreshStaticSelects();
+      location.hash = '#/tenants';
+      render();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.onTenantPropertyChange = onTenantPropertyChange;
+  window.onTenantFrequencyChange = onTenantFrequencyChange;
+  window.openTenantModal = openTenantModal;
+  window.closeTenantModal = closeTenantModal;
+  window.saveTenantForm = saveTenantForm;
+  window.deleteTenantConfirm = deleteTenantConfirm;
+
+  /* ---------- Bond form (accesible desde Tenant detail) ---------- */
+  var bondModalTenantId = null;
+  function openBondModal(tenantId){
+    bondModalTenantId = tenantId;
+    var b = bondOf(tenantId);
+    document.getElementById('bond-modal-title').textContent = b ? 'Edit bond' : 'Add bond';
+    document.getElementById('bond-required').value = b ? b.amountRequired : '';
+    document.getElementById('bond-paid').value = b ? b.amountPaid : 0;
+    document.getElementById('bond-returned').value = b ? b.amountReturned : 0;
+    document.getElementById('bond-deduction').value = b ? b.deduction : 0;
+    document.getElementById('bond-status').value = b ? b.status : 'pending';
+    document.getElementById('bond-modal-error').hidden = true;
+    document.getElementById('bond-modal').hidden = false;
+  }
+  function closeBondModal(){
+    document.getElementById('bond-modal').hidden = true;
+    bondModalTenantId = null;
+  }
+  function saveBondForm(){
+    var required = parseFloat(document.getElementById('bond-required').value);
+    var paid = parseFloat(document.getElementById('bond-paid').value);
+    var returned = parseFloat(document.getElementById('bond-returned').value);
+    var deduction = parseFloat(document.getElementById('bond-deduction').value);
+    if (!isFinite(paid)) paid = 0;
+    if (!isFinite(returned)) returned = 0;
+    if (!isFinite(deduction)) deduction = 0;
+    var status = document.getElementById('bond-status').value;
+    var errorEl = document.getElementById('bond-modal-error');
+    if (!isFinite(required) || required<0 || !isFinite(paid) || paid<0 || returned<0 || deduction<0){
+      errorEl.textContent = 'All amounts must be 0 or more.';
+      errorEl.hidden = false;
+      return;
+    }
+    var existing = bondOf(bondModalTenantId);
+    if (existing){
+      existing.amountRequired = required; existing.amountPaid = paid;
+      existing.amountReturned = returned; existing.deduction = deduction; existing.status = status;
+    } else {
+      bonds.push({ id: genId('bond'), tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid,
+        amountReturned:returned, deduction:deduction, status:status });
+    }
+    saveBonds(bonds);
+    closeBondModal();
+    render();
+  }
+  window.openBondModal = openBondModal;
+  window.closeBondModal = closeBondModal;
+  window.saveBondForm = saveBondForm;
+
+  /* ---------- Global search (topbar) ---------- */
+  function openSearchModal(){
+    document.getElementById('search-modal-input').value = '';
+    document.getElementById('search-modal-results').innerHTML = '';
+    document.getElementById('search-modal').hidden = false;
+    setTimeout(function(){ document.getElementById('search-modal-input').focus(); }, 0);
+  }
+  function closeSearchModal(){
+    document.getElementById('search-modal').hidden = true;
+  }
+  function runSearch(query){
+    var box = document.getElementById('search-modal-results');
+    var q = query.trim().toLowerCase();
+    if (!q){ box.innerHTML = ''; return; }
+    var propMatches = properties.filter(function(p){
+      return p.name.toLowerCase().indexOf(q) > -1 || p.address.toLowerCase().indexOf(q) > -1;
+    }).map(function(p){
+      return '<a class="search-result-row" href="#/properties/'+p.id+'" onclick="closeSearchModal()">'+
+        '<span class="srch-icon">'+svg('building')+'</span>'+
+        '<span><div class="name">'+esc(p.name)+'</div><div class="meta">'+esc(p.address)+'</div></span></a>';
+    });
+    var tenantMatches = tenants.filter(function(t){
+      return t.fullName.toLowerCase().indexOf(q) > -1;
+    }).map(function(t){
+      var p = propertyOf(t.propertyId);
+      return '<a class="search-result-row" href="#/tenants/'+t.id+'" onclick="closeSearchModal()">'+
+        '<span class="srch-icon">'+svg('tenants')+'</span>'+
+        '<span><div class="name">'+esc(t.fullName)+'</div><div class="meta">'+esc(p?p.name:'')+'</div></span></a>';
+    });
+    var all = propMatches.concat(tenantMatches);
+    box.innerHTML = all.length
+      ? all.join('')
+      : '<div class="search-empty">No properties or tenants match "'+esc(query.trim())+'".</div>';
+  }
+  window.openSearchModal = openSearchModal;
+  window.closeSearchModal = closeSearchModal;
+  window.runSearch = runSearch;
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && !document.getElementById('search-modal').hidden) closeSearchModal();
+  });
+
+  var ROUTES = {
+    '#/': renderDashboard,
+    '#/properties': renderProperties,
+    '#/tenants': renderTenants,
+    '#/payments': renderPayments,
+    '#/bills': renderBills,
+    '#/calendar': renderCalendar,
+    '#/reports': renderReports,
+    '#/documents': renderDocuments,
+    '#/notifications': renderNotifications,
+    '#/settings': renderSettings,
+    '#/more': renderMore
+  };
+
+  var content = document.getElementById('content');
+  function render(){
+    var hash = location.hash || '#/';
+    var propertyMatch = hash.match(/^#\/properties\/(.+)$/);
+    var tenantMatch = hash.match(/^#\/tenants\/(.+)$/);
+    var billMatch = hash.match(/^#\/bills\/(.+)$/);
+    var html;
+    if (propertyMatch) html = renderPropertyDetail(decodeURIComponent(propertyMatch[1]));
+    else if (tenantMatch) html = renderTenantDetail(decodeURIComponent(tenantMatch[1]));
+    else if (billMatch) html = renderBillDetail(decodeURIComponent(billMatch[1]));
+    else html = (ROUTES[hash] || ROUTES['#/'])();
+    content.innerHTML = html;
+    setActiveNav(hash);
+    window.scrollTo(0,0);
+  }
+  window.addEventListener('hashchange', render);
+  render();
+
+  /* ============ Theme toggle (independiente del tema del host) ============ */
+  var root = document.documentElement;
+  var themeBtn = document.getElementById('theme-toggle');
+  var STORAGE_KEY = 'belmont-manager-theme';
+
+  function systemPrefersDark(){
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function getStoredTheme(){
+    try { return localStorage.getItem(STORAGE_KEY); } catch(e){ return null; }
+  }
+  function storeTheme(t){
+    try { localStorage.setItem(STORAGE_KEY, t); } catch(e){ /* ignore */ }
+  }
+  function applyTheme(t){
+    root.setAttribute('data-theme', t);
+    themeBtn.innerHTML = svg(t==='dark' ? 'sun' : 'moon');
+  }
+  var initial = getStoredTheme() || (systemPrefersDark() ? 'dark' : 'light');
+  applyTheme(initial);
+  themeBtn.addEventListener('click', function(){
+    var next = root.getAttribute('data-theme')==='dark' ? 'light' : 'dark';
+    applyTheme(next);
+    storeTheme(next);
+  });
+
+  /* ============ App lock (FASE 14): se muestra al cargar si hay un PIN guardado ============ */
+  var lockPinInput = document.getElementById('lock-pin-input');
+  lockPinInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') attemptUnlock(); });
+  if (getAppPin()){
+    document.getElementById('lock-screen').hidden = false;
+    lockPinInput.focus();
+  }
+})();
+</script>
