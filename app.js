@@ -15,6 +15,7 @@ import * as billService from './services/billService.js';
 import * as billAllocationService from './services/billAllocationService.js';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
+import * as aiService from './services/aiService.js';
 import * as migrationService from './services/migrationService.js';
 
 (function(){
@@ -141,65 +142,16 @@ import * as migrationService from './services/migrationService.js';
 
   /**
    * FASE 8 — OCR/AI bill extraction (sección de "Import Bill" del brief):
-   * servicio aislado que simula lo que haría un backend real de OCR/AI al
-   * analizar la foto o PDF de una factura. Como no hay backend, `extract()`
-   * genera datos plausibles (proveedor, tipo, importe, fechas) de forma
-   * determinista a partir del propio archivo, con una demora simulada, para
-   * que la arquitectura (cola -> "analizando" -> datos listos para revisar
-   * -> confirmar/editar) ya sea la misma que usaría un servicio real cuando
-   * se conecte más adelante.
+   * la foto/PDF de la factura se envía a la Edge Function `analyze-bill`
+   * (services/aiService.js), que llama a Gemini (Google) del lado del
+   * servidor para leer el documento de verdad — proveedor, tipo, fechas,
+   * importe, y una propiedad sugerida por coincidencia de dirección/nombre
+   * contra las propiedades existentes. La clave de la API vive como secret
+   * de la Edge Function, nunca en el frontend. El resultado sigue pasando
+   * por la misma pantalla de revisión de siempre (cola -> "analizando" ->
+   * revisar/editar -> confirmar), así que un error o un dato mal leído
+   * siempre se corrige a mano antes de guardar.
    */
-  var mockOcrService = (function(){
-    var TEMPLATES = [
-      { billType:'electricity', provider:'Synergy', amountRange:[180,360] },
-      { billType:'water', provider:'Water Corporation', amountRange:[90,200] },
-      { billType:'internet', provider:'Telstra', amountRange:[70,110] },
-      { billType:'gas', provider:'AGL', amountRange:[60,170] }
-    ];
-    function hashStr(s){
-      var h = 0;
-      for (var i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) | 0; }
-      return Math.abs(h);
-    }
-    function shiftDate(iso, days){
-      var d = new Date(iso + 'T00:00:00');
-      d.setDate(d.getDate() + days);
-      return toIsoLocal(d);
-    }
-    function monthStart(iso){ return iso.slice(0,7) + '-01'; }
-    function monthEnd(iso){
-      var d = new Date(iso + 'T00:00:00');
-      d.setMonth(d.getMonth()+1); d.setDate(0);
-      return toIsoLocal(d);
-    }
-    function round2(n){ return Math.round(n*100)/100; }
-
-    /** Simula analizar el archivo y devuelve campos estructurados editables antes de confirmar. */
-    function extract(item){
-      var seed = hashStr(item.id + '|' + (item.fileName||''));
-      var tpl = TEMPLATES[seed % TEMPLATES.length];
-      var span = tpl.amountRange[1] - tpl.amountRange[0];
-      var amount = round2(tpl.amountRange[0] + (seed % (span*100)) / 100);
-      var issueDate = shiftDate(TODAY, -(3 + (seed % 8)));
-      var dueDate = shiftDate(TODAY, 10 + (seed % 10));
-      return {
-        propertyId: (properties[0] && properties[0].id) || '',
-        billType: tpl.billType,
-        provider: tpl.provider,
-        invoiceNumber: tpl.provider.slice(0,3).toUpperCase() + '-' + (10000 + (seed % 89999)),
-        issueDate: issueDate,
-        dueDate: dueDate,
-        billingPeriodStart: monthStart(issueDate),
-        billingPeriodEnd: monthEnd(issueDate),
-        amount: amount
-      };
-    }
-    /** Demora simulada de "analizando…" antes de entregar el resultado (arquitectura async, igual que un servicio real). */
-    function analyze(item, callback){
-      setTimeout(function(){ callback(extract(item)); }, 900);
-    }
-    return { analyze: analyze };
-  })();
 
   /**
    * FASE 4 — Rent system (sección 9 del brief): los rent charges ya NO se
@@ -1216,20 +1168,53 @@ import * as migrationService from './services/migrationService.js';
       previewUrl: pendingImportFile.previewUrl,
       file: pendingImportFile.file,
       addedAt: TODAY,
-      status: 'processing', // 'processing' -> 'ready' (una vez que el mock OCR entrega los datos)
-      extracted: null
+      status: 'processing', // 'processing' -> 'ready' (con los datos que devolvió la IA, o en blanco si el análisis falló)
+      extracted: null,
+      aiError: null
     };
     importQueue.push(item);
     pendingImportFile = null;
     document.getElementById('import-modal').hidden = true;
     render();
-    mockOcrService.analyze(item, function(data){
+    analyzeImportedFile(item);
+  }
+  var BLANK_EXTRACTED_BILL = { propertyId:'', billType:'other', provider:'', invoiceNumber:'', issueDate:'', dueDate:'', billingPeriodStart:'', billingPeriodEnd:'', amount:'' };
+  var BILL_TYPES = ['electricity','water','gas','internet','other'];
+  /** Envía la foto/PDF a la IA (Gemini, vía la Edge Function analyze-bill) para extraer
+   *  proveedor, tipo de servicio, fechas, importe y una propiedad sugerida. Si el análisis
+   *  falla (sin red, sin API key configurada del lado del servidor, foto poco clara, etc.) el
+   *  item igual queda listo para revisar con los campos en blanco, para completarlos a mano
+   *  en vez de quedar atascado. */
+  async function analyzeImportedFile(item){
+    try {
+      var data = await aiService.analyzeBill(item.file, properties, TODAY);
       var current = importQueue.find(function(i){ return i.id===item.id; });
-      if (!current) return; // se eliminó de la cola mientras se "analizaba"
+      if (!current) return; // se eliminó de la cola mientras se analizaba
       current.status = 'ready';
-      current.extracted = data;
+      current.extracted = {
+        propertyId: data.propertyId || '',
+        billType: BILL_TYPES.indexOf(data.billType) >= 0 ? data.billType : 'other',
+        provider: data.provider || '',
+        invoiceNumber: data.invoiceNumber || '',
+        issueDate: data.issueDate || '',
+        dueDate: data.dueDate || '',
+        billingPeriodStart: data.billingPeriodStart || '',
+        billingPeriodEnd: data.billingPeriodEnd || '',
+        amount: isFinite(parseFloat(data.amount)) ? parseFloat(data.amount) : ''
+      };
+      if (!data.propertyId && data.propertyGuessText){
+        showToast('AI couldn\'t confidently match a property — it found "'+data.propertyGuessText+'" on the bill. Pick the property manually when reviewing.', 'info');
+      }
       render();
-    });
+    } catch(err){
+      var current2 = importQueue.find(function(i){ return i.id===item.id; });
+      if (!current2) return; // se eliminó de la cola mientras se analizaba
+      current2.status = 'ready';
+      current2.aiError = friendlyErrorMessage(err);
+      current2.extracted = Object.assign({}, BLANK_EXTRACTED_BILL);
+      showToast('AI analysis failed — you can still fill in the details by hand. ' + current2.aiError, 'error');
+      render();
+    }
   }
   function removeImportQueueItem(id){
     var item = importQueue.find(function(i){ return i.id===id; });
@@ -1241,19 +1226,19 @@ import * as migrationService from './services/migrationService.js';
     if (importQueue.length === 0) return '';
     var rows = importQueue.map(function(item){
       var statusBit = item.status === 'ready'
-        ? badge('upcoming', 'Ready to review')
-        : badge('neutral', 'Analyzing…');
+        ? (item.aiError ? badge('due', 'Needs manual entry') : badge('upcoming', 'Ready to review'))
+        : badge('neutral', 'Analyzing with AI…');
       var actionBtn = item.status === 'ready'
         ? '<button class="mini-btn primary" onclick="openReviewModal(\''+item.id+'\')">Review</button>'
         : '';
       return '<div class="row" style="border:none;padding:8px 0;">'+
         '<div class="who"><div class="name">'+esc(item.fileName)+'</div>'+
-        '<div class="meta">added '+shortDate(item.addedAt)+'</div></div>'+
+        '<div class="meta">added '+shortDate(item.addedAt)+(item.aiError?(' • '+esc(item.aiError)):'')+'</div></div>'+
         '<div style="display:flex;align-items:center;gap:8px;">'+statusBit+actionBtn+
         '<button class="del" title="Remove" onclick="removeImportQueueItem(\''+item.id+'\')">✕</button></div></div>';
     }).join('');
     return '<div class="card"><h2>Pending review ('+importQueue.length+')</h2>'+
-      '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 4px;">Our mock analysis service reads the details from each bill — check them before saving.</p>'+
+      '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 4px;">AI reads the provider, property, dates and amount from each bill automatically — check them before saving.</p>'+
       rows+'</div>';
   }
 
