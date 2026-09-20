@@ -13,7 +13,8 @@ function fromRow(row) {
     amount: Number(row.amount) || 0,
     daysOccupied: row.days_occupied,
     paid: !!row.paid,
-    paidDate: row.paid_date || null
+    paidDate: row.paid_date || null,
+    receiptPath: row.receipt_path || null
   };
 }
 
@@ -43,7 +44,8 @@ export async function replaceForBill(billId, rows) {
       amount: r.amount,
       days_occupied: typeof r.daysOccupied === 'number' ? r.daysOccupied : null,
       paid: !!r.paid,
-      paid_date: r.paidDate || null
+      paid_date: r.paidDate || null,
+      receipt_path: r.receiptPath || null
     };
   });
   const { data, error } = await supabase.from('bill_allocations').insert(payload).select();
@@ -59,6 +61,13 @@ export async function markPaid(id, paidDate) {
 
 export async function unmarkPaid(id) {
   const { data, error } = await supabase.from('bill_allocations').update({ paid: false, paid_date: null }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
+/** Attaches (or replaces) the tenant's proof-of-payment file for their share of a bill. */
+export async function setReceipt(id, path) {
+  const { data, error } = await supabase.from('bill_allocations').update({ receipt_path: path }).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }
