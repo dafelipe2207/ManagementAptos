@@ -507,8 +507,13 @@
   max-width:min(90vw,360px);padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;
   box-shadow:var(--shadow);z-index:999;opacity:0;transition:opacity .2s ease,transform .2s ease;
   background:var(--text);color:var(--bg);
+  display:flex;align-items:center;gap:12px;justify-content:space-between;
 }
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .toast.success{background:var(--status-paid);color:#fff;}
 .toast.error{background:var(--status-overdue);color:#fff;}
 .toast.info{background:var(--text);color:var(--bg);}
+.toast-action{
+  flex:none;background:transparent;border:1px solid currentColor;color:inherit;
+  border-radius:6px;padding:3px 10px;font-size:12px;font-weight:700;cursor:pointer;
+}
