@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Belmont Manager</title>
 <style>
   :root{
@@ -234,7 +235,13 @@
     background:var(--bg);color:var(--text);font-size:13.5px;font-family:inherit;
   }
   .form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .form-row textarea{
+    width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font-size:13.5px;font-family:inherit;
+    resize:vertical;min-height:56px;
+  }
   .form-error{color:var(--status-overdue);font-size:12px;margin:6px 0 0;}
+  .mini-btn.danger{background:var(--status-overdue);color:#fff;border-color:var(--status-overdue);}
 
   .alloc-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
     padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
@@ -349,6 +356,17 @@
   .room-row .rtenant{color:var(--text-faint);}
   .room-row.linked{cursor:pointer;text-decoration:none;color:inherit;}
   .room-row.linked:hover .rtenant{color:var(--accent);}
+  .room-line{display:flex;align-items:center;gap:4px;border-top:1px solid var(--border);}
+  .room-line:first-child{margin-top:10px;}
+  .room-line .room-row{border:none;padding:7px 0;margin-top:0;flex:1;min-width:0;}
+  .icon-mini-btn{
+    border:none;background:none;color:var(--text-dim);cursor:pointer;font-size:14px;
+    padding:4px 7px;border-radius:6px;flex-shrink:0;line-height:1;
+  }
+  .icon-mini-btn:hover{background:var(--border);color:var(--text);}
+  .icon-mini-btn.danger{color:var(--status-overdue);}
+  .icon-mini-btn:disabled{opacity:.35;cursor:not-allowed;}
+  .icon-mini-btn:disabled:hover{background:none;color:var(--text-dim);}
 
   .back-link{
     display:inline-flex;align-items:center;gap:4px;
@@ -618,6 +636,112 @@
       </div>
     </div>
   </div>
+
+  <div class="modal-overlay" id="confirm-modal" hidden>
+    <div class="card modal-card">
+      <h2 id="confirm-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
+      <p id="confirm-modal-body" style="font-size:13px;color:var(--text-dim);margin:0;"></p>
+      <p id="confirm-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeConfirmModal()">Cancel</button>
+        <button class="mini-btn primary" id="confirm-modal-confirm-btn" onclick="runConfirmModalAction()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="property-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 id="property-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add property</h2>
+      <div class="form-row"><label for="property-name">Name</label><input id="property-name" type="text" /></div>
+      <div class="form-row"><label for="property-address">Address</label><input id="property-address" type="text" /></div>
+      <div class="form-row form-row-2">
+        <div><label for="property-bedrooms">Bedrooms</label><input id="property-bedrooms" type="number" min="0" step="1" /></div>
+        <div><label for="property-bathrooms">Bathrooms</label><input id="property-bathrooms" type="number" min="0" step="1" /></div>
+      </div>
+      <div class="form-row"><label for="property-notes">Notes</label><textarea id="property-notes"></textarea></div>
+      <p id="property-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closePropertyModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="savePropertyForm()">Save property</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="room-modal" hidden>
+    <div class="card modal-card">
+      <h2 id="room-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add room</h2>
+      <div class="form-row"><label for="room-name">Room name</label><input id="room-name" type="text" /></div>
+      <p id="room-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeRoomModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveRoomForm()">Save room</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="tenant-modal" hidden>
+    <div class="card modal-card" style="max-width:400px;">
+      <h2 id="tenant-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add tenant</h2>
+      <div class="form-row"><label for="tenant-fullname">Full name</label><input id="tenant-fullname" type="text" /></div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-phone">Phone</label><input id="tenant-phone" type="text" /></div>
+        <div><label for="tenant-email">Email</label><input id="tenant-email" type="email" /></div>
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-property">Property</label><select id="tenant-property" onchange="onTenantPropertyChange()"></select></div>
+        <div><label for="tenant-room">Room</label><select id="tenant-room"></select></div>
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-movein">Move-in date</label><input id="tenant-movein" type="date" /></div>
+        <div><label for="tenant-moveout-expected">Expected move-out</label><input id="tenant-moveout-expected" type="date" /></div>
+      </div>
+      <div class="form-row"><label for="tenant-moveout-actual">Actual move-out (si ya se mudó)</label><input id="tenant-moveout-actual" type="date" /></div>
+      <div class="form-row form-row-2">
+        <div><label for="tenant-rent-amount">Rent amount</label><input id="tenant-rent-amount" type="number" min="0" step="0.01" /></div>
+        <div><label for="tenant-rent-frequency">Frequency</label>
+          <select id="tenant-rent-frequency" onchange="onTenantFrequencyChange()">
+            <option value="weekly">Weekly</option>
+            <option value="fortnightly">Fortnightly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row"><label for="tenant-payment-day">Payment day</label><select id="tenant-payment-day"></select></div>
+      <div class="form-row"><label for="tenant-notes">Notes</label><textarea id="tenant-notes"></textarea></div>
+      <p id="tenant-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeTenantModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveTenantForm()">Save tenant</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="bond-modal" hidden>
+    <div class="card modal-card">
+      <h2 id="bond-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add bond</h2>
+      <div class="form-row form-row-2">
+        <div><label for="bond-required">Amount required</label><input id="bond-required" type="number" min="0" step="0.01" /></div>
+        <div><label for="bond-paid">Amount paid</label><input id="bond-paid" type="number" min="0" step="0.01" /></div>
+      </div>
+      <div class="form-row form-row-2">
+        <div><label for="bond-returned">Amount returned</label><input id="bond-returned" type="number" min="0" step="0.01" /></div>
+        <div><label for="bond-deduction">Deduction</label><input id="bond-deduction" type="number" min="0" step="0.01" /></div>
+      </div>
+      <div class="form-row"><label for="bond-status">Status</label>
+        <select id="bond-status">
+          <option value="pending">Pending</option>
+          <option value="paid">Paid</option>
+          <option value="partially_returned">Partially Returned</option>
+          <option value="fully_returned">Fully Returned</option>
+        </select>
+      </div>
+      <p id="bond-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeBondModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveBondForm()">Save bond</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -627,16 +751,16 @@
   /* ============ Mock data (espejo del proyecto React FASE 1+2) ============ */
   var TODAY = '2026-09-20';
 
-  var properties = [
+  var SEED_PROPERTIES = [
     { id:'prop-belmont', name:'Belmont', address:'123 Example Street, Belmont WA 6104', bedrooms:3, bathrooms:2,
       notes:'Casa principal, cerca de la estación de tren.' }
   ];
-  var rooms = [
+  var SEED_ROOMS = [
     { id:'room-master', propertyId:'prop-belmont', name:'Master' },
     { id:'room-2', propertyId:'prop-belmont', name:'Room 2' },
     { id:'room-3', propertyId:'prop-belmont', name:'Room 3' }
   ];
-  var tenants = [
+  var SEED_TENANTS = [
     { id:'tenant-owner', fullName:'Owner (yo)', propertyId:'prop-belmont', roomId:'room-master',
       moveInDate:'2024-01-01', rentAmount:0, rentFrequency:'monthly', paymentDay:1,
       notes:'Habitación del propietario, no genera rent charges.' },
@@ -653,11 +777,54 @@
       rentFrequency:'fortnightly', paymentDay:1, bondId:'bond-pedro',
       notes:'Se muda a la habitación de Maria justo cuando ella se va.' }
   ];
-  var bonds = [
+  var SEED_BONDS = [
     { id:'bond-john', tenantId:'tenant-john', amountRequired:1560, amountPaid:1560, amountReturned:0, deduction:0, status:'paid' },
     { id:'bond-maria', tenantId:'tenant-maria', amountRequired:1680, amountPaid:1680, amountReturned:0, deduction:0, status:'paid' },
     { id:'bond-pedro', tenantId:'tenant-pedro', amountRequired:1560, amountPaid:0, amountReturned:0, deduction:0, status:'pending' }
   ];
+  /**
+   * FASE 15 — Persistencia de properties/rooms/tenants/bonds/rentSchedules en
+   * localStorage, mismo patrón que ya usa `paymentRecords` (ver más abajo):
+   * una clave `*_STORAGE_KEY`, un `load*()` que intenta leer y devuelve null
+   * si no hay nada o falla, un `save*(list)` que intenta escribir, y una
+   * variable de nivel superior que parte de los datos SEED_* la primera vez
+   * que se abre la app en este navegador.
+   */
+  var PROPERTIES_STORAGE_KEY = 'belmont-manager-properties-v1';
+  function loadProperties(){
+    try { var raw = localStorage.getItem(PROPERTIES_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveProperties(list){ try { localStorage.setItem(PROPERTIES_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var properties = loadProperties();
+  if (!properties){ properties = SEED_PROPERTIES.slice(); saveProperties(properties); }
+
+  var ROOMS_STORAGE_KEY = 'belmont-manager-rooms-v1';
+  function loadRooms(){
+    try { var raw = localStorage.getItem(ROOMS_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveRooms(list){ try { localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var rooms = loadRooms();
+  if (!rooms){ rooms = SEED_ROOMS.slice(); saveRooms(rooms); }
+
+  var TENANTS_STORAGE_KEY = 'belmont-manager-tenants-v1';
+  function loadTenants(){
+    try { var raw = localStorage.getItem(TENANTS_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveTenants(list){ try { localStorage.setItem(TENANTS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var tenants = loadTenants();
+  if (!tenants){ tenants = SEED_TENANTS.slice(); saveTenants(tenants); }
+
+  var BONDS_STORAGE_KEY = 'belmont-manager-bonds-v1';
+  function loadBonds(){
+    try { var raw = localStorage.getItem(BONDS_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveBonds(list){ try { localStorage.setItem(BONDS_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var bonds = loadBonds();
+  if (!bonds){ bonds = SEED_BONDS.slice(); saveBonds(bonds); }
   /**
    * Convierte un objeto Date (construido en hora LOCAL, p.ej. con
    * `new Date(iso+'T00:00:00')`) de vuelta a 'YYYY-MM-DD' usando sus
@@ -848,11 +1015,19 @@
    * vez de todo el historial desde el move-in, igual que haría la app real
    * antes de tener una pantalla de "ver historial completo" (FASE 5).
    */
-  var rentSchedules = [
+  var SEED_RENTSCHEDULES = [
     { tenantId:'tenant-john', frequency:'weekly', amount:390, startDate:'2025-03-01' },
     { tenantId:'tenant-maria', frequency:'weekly', amount:420, startDate:'2025-02-15' },
     { tenantId:'tenant-pedro', frequency:'fortnightly', amount:780, startDate:'2026-09-21' }
   ];
+  var RENTSCHEDULES_STORAGE_KEY = 'belmont-manager-rentschedules-v1';
+  function loadRentSchedules(){
+    try { var raw = localStorage.getItem(RENTSCHEDULES_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    return null;
+  }
+  function saveRentSchedules(list){ try { localStorage.setItem(RENTSCHEDULES_STORAGE_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  var rentSchedules = loadRentSchedules();
+  if (!rentSchedules){ rentSchedules = SEED_RENTSCHEDULES.slice(); saveRentSchedules(rentSchedules); }
   // Pagos ya registrados (independientes de los rent charges: el generador
   // los reparte contra los periodos que va creando). Maria paga religiosamente
   // pero adelantó solo parte de la semana en curso; John no ha pagado nada
@@ -1317,7 +1492,10 @@
         '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div></a>'+
         roomsHtml+'</div>';
     }).join('');
-    return pageHeader('Properties', 'Propiedades, habitaciones y ocupación.') + cards;
+    return '<div class="detail-head" style="align-items:center;">'+
+      pageHeader('Properties', 'Propiedades, habitaciones y ocupación.')+
+      '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openPropertyModal()">+ Add property</button></div>'+
+      cards;
   }
 
   function renderPropertyDetail(id){
@@ -1327,29 +1505,26 @@
     var occupied = propRooms.filter(function(r){ var t=currentTenantOf(r.id); return t && t.rentAmount>0; }).length;
     var propBills = billsOf(p.id);
 
-    var roomsHtml = propRooms.map(function(r){
-      var t = currentTenantOf(r.id);
-      var isPaying = t && t.rentAmount>0;
-      var tenantLabel = isPaying
-        ? esc(t.fullName)+' · $'+t.rentAmount+'/'+(t.rentFrequency==='weekly'?'week':t.rentFrequency)
-        : (t ? esc(t.fullName) : 'Vacant');
-      var inner = '<span class="rname">'+esc(r.name)+'</span><span class="rtenant">'+tenantLabel+'</span>';
-      return isPaying
-        ? '<a class="room-row linked" href="#/tenants/'+t.id+'">'+inner+'</a>'
-        : '<div class="room-row">'+inner+'</div>';
-    }).join('');
+    var roomsHtml = propRooms.length===0
+      ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No hay habitaciones todavía.</p>'
+      : propRooms.map(function(r){ return roomLine(r, p.id); }).join('');
 
     return backLink('#/properties', 'Properties') +
       '<div class="detail-head"><div><h1 class="page-title">'+esc(p.name)+'</h1>'+
       '<p class="page-sub">'+esc(p.address)+'</p></div>'+
       '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
       '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+      '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
+      '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>'+
+      '</div>'+
       '<div class="card"><div class="field-list">'+
       '<div class="field-row"><span class="k">Bedrooms</span><span class="v">'+p.bedrooms+'</span></div>'+
       '<div class="field-row"><span class="k">Bathrooms</span><span class="v">'+p.bathrooms+'</span></div>'+
       (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
       '</div></div>'+
-      '<div class="card"><h2>Rooms</h2>'+roomsHtml+'</div>'+
+      '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Rooms</h2>'+
+      '<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">+ Add room</button></div>'+roomsHtml+'</div>'+
       '<div class="card"><h2>Bills</h2>'+
       (propBills.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No hay bills registrados.</p>'
@@ -1367,7 +1542,10 @@
         '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
         '</div></a>';
     }).join('');
-    return pageHeader('Tenants', 'Inquilinos, fechas y condiciones de alquiler.') + rows;
+    return '<div class="detail-head" style="align-items:center;">'+
+      pageHeader('Tenants', 'Inquilinos, fechas y condiciones de alquiler.')+
+      '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openTenantModal()">+ Add tenant</button></div>'+
+      rows;
   }
 
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
@@ -1412,6 +1590,11 @@
       '<div class="detail-head"><div><h1 class="page-title">'+esc(t.fullName)+'</h1>'+
       '<p class="page-sub">'+esc(p?p.name:'')+(room?' • '+esc(room.name):'')+'</p></div>'+
       (tenancyBadge?'<div>'+tenancyBadge+'</div>':'')+'</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+      '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
+      '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
+      '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>'+
+      '</div>'+
       '<div class="card"><h2>Contact</h2><div class="field-list">'+contactRows+'</div></div>'+
       (rentRows ? '<div class="card"><h2>Rent</h2><div class="field-list">'+rentRows+'</div></div>' : '') +
       (bondRows ? '<div class="card"><h2>Bond</h2><div class="field-list">'+bondRows+'</div></div>' : '') +
@@ -2213,6 +2396,11 @@
   function exportBackup(){
     var data = {
       exportedAt: TODAY,
+      properties: properties,
+      rooms: rooms,
+      tenants: tenants,
+      bonds: bonds,
+      rentSchedules: rentSchedules,
       paymentRecords: paymentRecords,
       bills: bills,
       notifReadIds: notifReadIds
@@ -2254,10 +2442,16 @@
       try {
         var data = JSON.parse(reader.result);
         if (!data || typeof data !== 'object') throw new Error('formato inválido');
+        if (Array.isArray(data.properties)){ properties = data.properties; saveProperties(properties); }
+        if (Array.isArray(data.rooms)){ rooms = data.rooms; saveRooms(rooms); }
+        if (Array.isArray(data.tenants)){ tenants = data.tenants; saveTenants(tenants); }
+        if (Array.isArray(data.bonds)){ bonds = data.bonds; saveBonds(bonds); }
+        if (Array.isArray(data.rentSchedules)){ rentSchedules = data.rentSchedules; saveRentSchedules(rentSchedules); }
         if (Array.isArray(data.paymentRecords)){ paymentRecords = data.paymentRecords; savePayments(paymentRecords); }
         if (Array.isArray(data.bills)){ bills = data.bills; }
         if (Array.isArray(data.notifReadIds)){ notifReadIds = data.notifReadIds; saveNotifRead(notifReadIds); }
         recomputeRentCharges();
+        refreshStaticSelects();
         backupStatusMessage = 'Backup importado correctamente.';
       } catch(e){
         backupStatusMessage = 'No se pudo leer el archivo: formato inválido.';
@@ -2284,7 +2478,7 @@
         : '<button class="mini-btn primary" onclick="openSetPinModal()">Set a PIN</button>')+
       '</div>'+
       '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Backup &amp; restore</h2>'+
-      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">Exporta un archivo JSON con tus pagos, bills (incluyendo allocations) y estado de notificaciones. Impórtalo para restaurar — reemplaza los datos actuales en este dispositivo.</p>'+
+      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">Exporta un archivo JSON con propiedades, habitaciones, inquilinos, bonds, rent schedules, pagos, bills (incluyendo allocations) y estado de notificaciones. Impórtalo para restaurar — reemplaza los datos actuales en este dispositivo.</p>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
       '<button class="mini-btn primary" onclick="exportBackup()">Export backup (.json)</button>'+
       '<button class="mini-btn" onclick="document.getElementById(\'backup-file-input\').click()">Import backup</button>'+
@@ -2301,6 +2495,416 @@
     }).join('');
     return pageHeader('More', 'El resto de secciones de la app.') + '<div class="more-list">'+rows+'</div>';
   }
+
+  /* ============ FASE 15 — CRUD: properties, rooms, tenants, bonds ============ */
+  var crudIdSeq = 0;
+  function genId(prefix){
+    crudIdSeq++;
+    return prefix + '-' + Date.now() + '-' + crudIdSeq;
+  }
+
+  /** Vuelve a poblar los <select> de property/tenant que se llenaron una sola vez al cargar la página. */
+  function refreshStaticSelects(){
+    var reviewPropertySelect = document.getElementById('review-property');
+    if (reviewPropertySelect){
+      var prevVal = reviewPropertySelect.value;
+      reviewPropertySelect.innerHTML = properties.map(function(p){
+        return '<option value="'+p.id+'">'+esc(p.name)+'</option>';
+      }).join('');
+      if (properties.some(function(p){ return p.id===prevVal; })) reviewPropertySelect.value = prevVal;
+    }
+    var docTenantSelect = document.getElementById('doc-tenant');
+    if (docTenantSelect){
+      var prevTenantVal = docTenantSelect.value;
+      docTenantSelect.innerHTML = tenants.filter(function(t){ return t.rentAmount>0; }).map(function(t){
+        return '<option value="'+t.id+'">'+esc(t.fullName)+'</option>';
+      }).join('');
+      if (tenants.some(function(t){ return t.id===prevTenantVal; })) docTenantSelect.value = prevTenantVal;
+    }
+  }
+
+  /* ---------- Modal genérico de confirmación (delete de property/room/tenant) ---------- */
+  var confirmModalAction = null;
+  function openConfirmModal(title, body, action, opts){
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-body').textContent = body;
+    var errEl = document.getElementById('confirm-modal-error');
+    errEl.hidden = true; errEl.textContent = '';
+    var btn = document.getElementById('confirm-modal-confirm-btn');
+    btn.textContent = (opts && opts.confirmLabel) || 'Confirm';
+    btn.className = 'mini-btn' + (opts && opts.danger ? ' danger' : ' primary');
+    confirmModalAction = action;
+    document.getElementById('confirm-modal').hidden = false;
+  }
+  function closeConfirmModal(){
+    document.getElementById('confirm-modal').hidden = true;
+    confirmModalAction = null;
+  }
+  /** La acción puede devolver {blocked:true, message} para mostrar un error sin cerrar el modal (p.ej. "tiene habitaciones"). */
+  function runConfirmModalAction(){
+    if (typeof confirmModalAction === 'function'){
+      var result = confirmModalAction();
+      if (result && result.blocked){
+        var errEl = document.getElementById('confirm-modal-error');
+        errEl.textContent = result.message;
+        errEl.hidden = false;
+        return;
+      }
+    }
+    closeConfirmModal();
+  }
+  window.closeConfirmModal = closeConfirmModal;
+  window.runConfirmModalAction = runConfirmModalAction;
+
+  /* ---------- Property form ---------- */
+  var propertyModalEditId = null;
+  function openPropertyModal(propertyId){
+    propertyModalEditId = propertyId || null;
+    var p = propertyId ? propertyOf(propertyId) : null;
+    document.getElementById('property-modal-title').textContent = p ? 'Edit property' : 'Add property';
+    document.getElementById('property-name').value = p ? p.name : '';
+    document.getElementById('property-address').value = p ? p.address : '';
+    document.getElementById('property-bedrooms').value = p ? p.bedrooms : '';
+    document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
+    document.getElementById('property-notes').value = p ? (p.notes||'') : '';
+    document.getElementById('property-modal-error').hidden = true;
+    document.getElementById('property-modal').hidden = false;
+  }
+  function closePropertyModal(){
+    document.getElementById('property-modal').hidden = true;
+    propertyModalEditId = null;
+  }
+  function savePropertyForm(){
+    var name = document.getElementById('property-name').value.trim();
+    var address = document.getElementById('property-address').value.trim();
+    var bedrooms = parseInt(document.getElementById('property-bedrooms').value, 10);
+    var bathrooms = parseInt(document.getElementById('property-bathrooms').value, 10);
+    var notes = document.getElementById('property-notes').value.trim();
+    var errorEl = document.getElementById('property-modal-error');
+    if (!name || !address || !isFinite(bedrooms) || bedrooms<0 || !isFinite(bathrooms) || bathrooms<0){
+      errorEl.textContent = 'Completa name, address y bedrooms/bathrooms (números enteros >= 0).';
+      errorEl.hidden = false;
+      return;
+    }
+    if (propertyModalEditId){
+      var existing = propertyOf(propertyModalEditId);
+      existing.name = name; existing.address = address; existing.bedrooms = bedrooms;
+      existing.bathrooms = bathrooms; existing.notes = notes;
+    } else {
+      properties.push({ id: genId('prop'), name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes });
+    }
+    saveProperties(properties);
+    refreshStaticSelects();
+    closePropertyModal();
+    render();
+  }
+  function deletePropertyConfirm(propertyId){
+    var p = propertyOf(propertyId);
+    if (!p) return;
+    openConfirmModal('Delete property', 'Delete "'+p.name+'"? This cannot be undone.', function(){
+      var propRooms = roomsOf(propertyId);
+      if (propRooms.length > 0){
+        return { blocked:true, message:'Esta propiedad tiene '+propRooms.length+' habitación(es). Elimínalas primero.' };
+      }
+      properties = properties.filter(function(x){ return x.id!==propertyId; });
+      saveProperties(properties);
+      refreshStaticSelects();
+      location.hash = '#/properties';
+      render();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.openPropertyModal = openPropertyModal;
+  window.closePropertyModal = closePropertyModal;
+  window.savePropertyForm = savePropertyForm;
+  window.deletePropertyConfirm = deletePropertyConfirm;
+
+  /* ---------- Room form ---------- */
+  var roomModalEditId = null;
+  var roomModalPropertyId = null;
+  function openRoomModal(propertyId, roomId){
+    roomModalPropertyId = propertyId;
+    roomModalEditId = roomId || null;
+    var r = roomId ? rooms.find(function(x){ return x.id===roomId; }) : null;
+    document.getElementById('room-modal-title').textContent = r ? 'Edit room' : 'Add room';
+    document.getElementById('room-name').value = r ? r.name : '';
+    document.getElementById('room-modal-error').hidden = true;
+    document.getElementById('room-modal').hidden = false;
+  }
+  function closeRoomModal(){
+    document.getElementById('room-modal').hidden = true;
+    roomModalEditId = null; roomModalPropertyId = null;
+  }
+  function saveRoomForm(){
+    var name = document.getElementById('room-name').value.trim();
+    var errorEl = document.getElementById('room-modal-error');
+    if (!name){
+      errorEl.textContent = 'El nombre de la habitación es obligatorio.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (roomModalEditId){
+      var r = rooms.find(function(x){ return x.id===roomModalEditId; });
+      if (r) r.name = name;
+    } else {
+      rooms.push({ id: genId('room'), propertyId: roomModalPropertyId, name: name });
+    }
+    saveRooms(rooms);
+    closeRoomModal();
+    render();
+  }
+  function deleteRoomConfirm(roomId){
+    var r = rooms.find(function(x){ return x.id===roomId; });
+    if (!r) return;
+    openConfirmModal('Delete room', 'Delete "'+r.name+'"? This cannot be undone.', function(){
+      var occupied = tenants.some(function(t){ return t.roomId===roomId; });
+      if (occupied){
+        return { blocked:true, message:'Esta habitación tiene un inquilino asignado. Reasigna o elimina al inquilino primero.' };
+      }
+      rooms = rooms.filter(function(x){ return x.id!==roomId; });
+      saveRooms(rooms);
+      render();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.openRoomModal = openRoomModal;
+  window.closeRoomModal = closeRoomModal;
+  window.saveRoomForm = saveRoomForm;
+  window.deleteRoomConfirm = deleteRoomConfirm;
+
+  /** Fila de una habitación con acciones de editar/borrar (solo en Property detail; el listado de Properties no las lleva). */
+  function roomLine(r, propertyId){
+    var t = currentTenantOf(r.id);
+    var isPaying = t && t.rentAmount>0;
+    var tenantLabel = isPaying
+      ? esc(t.fullName)+' · $'+t.rentAmount+'/'+(t.rentFrequency==='weekly'?'week':t.rentFrequency)
+      : (t ? esc(t.fullName) : 'Vacant');
+    var inner = '<span class="rname">'+esc(r.name)+'</span><span class="rtenant">'+tenantLabel+'</span>';
+    var linkOrDiv = isPaying
+      ? '<a class="room-row linked" href="#/tenants/'+t.id+'">'+inner+'</a>'
+      : '<div class="room-row">'+inner+'</div>';
+    var hasAnyTenant = !!t;
+    return '<div class="room-line">'+linkOrDiv+
+      '<button type="button" class="icon-mini-btn" title="Edit room" '+
+      'onclick="event.preventDefault();event.stopPropagation();openRoomModal(\''+propertyId+'\',\''+r.id+'\')">✎</button>'+
+      '<button type="button" class="icon-mini-btn danger" title="Delete room"'+(hasAnyTenant?' disabled':'')+' '+
+      'onclick="event.preventDefault();event.stopPropagation();deleteRoomConfirm(\''+r.id+'\')">✕</button>'+
+      '</div>';
+  }
+
+  /* ---------- Tenant form ---------- */
+  var tenantModalEditId = null;
+  function tenantPropertyOptionsHtml(selectedId){
+    return properties.map(function(p){
+      return '<option value="'+p.id+'"'+(p.id===selectedId?' selected':'')+'>'+esc(p.name)+'</option>';
+    }).join('');
+  }
+  function tenantRoomOptionsHtml(propertyId, selectedRoomId){
+    var propRooms = roomsOf(propertyId);
+    if (propRooms.length===0) return '<option value="">No rooms — add one first</option>';
+    return propRooms.map(function(r){
+      return '<option value="'+r.id+'"'+(r.id===selectedRoomId?' selected':'')+'>'+esc(r.name)+'</option>';
+    }).join('');
+  }
+  function onTenantPropertyChange(){
+    var propertyId = document.getElementById('tenant-property').value;
+    document.getElementById('tenant-room').innerHTML = tenantRoomOptionsHtml(propertyId, null);
+  }
+  function paymentDayOptionsHtml(frequency, selected){
+    var opts = '', d;
+    if (frequency==='monthly'){
+      for (d=1; d<=31; d++){ opts += '<option value="'+d+'"'+(d===selected?' selected':'')+'>Day '+d+'</option>'; }
+      return opts;
+    }
+    var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return days.map(function(dayName, idx){
+      return '<option value="'+idx+'"'+(idx===selected?' selected':'')+'>'+dayName+'</option>';
+    }).join('');
+  }
+  function onTenantFrequencyChange(){
+    var freq = document.getElementById('tenant-rent-frequency').value;
+    document.getElementById('tenant-payment-day').innerHTML = paymentDayOptionsHtml(freq, freq==='monthly'?1:1);
+  }
+  function openTenantModal(tenantId, opts){
+    tenantModalEditId = tenantId || null;
+    var t = tenantId ? tenantOf(tenantId) : null;
+    document.getElementById('tenant-modal-title').textContent = t ? 'Edit tenant' : 'Add tenant';
+    document.getElementById('tenant-fullname').value = t ? t.fullName : '';
+    document.getElementById('tenant-phone').value = t ? (t.phone||'') : '';
+    document.getElementById('tenant-email').value = t ? (t.email||'') : '';
+    var defaultPropertyId = t ? t.propertyId : ((opts && opts.propertyId) || (properties[0] && properties[0].id) || '');
+    document.getElementById('tenant-property').innerHTML = tenantPropertyOptionsHtml(defaultPropertyId);
+    document.getElementById('tenant-room').innerHTML = tenantRoomOptionsHtml(defaultPropertyId, t ? t.roomId : null);
+    document.getElementById('tenant-movein').value = t ? t.moveInDate : TODAY;
+    document.getElementById('tenant-moveout-expected').value = (t && t.expectedMoveOutDate) ? t.expectedMoveOutDate : '';
+    document.getElementById('tenant-moveout-actual').value = (t && t.actualMoveOutDate) ? t.actualMoveOutDate : '';
+    document.getElementById('tenant-rent-amount').value = t ? t.rentAmount : '';
+    document.getElementById('tenant-rent-frequency').value = t ? t.rentFrequency : 'weekly';
+    document.getElementById('tenant-payment-day').innerHTML = paymentDayOptionsHtml(t ? t.rentFrequency : 'weekly', t ? t.paymentDay : 1);
+    document.getElementById('tenant-notes').value = t ? (t.notes||'') : '';
+    document.getElementById('tenant-modal-error').hidden = true;
+    document.getElementById('tenant-modal').hidden = false;
+  }
+  function closeTenantModal(){
+    document.getElementById('tenant-modal').hidden = true;
+    tenantModalEditId = null;
+  }
+  function saveTenantForm(){
+    var fullName = document.getElementById('tenant-fullname').value.trim();
+    var phone = document.getElementById('tenant-phone').value.trim();
+    var email = document.getElementById('tenant-email').value.trim();
+    var propertyId = document.getElementById('tenant-property').value;
+    var roomId = document.getElementById('tenant-room').value;
+    var moveInDate = document.getElementById('tenant-movein').value;
+    var expectedMoveOutDate = document.getElementById('tenant-moveout-expected').value;
+    var actualMoveOutDate = document.getElementById('tenant-moveout-actual').value;
+    var rentAmount = parseFloat(document.getElementById('tenant-rent-amount').value);
+    var rentFrequency = document.getElementById('tenant-rent-frequency').value;
+    var paymentDay = parseInt(document.getElementById('tenant-payment-day').value, 10);
+    var notes = document.getElementById('tenant-notes').value.trim();
+    var errorEl = document.getElementById('tenant-modal-error');
+
+    if (!fullName || !propertyId || !roomId || !moveInDate || !isFinite(rentAmount) || rentAmount<0 || !isFinite(paymentDay)){
+      errorEl.textContent = 'Completa nombre, propiedad, habitación, fecha de entrada y un rent amount válido (>= 0).';
+      errorEl.hidden = false;
+      return;
+    }
+    if (email && email.indexOf('@')===-1){
+      errorEl.textContent = 'El email no parece válido.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (expectedMoveOutDate && expectedMoveOutDate < moveInDate){
+      errorEl.textContent = 'La fecha esperada de salida no puede ser anterior a la fecha de entrada.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (actualMoveOutDate && actualMoveOutDate < moveInDate){
+      errorEl.textContent = 'La fecha real de salida no puede ser anterior a la fecha de entrada.';
+      errorEl.hidden = false;
+      return;
+    }
+    var occupant = currentTenantOf(roomId);
+    if (occupant && occupant.id !== tenantModalEditId){
+      errorEl.textContent = 'Esa habitación ya tiene un inquilino asignado.';
+      errorEl.hidden = false;
+      return;
+    }
+
+    var tenantObj;
+    if (tenantModalEditId){
+      tenantObj = tenantOf(tenantModalEditId);
+      tenantObj.fullName = fullName;
+      if (phone) tenantObj.phone = phone; else delete tenantObj.phone;
+      if (email) tenantObj.email = email; else delete tenantObj.email;
+      tenantObj.propertyId = propertyId; tenantObj.roomId = roomId; tenantObj.moveInDate = moveInDate;
+      if (expectedMoveOutDate) tenantObj.expectedMoveOutDate = expectedMoveOutDate; else delete tenantObj.expectedMoveOutDate;
+      if (actualMoveOutDate) tenantObj.actualMoveOutDate = actualMoveOutDate; else delete tenantObj.actualMoveOutDate;
+      tenantObj.rentAmount = rentAmount; tenantObj.rentFrequency = rentFrequency; tenantObj.paymentDay = paymentDay;
+      if (notes) tenantObj.notes = notes; else delete tenantObj.notes;
+    } else {
+      tenantObj = { id: genId('tenant'), fullName:fullName, propertyId:propertyId, roomId:roomId, moveInDate:moveInDate,
+        rentAmount:rentAmount, rentFrequency:rentFrequency, paymentDay:paymentDay };
+      if (phone) tenantObj.phone = phone;
+      if (email) tenantObj.email = email;
+      if (expectedMoveOutDate) tenantObj.expectedMoveOutDate = expectedMoveOutDate;
+      if (actualMoveOutDate) tenantObj.actualMoveOutDate = actualMoveOutDate;
+      if (notes) tenantObj.notes = notes;
+      tenants.push(tenantObj);
+    }
+    saveTenants(tenants);
+
+    // rentService lee de rentSchedules, no de tenant.rentAmount/rentFrequency directamente:
+    // hay que mantener el schedule del inquilino sincronizado con lo que se guarda aquí.
+    if (rentAmount > 0){
+      var schedule = rentSchedules.find(function(s){ return s.tenantId===tenantObj.id; });
+      if (schedule){
+        schedule.frequency = rentFrequency; schedule.amount = rentAmount; schedule.startDate = moveInDate;
+      } else {
+        rentSchedules.push({ tenantId: tenantObj.id, frequency: rentFrequency, amount: rentAmount, startDate: moveInDate });
+      }
+    } else {
+      rentSchedules = rentSchedules.filter(function(s){ return s.tenantId!==tenantObj.id; });
+    }
+    saveRentSchedules(rentSchedules);
+
+    recomputeRentCharges();
+    refreshStaticSelects();
+    closeTenantModal();
+    location.hash = '#/tenants/' + tenantObj.id;
+    render();
+  }
+  function deleteTenantConfirm(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    openConfirmModal('Delete tenant', 'Delete "'+t.fullName+'" and their bond/rent schedule? This cannot be undone.', function(){
+      tenants = tenants.filter(function(x){ return x.id!==tenantId; });
+      saveTenants(tenants);
+      bonds = bonds.filter(function(x){ return x.tenantId!==tenantId; });
+      saveBonds(bonds);
+      rentSchedules = rentSchedules.filter(function(x){ return x.tenantId!==tenantId; });
+      saveRentSchedules(rentSchedules);
+      paymentRecords = paymentRecords.filter(function(x){ return x.tenantId!==tenantId; });
+      savePayments(paymentRecords);
+      recomputeRentCharges();
+      refreshStaticSelects();
+      location.hash = '#/tenants';
+      render();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.onTenantPropertyChange = onTenantPropertyChange;
+  window.onTenantFrequencyChange = onTenantFrequencyChange;
+  window.openTenantModal = openTenantModal;
+  window.closeTenantModal = closeTenantModal;
+  window.saveTenantForm = saveTenantForm;
+  window.deleteTenantConfirm = deleteTenantConfirm;
+
+  /* ---------- Bond form (accesible desde Tenant detail) ---------- */
+  var bondModalTenantId = null;
+  function openBondModal(tenantId){
+    bondModalTenantId = tenantId;
+    var b = bondOf(tenantId);
+    document.getElementById('bond-modal-title').textContent = b ? 'Edit bond' : 'Add bond';
+    document.getElementById('bond-required').value = b ? b.amountRequired : '';
+    document.getElementById('bond-paid').value = b ? b.amountPaid : 0;
+    document.getElementById('bond-returned').value = b ? b.amountReturned : 0;
+    document.getElementById('bond-deduction').value = b ? b.deduction : 0;
+    document.getElementById('bond-status').value = b ? b.status : 'pending';
+    document.getElementById('bond-modal-error').hidden = true;
+    document.getElementById('bond-modal').hidden = false;
+  }
+  function closeBondModal(){
+    document.getElementById('bond-modal').hidden = true;
+    bondModalTenantId = null;
+  }
+  function saveBondForm(){
+    var required = parseFloat(document.getElementById('bond-required').value);
+    var paid = parseFloat(document.getElementById('bond-paid').value);
+    var returned = parseFloat(document.getElementById('bond-returned').value);
+    var deduction = parseFloat(document.getElementById('bond-deduction').value);
+    if (!isFinite(paid)) paid = 0;
+    if (!isFinite(returned)) returned = 0;
+    if (!isFinite(deduction)) deduction = 0;
+    var status = document.getElementById('bond-status').value;
+    var errorEl = document.getElementById('bond-modal-error');
+    if (!isFinite(required) || required<0 || !isFinite(paid) || paid<0 || returned<0 || deduction<0){
+      errorEl.textContent = 'Todos los importes deben ser números >= 0.';
+      errorEl.hidden = false;
+      return;
+    }
+    var existing = bondOf(bondModalTenantId);
+    if (existing){
+      existing.amountRequired = required; existing.amountPaid = paid;
+      existing.amountReturned = returned; existing.deduction = deduction; existing.status = status;
+    } else {
+      bonds.push({ id: genId('bond'), tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid,
+        amountReturned:returned, deduction:deduction, status:status });
+    }
+    saveBonds(bonds);
+    closeBondModal();
+    render();
+  }
+  window.openBondModal = openBondModal;
+  window.closeBondModal = closeBondModal;
+  window.saveBondForm = saveBondForm;
 
   var ROUTES = {
     '#/': renderDashboard,
