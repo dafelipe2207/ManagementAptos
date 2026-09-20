@@ -453,6 +453,7 @@ import * as migrationService from './services/migrationService.js';
   window.setPaymentsFilter = setPaymentsFilter;
   window.setPaymentsTenantFilter = setPaymentsTenantFilter;
   window.setBillsFilter = setBillsFilter;
+  window.setBillsPropertyFilter = setBillsPropertyFilter;
 
   var bills = [];
   /** Persists a bill's mutable fields (status/allocationMethod/receiptPath/etc) back to Supabase. Throws on failure — callers decide how to surface it. */
@@ -1141,8 +1142,10 @@ import * as migrationService from './services/migrationService.js';
   }
 
   var billsFilter = 'all';
+  var billsPropertyFilter = 'all';
   var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['partially_paid','Partially Paid'], ['paid','Paid']];
   function setBillsFilter(f){ billsFilter = f; render(); }
+  function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; render(); }
   function billMatchesFilter(b, filter){
     if (filter==='all') return true;
     return billEffectiveStatus(b) === filter;
@@ -1861,14 +1864,59 @@ import * as migrationService from './services/migrationService.js';
       '</div></a>';
   }
 
+  /** Resumen de "lo que los tenants tienen que pagar" para la tabla de Bills: cuántos ya
+   *  pagaron su cuota y cuánto se ha cobrado del total. */
+  function billTenantPaymentsSummary(b){
+    if (b.allocations && b.allocations.length){
+      var paidCount = b.allocations.filter(function(a){ return a.paid; }).length;
+      return '<div>'+paidCount+'/'+b.allocations.length+' tenants</div>'+
+        '<div style="font-size:11px;color:var(--text-faint);font-weight:400;">'+money(billPaidAmount(b))+' of '+money(b.amount)+'</div>';
+    }
+    return '<span style="color:var(--text-faint);">Not yet allocated</span>';
+  }
+  /** Resumen de "lo que el administrador tiene que pagarle al proveedor" — el segundo leg del
+   *  pago, separado de billTenantPaymentsSummary (ver billReadyForAdminPayment). */
+  function billAdminPaymentSummary(b){
+    if (b.adminPaid) return badge('paid', 'Paid'+(b.adminPaidDate?(' '+shortDate(b.adminPaidDate)):''));
+    return billReadyForAdminPayment(b) ? badge('due','Ready to pay') : badge('neutral','Waiting on tenants');
+  }
+  function billsTableHtml(list, showPropertyCol){
+    var head = '<tr><th>Provider</th>'+(showPropertyCol?'<th>Property</th>':'')+
+      '<th>Issue date</th><th>Due date</th><th>Tenant payments</th><th>Payment to provider</th><th>Status</th></tr>';
+    var body = list.map(function(b){
+      var p = propertyOf(b.propertyId);
+      return '<tr class="report-row-link" onclick="location.hash=\'#/bills/'+b.id+'\'">'+
+        '<td><div style="font-weight:650;">'+esc(b.provider)+'</div>'+
+        '<div style="font-size:11px;color:var(--text-faint);text-transform:capitalize;">'+esc(b.billType)+'</div></td>'+
+        (showPropertyCol ? '<td>'+esc(p?p.name:'—')+'</td>' : '')+
+        '<td>'+(b.issueDate?shortDate(b.issueDate):'—')+'</td>'+
+        '<td>'+(b.dueDate?shortDate(b.dueDate):'—')+'</td>'+
+        '<td>'+billTenantPaymentsSummary(b)+'</td>'+
+        '<td>'+billAdminPaymentSummary(b)+'</td>'+
+        '<td>'+billStatusBadge(b)+'</td>'+
+        '</tr>';
+    }).join('');
+    return '<div class="card"><div class="report-table-wrap"><table class="report-table bills-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
+  }
+
   function renderBills(){
+    // Pestaña por propiedad — "All properties" o una específica; el filtro de estado (chips)
+    // y las stats se calculan DESPUÉS de aplicar esta, así cada pestaña muestra sus propios
+    // números en vez de los del portafolio completo.
+    var propertyScoped = billsPropertyFilter==='all' ? bills : bills.filter(function(b){ return b.propertyId===billsPropertyFilter; });
+    var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
+      '<button class="chip'+(billsPropertyFilter==='all'?' active':'')+'" onclick="setBillsPropertyFilter(\'all\')">All properties</button>'+
+      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
+        return '<button class="chip'+(billsPropertyFilter===p.id?' active':'')+'" onclick="setBillsPropertyFilter(\''+p.id+'\')">'+esc(p.name)+'</button>';
+      }).join('') + '</div>';
+
     // "Pending" y "Paid" usan el importe REALMENTE cobrado (billPaidAmount),
     // no un corte todo-o-nada por bill.status: un bill parcialmente pagado
     // aporta su parte cobrada a "Paid" y el resto a "Pending", igual que
     // Reports (billPaidAmount/billOutstandingAmount más arriba).
-    var pendingTotal = bills.reduce(function(s,b){ return s+billOutstandingAmount(b); },0);
-    var overdueCount = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).length;
-    var paidTotal = bills.reduce(function(s,b){ return s+billPaidAmount(b); },0);
+    var pendingTotal = propertyScoped.reduce(function(s,b){ return s+billOutstandingAmount(b); },0);
+    var overdueCount = propertyScoped.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).length;
+    var paidTotal = propertyScoped.reduce(function(s,b){ return s+billPaidAmount(b); },0);
 
     var statHtml = '<div class="stat-grid cols-3">'+
       '<div class="stat"><div class="label">Pending</div><div class="value'+(pendingTotal>0?' warn':'')+'">'+money(pendingTotal)+'</div></div>'+
@@ -1880,18 +1928,22 @@ import * as migrationService from './services/migrationService.js';
       return '<button class="chip'+(billsFilter===f[0]?' active':'')+'" onclick="setBillsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
     }).join('') + '</div>';
 
-    var filtered = bills.filter(function(b){ return billMatchesFilter(b, billsFilter); });
+    var filtered = propertyScoped
+      .filter(function(b){ return billMatchesFilter(b, billsFilter); })
+      .sort(function(a,b){ return (b.dueDate||'').localeCompare(a.dueDate||''); });
     var rows = filtered.length===0
-      ? (bills.length===0
+      ? (propertyScoped.length===0
           ? emptyState('receipt', 'No bills yet',
-              'Add your first electricity, water, gas or internet bill to start tracking what\'s owed.',
+              billsPropertyFilter==='all'
+                ? 'Add your first electricity, water, gas or internet bill to start tracking what\'s owed.'
+                : 'No bills recorded for this property yet.',
               '<button class="mini-btn primary" onclick="openImportModal()">+ Add bill</button>')
           : emptyState('receipt', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every bill.', ''))
-      : filtered.map(billCard).join('');
+      : billsTableHtml(filtered, billsPropertyFilter==='all');
 
     return '<div class="detail-head">'+pageHeader('Bills', 'Electricity, gas, water, internet and more.')+
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button></div>'+
-      importQueueCard() + statHtml + chipsHtml + rows;
+      importQueueCard() + propertyTabsHtml + statHtml + chipsHtml + rows;
   }
 
   function renderBillDetail(id){
