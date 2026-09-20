@@ -1543,6 +1543,91 @@ import * as migrationService from './services/migrationService.js';
   window.markAllocationPaid = markAllocationPaid;
   window.unmarkAllocationPaid = unmarkAllocationPaid;
 
+  /* ---------- Admin → provider payment (separate from each tenant's own allocation.paid) ----------
+   * A bill has two payment legs: (1) each tenant pays their share to the admin — that's
+   * allocation.paid/paidDate/receiptPath above; (2) once every tenant has paid, the admin
+   * forwards the money on to the actual service provider — that's bill.adminPaid/adminPaidDate/
+   * adminReceiptPath, gated by billReadyForAdminPayment so the admin can't mark the provider paid
+   * before collecting from tenants. */
+  function billReadyForAdminPayment(b){
+    return b.amount > 0 && billOutstandingAmount(b) === 0;
+  }
+  async function markBillAdminPaid(billId){
+    var bill = billOf(billId);
+    if (!bill) return;
+    if (!billReadyForAdminPayment(bill)){
+      showToast('Tenants need to finish paying their share before you can pay the provider.', 'error');
+      return;
+    }
+    try {
+      bill.adminPaid = true;
+      bill.adminPaidDate = TODAY;
+      await persistBill(bill);
+      showToast('Marked as paid to the provider.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  async function unmarkBillAdminPaid(billId){
+    var bill = billOf(billId);
+    if (!bill) return;
+    try {
+      bill.adminPaid = false;
+      bill.adminPaidDate = null;
+      await persistBill(bill);
+      render();
+    } catch(err){
+      showToast('Could not undo this. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.markBillAdminPaid = markBillAdminPaid;
+  window.unmarkBillAdminPaid = unmarkBillAdminPaid;
+
+  /* ---------- Payment proof uploads (tenant's share receipt, or the admin's payment-to-provider receipt) ---------- */
+  var receiptUploadTarget = null; // { billId, tenantId } — tenantId null means "the admin's own payment to the provider"
+  function triggerReceiptUpload(billId, tenantId){
+    receiptUploadTarget = { billId: billId, tenantId: tenantId || null };
+    document.getElementById('receipt-input').click();
+  }
+  async function handleReceiptFile(event){
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    var target = receiptUploadTarget;
+    receiptUploadTarget = null;
+    if (!file || !target) return;
+    var bill = billOf(target.billId);
+    if (!bill) return;
+    try {
+      var idForPath = target.billId + (target.tenantId ? ('-' + target.tenantId) : '-admin');
+      var path = await storageService.uploadReceipt(idForPath, file);
+      if (target.tenantId){
+        var alloc = bill.allocations && bill.allocations.find(function(a){ return a.tenantId===target.tenantId; });
+        if (!alloc) return;
+        await billAllocationService.setReceipt(alloc.id, path);
+        alloc.receiptPath = path;
+      } else {
+        bill.adminReceiptPath = path;
+        await persistBill(bill);
+      }
+      showToast('Receipt uploaded.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not upload the receipt. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  async function viewReceipt(bucket, path){
+    try {
+      var url = await storageService.getSignedUrl(bucket, path);
+      window.open(url, '_blank');
+    } catch(err){
+      showToast('Could not open the receipt. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.triggerReceiptUpload = triggerReceiptUpload;
+  window.handleReceiptFile = handleReceiptFile;
+  window.viewReceipt = viewReceipt;
+
   /* ---------- FASE 12: Documents (lease agreements, ID copies, otros) ---------- */
   var tenantDocuments = [];
   var pendingDocFile = null;
@@ -1667,7 +1752,7 @@ import * as migrationService from './services/migrationService.js';
       '<div class="row" style="border:none;padding:0;">'+
       '<div class="who"><div class="name" style="text-transform:capitalize;">'+esc(b.billType)+'</div>'+
       '<div class="meta">'+esc(b.provider)+' • '+esc(p?p.name:'—')+' • '+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</div></div>'+
-      '<div class="amount">'+money(b.amount)+'<br/>'+billStatusBadge(b)+'</div>'+
+      '<div class="amount">'+money(b.amount)+'<br/>'+billStatusBadge(b)+(b.adminPaid?' '+badge('paid','Sent to provider'):'')+'</div>'+
       '</div></a>';
   }
 
@@ -1727,8 +1812,39 @@ import * as migrationService from './services/migrationService.js';
       billAllocationCard(b);
   }
 
+  /** The little "Upload receipt" / "View receipt" link shown under a tenant's allocation row or
+   *  the admin's provider-payment row. `path` is the file's storage path, or null/undefined if
+   *  nothing's been attached yet. */
+  function receiptLinkHtml(path, billId, tenantId){
+    if (path){
+      return '<button class="text-link" style="font-size:11.5px;" onclick="viewReceipt(\'receipts\',\''+path+'\')">View receipt</button>';
+    }
+    return '<button class="text-link" style="font-size:11.5px;" onclick="triggerReceiptUpload(\''+billId+'\''+(tenantId?(',\''+tenantId+'\''):',null')+')">Upload receipt</button>';
+  }
+
   function billAllocationCard(b){
     var methodLabel = { equal:'Equal split', days:'By days occupied', custom:'Custom' };
+    // The admin's own payment to the provider — a second leg, separate from each tenant's
+    // allocation, only unlocked once every tenant has paid their share.
+    var adminReady = billReadyForAdminPayment(b);
+    var adminPaidBit = b.adminPaid
+      ? badge('paid', 'Paid'+(b.adminPaidDate ? ' ' + shortDate(b.adminPaidDate) : ''))
+      : badge(adminReady ? 'due' : 'neutral', 'Not yet paid');
+    var adminActionBtn = b.adminPaid
+      ? '<button class="mini-btn" onclick="unmarkBillAdminPaid(\''+b.id+'\')">Mark as unpaid</button>'
+      : '<button class="mini-btn primary" onclick="markBillAdminPaid(\''+b.id+'\')"'+(adminReady?'':' disabled title="Waiting on tenants to pay their share first"')+'>Mark as paid to provider</button>';
+    var adminSectionHtml = '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
+      '<h2 style="margin:0;">Payment to provider</h2></div>'+
+      '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+
+      (adminReady ? 'All tenants have paid — you can now forward this on to '+esc(b.provider)+'.' : 'Available once every tenant has paid their share.')+
+      '</p>'+
+      '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
+      '<div class="who"><div>'+esc(b.provider)+'</div>'+receiptLinkHtml(b.adminReceiptPath, b.id, null)+'</div>'+
+      '<div style="display:flex;align-items:center;gap:10px;">'+
+      '<div style="text-align:right;"><div style="font-weight:650;">'+money(b.amount)+'</div>'+adminPaidBit+'</div>'+
+      adminActionBtn+
+      '</div></div></div>';
+
     if (b.allocations && b.allocations.length){
       var rows = b.allocations.map(function(a){
         var t = tenantOf(a.tenantId);
@@ -1739,7 +1855,7 @@ import * as migrationService from './services/migrationService.js';
           ? '<button class="mini-btn" onclick="unmarkAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as unpaid</button>'
           : '<button class="mini-btn primary" onclick="markAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
         return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
-          '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div></div>'+
+          '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div>'+receiptLinkHtml(a.receiptPath, b.id, a.tenantId)+'</div>'+
           '<div style="display:flex;align-items:center;gap:10px;">'+
           '<div style="text-align:right;"><div style="font-weight:650;">'+money(a.amount)+'</div>'+paidBit+'</div>'+
           actionBtn+
@@ -1749,14 +1865,15 @@ import * as migrationService from './services/migrationService.js';
         '<h2 style="margin:0;">Allocation</h2>'+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button></div>'+
         '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+'</p>'+
-        rows+'</div>';
+        rows+'</div>'+adminSectionHtml;
     }
     var propTenants = tenantsOfProperty(b.propertyId);
-    if (propTenants.length === 0) return '';
+    if (propTenants.length === 0) return adminSectionHtml;
     return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
       '<h2 style="margin:0;">Allocation</h2>'+
       '<button class="mini-btn primary" onclick="openAllocateModal(\''+b.id+'\')">Allocate</button></div>'+
-      '<p style="font-size:13px;color:var(--text-dim);margin:0;">Split this bill between the property\'s tenants — equally, by days occupied, or a custom amount.</p></div>';
+      '<p style="font-size:13px;color:var(--text-dim);margin:0;">Split this bill between the property\'s tenants — equally, by days occupied, or a custom amount.</p></div>'+
+      adminSectionHtml;
   }
 
   function renderCalendar(){
