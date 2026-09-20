@@ -232,22 +232,35 @@ import * as migrationService from './services/migrationService.js';
   }
   recomputeRentCharges();
 
-  /** Records a payment against Supabase; only mutates the in-memory ledger once the insert succeeds. Returns true on success.
-   *  `date` defaults to today but can be set to whenever the tenant actually paid (may be earlier than today). */
+  /** Records a payment against Supabase; only mutates the in-memory ledger once the insert succeeds. Returns the
+   *  saved payment on success, or null on failure. `date` defaults to today but can be set to whenever the tenant
+   *  actually paid (may be earlier than today). The success toast offers an immediate "Undo" — for when the admin
+   *  picked the wrong date, or confirmed a payment that hadn't actually happened. */
   async function recordPayment(tenantId, amount, date){
     amount = Math.round(amount*100)/100;
-    if (!(amount > 0)) return false;
+    if (!(amount > 0)) return null;
     try {
       var saved = await paymentService.create({ tenantId:tenantId, amount:amount, date: date || TODAY });
       paymentRecords.push(saved);
       recomputeRentCharges();
-      showToast('Payment recorded.', 'success');
-      return true;
+      showToast('Payment recorded.', 'success', { label:'Undo', onClick: function(){ undoRecordedPayment(saved.id); } });
+      return saved;
     } catch(err){
       showToast('Could not record the payment. ' + friendlyErrorMessage(err), 'error');
-      return false;
+      return null;
     }
   }
+  /** Deshace un pago recién registrado (atajo desde el "Undo" del toast) — para cuando el
+   *  administrador se equivocó de fecha, o confirmó un pago que en realidad no se hizo. La
+   *  misma corrección también está disponible más tarde desde "View history" (✕ o ✎). */
+  async function undoRecordedPayment(paymentId){
+    var ok = await removePayment(paymentId);
+    if (ok){
+      render();
+      showToast('Payment undone.', 'success');
+    }
+  }
+  window.undoRecordedPayment = undoRecordedPayment;
   async function removePayment(paymentId){
     try {
       await paymentService.remove(paymentId);
@@ -259,16 +272,49 @@ import * as migrationService from './services/migrationService.js';
       return false;
     }
   }
-  /** Paga esta charge y cualquier periodo anterior sin pagar del mismo inquilino (el ledger es FIFO). */
-  async function markChargeAsPaid(chargeId){
+  /** Paga esta charge y cualquier periodo anterior sin pagar del mismo inquilino (el ledger es FIFO).
+   *  `date` es la fecha REAL en que el inquilino pagó (puede ser de hace varios días) — no siempre
+   *  hoy, por eso openChargePaidModal la pide en vez de asumir TODAY directamente. */
+  async function markChargeAsPaid(chargeId, date){
     var charge = rentCharges.find(function(c){ return c.id===chargeId; });
     if (!charge) return;
     var owed = rentCharges
       .filter(function(c){ return c.tenantId===charge.tenantId && c.periodStart<=charge.periodStart; })
       .reduce(function(sum,c){ return sum + c.remaining; }, 0);
-    await recordPayment(charge.tenantId, owed);
+    await recordPayment(charge.tenantId, owed, date);
     render();
   }
+
+  /* ---------- Modal: confirm "Mark as Paid" on a rent charge with the actual date it was paid ---------- */
+  var chargePaidModalChargeId = null;
+  function openChargePaidModal(chargeId){
+    var charge = rentCharges.find(function(c){ return c.id===chargeId; });
+    if (!charge) return;
+    var t = tenantOf(charge.tenantId);
+    var owed = rentCharges
+      .filter(function(c){ return c.tenantId===charge.tenantId && c.periodStart<=charge.periodStart; })
+      .reduce(function(sum,c){ return sum + c.remaining; }, 0);
+    chargePaidModalChargeId = chargeId;
+    document.getElementById('charge-paid-modal-sub').textContent = (t?t.fullName:'') + ' • ' + money(owed);
+    var dateInput = document.getElementById('charge-paid-modal-date');
+    dateInput.value = TODAY; // editable: the tenant may have paid several days ago, not necessarily today
+    document.getElementById('charge-paid-modal').hidden = false;
+  }
+  function closeChargePaidModal(){
+    document.getElementById('charge-paid-modal').hidden = true;
+    chargePaidModalChargeId = null;
+  }
+  async function confirmChargePaidModal(){
+    var chargeId = chargePaidModalChargeId;
+    var dateInput = document.getElementById('charge-paid-modal-date');
+    var date = dateInput.value || TODAY;
+    closeChargePaidModal();
+    if (!chargeId) return;
+    await markChargeAsPaid(chargeId, date);
+  }
+  window.openChargePaidModal = openChargePaidModal;
+  window.closeChargePaidModal = closeChargePaidModal;
+  window.confirmChargePaidModal = confirmChargePaidModal;
 
   /* ---------- Modal: Record a payment (partial or full, with the actual date it was paid) ---------- */
   var partialModalChargeId = null;
@@ -763,7 +809,7 @@ import * as migrationService from './services/migrationService.js';
               '<div style="display:flex;align-items:center;gap:10px;">'+
               '<div class="amount">'+money(item.amountRemaining)+'<br/>'+b+'</div>'+
               '<div style="display:flex;flex-direction:column;gap:6px;">'+
-              '<button class="view-btn" onclick="markChargeAsPaid(\''+item.chargeId+'\')">MARK AS PAID</button>'+
+              '<button class="view-btn" onclick="openChargePaidModal(\''+item.chargeId+'\')">MARK AS PAID</button>'+
               '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/payments\'">View</button>'+
               '</div></div></div>';
           }).join('')
@@ -1053,7 +1099,7 @@ import * as migrationService from './services/migrationService.js';
           var t = tenantOf(c.tenantId);
           var actions = c.status !== 'paid'
             ? '<div style="display:flex;gap:8px;margin-top:10px;">'+
-              '<button class="mini-btn primary" onclick="markChargeAsPaid(\''+c.id+'\')">Mark as Paid</button>'+
+              '<button class="mini-btn primary" onclick="openChargePaidModal(\''+c.id+'\')">Mark as Paid</button>'+
               '<button class="mini-btn" onclick="openPartialModal(\''+c.id+'\')">Partial payment</button>'+
               '</div>'
             : '';
@@ -1518,7 +1564,7 @@ import * as migrationService from './services/migrationService.js';
       var savedAllocations = bill.allocations;
       await persistBill(bill);
       bill.allocations = savedAllocations;
-      showToast('Marked as paid.', 'success');
+      showToast('Marked as paid.', 'success', { label:'Undo', onClick: function(){ unmarkAllocationPaid(billId, tenantId); } });
       render();
     } catch(err){
       showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
@@ -2904,14 +2950,31 @@ import * as migrationService from './services/migrationService.js';
   window.bootstrapData = bootstrapData;
 
   /** Lightweight toast for success/error feedback on async actions, reusing the app's existing visual language. */
-  function showToast(message, kind){
+  /** `action`, if given, is { label, onClick } and renders as a small inline button on the
+   *  toast (e.g. "Undo") — clicking it runs onClick and dismisses the toast immediately. */
+  function showToast(message, kind, action){
     var el = document.getElementById('toast');
     if (!el) { return; }
-    el.textContent = message;
+    el.innerHTML = '';
+    var msgSpan = document.createElement('span');
+    msgSpan.textContent = message;
+    el.appendChild(msgSpan);
+    if (action && action.label && action.onClick){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = action.label;
+      btn.onclick = function(){
+        el.hidden = true; el.className = 'toast';
+        clearTimeout(showToast._t);
+        action.onClick();
+      };
+      el.appendChild(btn);
+    }
     el.className = 'toast ' + (kind || 'info') + ' show';
     el.hidden = false;
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(function(){ el.hidden = true; el.className = 'toast'; }, 3200);
+    showToast._t = setTimeout(function(){ el.hidden = true; el.className = 'toast'; }, action ? 6000 : 3200);
   }
   window.showToast = showToast;
 
