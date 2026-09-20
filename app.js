@@ -88,18 +88,6 @@ import * as migrationService from './services/migrationService.js';
       return periods;
     }
 
-    /** Ventana reciente: el último periodo ya vencido, el actual y el próximo (los que existan). */
-    function selectRecentWindow(periods, asOfIso){
-      var past = periods.filter(function(p){ return p.periodEnd < asOfIso; });
-      var current = periods.filter(function(p){ return p.periodStart <= asOfIso && p.periodEnd >= asOfIso; });
-      var future = periods.filter(function(p){ return p.periodStart > asOfIso; });
-      var win = [];
-      if (past.length) win.push(past[past.length-1]);
-      if (current.length) win.push(current[0]);
-      if (future.length) win.push(future[0]);
-      return win;
-    }
-
     function computeStatus(period, amountPaid, remaining, asOfIso){
       if (remaining <= 0.004) return 'paid';
       if (amountPaid > 0) return 'partially_paid';
@@ -108,18 +96,19 @@ import * as migrationService from './services/migrationService.js';
       return 'due';
     }
 
-    /** Reparte los pagos de un inquilino contra sus periodos, en orden cronológico (FIFO). */
+    /** Reparte los pagos de un inquilino contra TODOS sus periodos desde el move-in (no solo
+     *  una ventana reciente), en orden cronológico (FIFO), para que cada semana/quincena
+     *  atrasada aparezca como su propia fila en Payments. */
     function generateChargesForTenant(tenant, schedule, asOfIso, allPayments){
       if (!schedule || tenant.rentAmount <= 0) return [];
       var periods = generateAllPeriods(schedule, tenant, asOfIso);
-      var win = selectRecentWindow(periods, asOfIso);
       var pays = allPayments
         .filter(function(p){ return p.tenantId === tenant.id; })
         .slice()
         .sort(function(a,b){ return a.date.localeCompare(b.date); });
       var payIdx = 0, payLeft = pays.length ? pays[0].amount : 0;
 
-      return win.map(function(period){
+      return periods.map(function(period){
         var amountDue = schedule.amount;
         var need = amountDue, amountPaid = 0;
         while (need > 0.004 && payIdx < pays.length){
@@ -213,10 +202,11 @@ import * as migrationService from './services/migrationService.js';
    * escriben a mano. `rentService` (más abajo) los genera automáticamente a
    * partir de un `RentSchedule` por inquilino (frecuencia, importe, fecha de
    * inicio), aplicando los pagos registrados en orden cronológico (FIFO) para
-   * derivar amountPaid/remaining/status. Solo se conserva una ventana
-   * reciente por inquilino (el periodo anterior, el actual y el próximo) en
-   * vez de todo el historial desde el move-in, igual que haría la app real
-   * antes de tener una pantalla de "ver historial completo" (FASE 5).
+   * derivar amountPaid/remaining/status. Se genera UN periodo por cada
+   * semana/quincena/mes desde el move-in hasta hoy (más uno futuro) — no solo
+   * los últimos 3 — para que un inquilino atrasado varios meses muestre cada
+   * semana pendiente por separado en Payments, y el administrador sepa
+   * exactamente cuál semana está cancelando en cada pago.
    */
   var rentSchedules = [];
   var paymentRecords = [];
@@ -492,8 +482,19 @@ import * as migrationService from './services/migrationService.js';
     return items;
   }
   function getNeedsAttention(){
-    var rentItems = rentCharges
+    // Un inquilino atrasado varios meses ahora tiene muchos periodos overdue en rentCharges
+    // (uno por semana/quincena, ver generateChargesForTenant) — "Needs attention" se queda con
+    // el más reciente de cada inquilino para no repetir una fila por cada semana; el desglose
+    // completo semana por semana vive en Payments (con el filtro por tenant).
+    var mostRecentByTenant = {};
+    rentCharges
       .filter(function(c){ return c.status==='overdue' || c.status==='partially_paid'; })
+      .forEach(function(c){
+        var existing = mostRecentByTenant[c.tenantId];
+        if (!existing || c.periodStart > existing.periodStart) mostRecentByTenant[c.tenantId] = c;
+      });
+    var rentItems = Object.keys(mostRecentByTenant)
+      .map(function(tenantId){ return mostRecentByTenant[tenantId]; })
       .map(function(c){
         var tenant = tenants.find(function(t){ return t.id===c.tenantId; });
         var room = rooms.find(function(r){ return r.id === (tenant && tenant.roomId); });
@@ -750,7 +751,7 @@ import * as migrationService from './services/migrationService.js';
                 '<div style="display:flex;align-items:center;gap:10px;">'+
                 '<div class="amount">'+money(item.amountRemaining)+'<br/>'+billBadge+'</div>'+
                 '<div style="display:flex;flex-direction:column;gap:6px;">'+
-                '<button class="view-btn" onclick="markAllocationPaid(\''+item.billId+'\',\''+item.tenantId+'\')">MARK AS PAID</button>'+
+                '<button class="view-btn" onclick="openAllocPaidModal(\''+item.billId+'\',\''+item.tenantId+'\')">MARK AS PAID</button>'+
                 '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/bills/'+item.billId+'\'">View</button>'+
                 '</div></div></div>';
             }
@@ -1080,7 +1081,7 @@ import * as migrationService from './services/migrationService.js';
           '<div style="display:flex;align-items:center;gap:10px;">'+
           (overdue ? badge('overdue','Overdue') : badge('due','Unpaid'))+
           '<b>'+money(a.amount)+'</b>'+
-          '<button class="mini-btn primary" onclick="markAllocationPaid(\''+b.id+'\',\''+t.id+'\')">Mark as paid</button>'+
+          '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+t.id+'\')">Mark as paid</button>'+
           '</div></div>';
       }).join('');
       acc.push('<div class="card"><div class="who" style="margin-bottom:6px;"><div class="name">'+esc(t.fullName)+'</div></div>'+rowsHtml+'</div>');
@@ -1501,16 +1502,18 @@ import * as migrationService from './services/migrationService.js';
     else if (paidCount === total) bill.status = 'paid';
     else bill.status = 'partially_paid';
   }
-  /** Marca la cuota de un inquilino en un bill como pagada hoy, y recalcula el estado general del bill. */
-  async function markAllocationPaid(billId, tenantId){
+  /** Marca la cuota de un inquilino en un bill como pagada (con la fecha real que el admin indique,
+   *  no siempre hoy), y recalcula el estado general del bill. */
+  async function markAllocationPaid(billId, tenantId, date){
     var bill = billOf(billId);
     if (!bill || !bill.allocations) return;
     var alloc = bill.allocations.find(function(a){ return a.tenantId===tenantId; });
     if (!alloc) return;
+    var paidDate = date || TODAY;
     try {
-      await billAllocationService.markPaid(alloc.id, TODAY);
+      await billAllocationService.markPaid(alloc.id, paidDate);
       alloc.paid = true;
-      alloc.paidDate = TODAY;
+      alloc.paidDate = paidDate;
       recomputeBillStatus(bill);
       var savedAllocations = bill.allocations;
       await persistBill(bill);
@@ -1521,7 +1524,10 @@ import * as migrationService from './services/migrationService.js';
       showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
     }
   }
-  /** Deshace el marcado de pagado de la cuota de un inquilino en un bill. */
+  /** Corrige un error del administrador: deshace el marcado de "pagado" de la cuota de un
+   *  inquilino en un bill (por ejemplo, si se marcó por accidente antes de que el inquilino
+   *  pagara de verdad). El comprobante adjunto, si lo hay, se conserva — usar removeReceipt
+   *  si también hay que quitarlo. */
   async function unmarkAllocationPaid(billId, tenantId){
     var bill = billOf(billId);
     if (!bill || !bill.allocations) return;
@@ -1535,6 +1541,7 @@ import * as migrationService from './services/migrationService.js';
       var savedAllocations = bill.allocations;
       await persistBill(bill);
       bill.allocations = savedAllocations;
+      showToast('Undone — marked as unpaid again.', 'success');
       render();
     } catch(err){
       showToast('Could not undo this. ' + friendlyErrorMessage(err), 'error');
@@ -1542,6 +1549,58 @@ import * as migrationService from './services/migrationService.js';
   }
   window.markAllocationPaid = markAllocationPaid;
   window.unmarkAllocationPaid = unmarkAllocationPaid;
+
+  /* ---------- Modal: confirm a tenant's bill-share payment with the actual date it was paid ---------- */
+  var allocPaidModalTarget = null; // { billId, tenantId }
+  function openAllocPaidModal(billId, tenantId){
+    var bill = billOf(billId);
+    var alloc = bill && bill.allocations && bill.allocations.find(function(a){ return a.tenantId===tenantId; });
+    if (!alloc) return;
+    var t = tenantOf(tenantId);
+    allocPaidModalTarget = { billId: billId, tenantId: tenantId };
+    document.getElementById('alloc-paid-modal-sub').textContent = (t?t.fullName:'') + ' • ' + money(alloc.amount);
+    var dateInput = document.getElementById('alloc-paid-modal-date');
+    dateInput.value = TODAY; // editable: the tenant may have paid on an earlier day than today
+    document.getElementById('alloc-paid-modal').hidden = false;
+  }
+  function closeAllocPaidModal(){
+    document.getElementById('alloc-paid-modal').hidden = true;
+    allocPaidModalTarget = null;
+  }
+  async function confirmAllocPaidModal(){
+    var target = allocPaidModalTarget;
+    var dateInput = document.getElementById('alloc-paid-modal-date');
+    var date = dateInput.value || TODAY;
+    closeAllocPaidModal();
+    if (!target) return;
+    await markAllocationPaid(target.billId, target.tenantId, date);
+  }
+  window.openAllocPaidModal = openAllocPaidModal;
+  window.closeAllocPaidModal = closeAllocPaidModal;
+  window.confirmAllocPaidModal = confirmAllocPaidModal;
+
+  /** Quita un comprobante adjunto por error (de un tenant o del propio admin) sin tocar si la
+   *  cuota está marcada como pagada — para cuando se subió el archivo equivocado. */
+  async function removeReceipt(billId, tenantId){
+    var bill = billOf(billId);
+    if (!bill) return;
+    try {
+      if (tenantId){
+        var alloc = bill.allocations && bill.allocations.find(function(a){ return a.tenantId===tenantId; });
+        if (!alloc) return;
+        await billAllocationService.setReceipt(alloc.id, null);
+        alloc.receiptPath = null;
+      } else {
+        bill.adminReceiptPath = null;
+        await persistBill(bill);
+      }
+      showToast('Receipt removed.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not remove the receipt. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.removeReceipt = removeReceipt;
 
   /* ---------- Admin → provider payment (separate from each tenant's own allocation.paid) ----------
    * A bill has two payment legs: (1) each tenant pays their share to the admin — that's
@@ -1816,10 +1875,12 @@ import * as migrationService from './services/migrationService.js';
    *  the admin's provider-payment row. `path` is the file's storage path, or null/undefined if
    *  nothing's been attached yet. */
   function receiptLinkHtml(path, billId, tenantId){
+    var tenantArg = tenantId ? ('\''+tenantId+'\'') : 'null';
     if (path){
-      return '<button class="text-link" style="font-size:11.5px;" onclick="viewReceipt(\'receipts\',\''+path+'\')">View receipt</button>';
+      return '<button class="text-link" style="font-size:11.5px;" onclick="viewReceipt(\'receipts\',\''+path+'\')">View receipt</button>'+
+        '<button class="text-link" style="font-size:11.5px;color:var(--status-overdue);" onclick="removeReceipt(\''+billId+'\','+tenantArg+')">Remove</button>';
     }
-    return '<button class="text-link" style="font-size:11.5px;" onclick="triggerReceiptUpload(\''+billId+'\''+(tenantId?(',\''+tenantId+'\''):',null')+')">Upload receipt</button>';
+    return '<button class="text-link" style="font-size:11.5px;" onclick="triggerReceiptUpload(\''+billId+'\','+tenantArg+')">Upload receipt</button>';
   }
 
   function billAllocationCard(b){
@@ -1853,7 +1914,7 @@ import * as migrationService from './services/migrationService.js';
           : badge('due', 'Unpaid');
         var actionBtn = a.paid
           ? '<button class="mini-btn" onclick="unmarkAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as unpaid</button>'
-          : '<button class="mini-btn primary" onclick="markAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
+          : '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
         return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
           '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div>'+receiptLinkHtml(a.receiptPath, b.id, a.tenantId)+'</div>'+
           '<div style="display:flex;align-items:center;gap:10px;">'+
@@ -1985,11 +2046,11 @@ import * as migrationService from './services/migrationService.js';
       return '<tr><td>'+esc(t?t.fullName:tenantId)+'</td><td>'+money(row.expected)+'</td><td>'+money(row.received)+'</td>'+
         '<td'+(row.outstanding>0?' class="warn"':'')+'>'+money(row.outstanding)+'</td></tr>';
     }).join('');
-    var tenantTableHtml = '<div class="card"><h2>By tenant (recent window)</h2>'+
+    var tenantTableHtml = '<div class="card"><h2>By tenant</h2>'+
       (tenantRows
         ? '<div class="report-table-wrap"><table class="report-table"><thead><tr><th>Tenant</th><th>Expected</th><th>Received</th><th>Outstanding</th></tr></thead>'+
           '<tbody>'+tenantRows+'</tbody></table></div>'+
-          '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">Covers only the recent window of rent periods (previous, current and next) — not the full history since move-in.</p>'
+          '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">Covers every rent period since move-in, not just the current one.</p>'
         : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No rent charges yet — add a paying tenant to see a breakdown here.</p>')+
       '</div>';
 
