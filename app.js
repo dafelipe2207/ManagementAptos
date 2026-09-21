@@ -1103,9 +1103,12 @@ import * as migrationService from './services/migrationService.js';
 
   var paymentsFilter = 'all';
   var paymentsTenantFilter = 'all';
+  var paymentsTab = 'rent'; // 'rent' | 'bills' — dos sub-pestañas separadas dentro de Payments
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
   function setPaymentsFilter(f){ paymentsFilter = f; render(); }
   function setPaymentsTenantFilter(tenantId){ paymentsTenantFilter = tenantId; render(); }
+  function setPaymentsTab(tab){ paymentsTab = tab; render(); }
+  window.setPaymentsTab = setPaymentsTab;
   function chargeMatchesFilter(c, filter){
     if (filter==='paid') return c.status==='paid';
     if (filter==='overdue') return c.status==='overdue';
@@ -1125,7 +1128,16 @@ import * as migrationService from './services/migrationService.js';
     return out.sort(function(x,y){ return (x.bill.dueDate||'').localeCompare(y.bill.dueDate||''); });
   }
 
-  function renderPayments(){
+  /** El selector "Rent" / "Bills" que separa las dos secciones de Payments en pestañas
+   *  independientes, en vez de mostrarlas una debajo de la otra en el mismo scroll. */
+  function paymentsTabChipsHtml(){
+    return '<div class="filter-chips" style="margin-bottom:10px;">'+
+      '<button class="chip'+(paymentsTab==='rent'?' active':'')+'" onclick="setPaymentsTab(\'rent\')">Rent</button>'+
+      '<button class="chip'+(paymentsTab==='bills'?' active':'')+'" onclick="setPaymentsTab(\'bills\')">Bills</button>'+
+      '</div>';
+  }
+
+  function renderPaymentsRentTab(){
     var expected = rentCharges.reduce(function(s,c){ return s+c.amountDue; },0);
     var received = rentCharges.reduce(function(s,c){ return s+c.amountPaid; },0);
     var outstanding = rentCharges.reduce(function(s,c){ return s+c.remaining; },0);
@@ -1176,9 +1188,32 @@ import * as migrationService from './services/migrationService.js';
             '</div>';
         }).join('');
 
-    // Bills each tenant still owes a share of — surfaced here too so payments and bill
-    // obligations don't live in two disconnected tabs.
+    return statHtml + chipsHtml + tenantFilterHtml + rows;
+  }
+
+  function renderPaymentsBillsTab(){
     var relevantTenants = paymentsTenantFilter==='all' ? tenants : tenants.filter(function(t){ return t.id===paymentsTenantFilter; });
+    var allOwed = relevantTenants.reduce(function(acc, t){
+      return acc.concat(unpaidBillAllocationsFor(t.id).map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; }));
+    }, []);
+    var totalOwed = allOwed.reduce(function(s,o){ return s+o.alloc.amount; }, 0);
+    var overdueCount = allOwed.filter(function(o){ return o.bill.dueDate && o.bill.dueDate < TODAY; }).length;
+
+    var statHtml = '<div class="stat-grid cols-3">'+
+      '<div class="stat"><div class="label">Tenants owing</div><div class="value">'+(new Set(allOwed.map(function(o){return o.tenant.id;}))).size+'</div></div>'+
+      '<div class="stat"><div class="label">Total owed</div><div class="value'+(totalOwed>0?' warn':'')+'">'+money(totalOwed)+'</div></div>'+
+      '<div class="stat"><div class="label">Overdue shares</div><div class="value'+(overdueCount>0?' warn':'')+'">'+overdueCount+'</div></div>'+
+      '</div>';
+
+    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>All tenants</option>'+
+      tenants.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
+        return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
+      }).join('');
+    var tenantFilterHtml = '<div style="margin:10px 0;">'+
+      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
+      '<select class="modal-input" style="max-width:280px;" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
+      '</div>';
+
     var billRows = relevantTenants.reduce(function(acc, t){
       var owed = unpaidBillAllocationsFor(t.id);
       if (!owed.length) return acc;
@@ -1196,11 +1231,20 @@ import * as migrationService from './services/migrationService.js';
       acc.push('<div class="card"><div class="who" style="margin-bottom:6px;"><div class="name">'+esc(t.fullName)+'</div></div>'+rowsHtml+'</div>');
       return acc;
     }, []);
-    var billsSectionHtml = billRows.length
-      ? '<h3 style="font-size:12.5px;color:var(--text-faint);margin:18px 0 6px;text-transform:uppercase;letter-spacing:.04em;">Bills owed</h3>' + billRows.join('')
-      : '';
 
-    return pageHeader('Payments', "What tenants owe, what they've paid, and what's outstanding.") + statHtml + chipsHtml + tenantFilterHtml + rows + billsSectionHtml;
+    var billsSectionHtml = billRows.length
+      ? billRows.join('')
+      : emptyState('payments', 'Nothing owed on bills right now', 'Once a bill is allocated between tenants, what each one still owes shows up here.', '');
+
+    return statHtml + tenantFilterHtml + billsSectionHtml;
+  }
+
+  function renderPayments(){
+    var subtitle = paymentsTab==='rent'
+      ? "What tenants owe, what they've paid, and what's outstanding."
+      : "What each tenant still owes toward shared bills (electricity, water, gas, internet).";
+    var body = paymentsTab==='rent' ? renderPaymentsRentTab() : renderPaymentsBillsTab();
+    return pageHeader('Payments', subtitle) + paymentsTabChipsHtml() + body;
   }
 
   var billsFilter = 'all';
