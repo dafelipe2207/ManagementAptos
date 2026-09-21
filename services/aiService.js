@@ -39,7 +39,22 @@ export async function analyzeBill(file, properties, today) {
       today: today
     }
   });
-  if (res.error) throw res.error;
+  if (res.error) throw await describeFunctionError(res.error);
   if (res.data && res.data.error) throw new Error(res.data.error);
   return res.data;
+}
+
+// supabase-js's default error for a non-2xx Edge Function response is a generic
+// "Edge Function returned a non-2xx status code" — it doesn't read the response body.
+// The actual, useful message (from our Edge Function's own json({error: '...'}) replies)
+// is on err.context, which is the raw fetch Response. Read it here so the person sees the
+// real reason (bad/missing API key, Gemini quota, etc.) instead of a generic error.
+async function describeFunctionError(err) {
+  try {
+    if (err && err.context && typeof err.context.json === 'function') {
+      var body = await err.context.clone().json();
+      if (body && body.error) return new Error(body.error);
+    }
+  } catch (_e) { /* fall through to the generic message below */ }
+  return err instanceof Error ? err : new Error((err && err.message) || 'The AI service could not be reached.');
 }
