@@ -29,7 +29,8 @@ function fromRow(row) {
     bpayReference: row.bpay_reference || '',
     bankAccountName: row.bank_account_name || '',
     bankBsb: row.bank_bsb || '',
-    bankAccountNumber: row.bank_account_number || ''
+    bankAccountNumber: row.bank_account_number || '',
+    whatsappGroupLink: row.whatsapp_group_link || ''
   };
 }
 
@@ -48,7 +49,8 @@ function toRow(p) {
     bpay_reference: p.bpayReference || null,
     bank_account_name: p.bankAccountName || null,
     bank_bsb: p.bankBsb || null,
-    bank_account_number: p.bankAccountNumber || null
+    bank_account_number: p.bankAccountNumber || null,
+    whatsapp_group_link: p.whatsappGroupLink || null
   };
 }
 
