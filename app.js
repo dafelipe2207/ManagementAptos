@@ -538,7 +538,21 @@ import * as migrationService from './services/migrationService.js';
         if (a.daysOverdue !== b.daysOverdue) return b.daysOverdue - a.daysOverdue;
         return b.amountRemaining - a.amountRemaining;
       });
-    return rentItems.concat(billItems);
+    var leaseItems = getUpcomingLeasePayments();
+    return rentItems.concat(billItems).concat(leaseItems);
+  }
+  /** Propiedades cuyo pago de arriendo del ADMIN al real estate vence hoy, mañana, o pasado
+   *  mañana (avisa 2 días antes, según se pidió) — para que no se le pase la fecha. */
+  function getUpcomingLeasePayments(){
+    return properties
+      .filter(function(p){ return !!p.leasePaymentDay; })
+      .map(function(p){
+        var nextDue = nextMonthlyDueDate(p.leasePaymentDay, TODAY);
+        return { type:'lease', propertyId:p.id, propertyName:p.name, amount:p.leasePaymentAmount,
+          dueDate:nextDue, daysUntil: daysBetween(TODAY, nextDue) };
+      })
+      .filter(function(item){ return item.daysUntil >= 0 && item.daysUntil <= 2; })
+      .sort(function(a,b){ return a.daysUntil - b.daysUntil; });
   }
   function getUpcomingEvents(withinDays){
     withinDays = withinDays || 14;
@@ -600,6 +614,16 @@ import * as migrationService from './services/migrationService.js';
       events.push({ date: t.moveInDate, kind: 'move', title: t.fullName + ' — Move-in', href: '#/tenants/' + t.id });
       var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
       if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: '#/tenants/' + t.id });
+    });
+    properties.forEach(function(p){
+      if (!p.leasePaymentDay) return;
+      var nextDue = nextMonthlyDueDate(p.leasePaymentDay, TODAY);
+      events.push({
+        date: nextDue,
+        kind: daysBetween(TODAY, nextDue) <= 2 ? 'overdue' : 'due',
+        title: p.name + ' — Rent due to real estate' + (p.leasePaymentAmount!=null ? ' (' + money(p.leasePaymentAmount) + ')' : ''),
+        href: '#/properties/' + p.id
+      });
     });
     return events;
   }
@@ -762,6 +786,15 @@ import * as migrationService from './services/migrationService.js';
       (needs.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing needs attention right now.</p>'
         : needs.map(function(item){
+            if (item.type === 'lease'){
+              var leaseBadge = item.daysUntil === 0 ? badge('due', 'Due today') : badge('due', 'Due in '+item.daysUntil+' day'+(item.daysUntil===1?'':'s'));
+              return '<div class="row"><div class="who"><div class="name">'+esc(item.propertyName)+'</div>'+
+                '<div class="meta">Rent payment to the real estate</div></div>'+
+                '<div style="display:flex;align-items:center;gap:10px;">'+
+                '<div class="amount">'+(item.amount!=null?money(item.amount):'—')+'<br/>'+leaseBadge+'</div>'+
+                '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/properties/'+item.propertyId+'\'">View</button>'+
+                '</div></div>';
+            }
             if (item.type === 'bill'){
               var billBadge = badge('overdue', item.daysOverdue+' days overdue');
               return '<div class="row"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
@@ -860,6 +893,48 @@ import * as migrationService from './services/migrationService.js';
       cards;
   }
 
+  /** Próxima fecha (día-de-mes) en que el admin debe pagarle al real estate, a partir de
+   *  `fromIso`. Si el día configurado (ej. 31) no existe en el mes actual, se usa el último día
+   *  de ese mes en su lugar (ej. 28/29 de febrero) en vez de desbordarse al mes siguiente. */
+  function nextMonthlyDueDate(day, fromIso){
+    var from = new Date(fromIso+'T00:00:00');
+    var year = from.getFullYear(), month = from.getMonth();
+    function clamped(y, m, d){
+      var lastDay = new Date(y, m+1, 0).getDate();
+      return new Date(y, m, Math.min(d, lastDay));
+    }
+    var candidate = clamped(year, month, day);
+    if (toIsoLocal(candidate) < fromIso){
+      candidate = clamped(year, month+1, day);
+    }
+    return toIsoLocal(candidate);
+  }
+
+  /** Tarjeta de detalle del lease propio del admin con el real estate (día de pago, monto,
+   *  vencimiento del contrato y método de pago) — solo se muestra si algo quedó configurado. */
+  function leasePaymentCardHtml(p){
+    var hasAny = p.leasePaymentDay || p.leasePaymentAmount != null || p.leaseEndDate || p.leasePaymentMethod;
+    if (!hasAny) return '';
+    var rows = '';
+    if (p.leasePaymentDay){
+      var nextDue = nextMonthlyDueDate(p.leasePaymentDay, TODAY);
+      rows += '<div class="field-row"><span class="k">Rent payment day</span><span class="v">Day '+p.leasePaymentDay+' of each month (next: '+shortDate(nextDue)+')</span></div>';
+    }
+    if (p.leasePaymentAmount != null) rows += '<div class="field-row"><span class="k">Amount to pay</span><span class="v">'+money(p.leasePaymentAmount)+'</span></div>';
+    if (p.leaseEndDate) rows += '<div class="field-row"><span class="k">Lease contract ends</span><span class="v">'+fullDate(p.leaseEndDate)+'</span></div>';
+    if (p.leasePaymentMethod === 'bpay'){
+      rows += '<div class="field-row"><span class="k">Payment method</span><span class="v">BPay</span></div>'+
+        '<div class="field-row"><span class="k">Biller code</span><span class="v">'+esc(p.bpayBillerCode)+'</span></div>'+
+        '<div class="field-row"><span class="k">Reference</span><span class="v">'+esc(p.bpayReference)+'</span></div>';
+    } else if (p.leasePaymentMethod === 'bank_transfer'){
+      rows += '<div class="field-row"><span class="k">Payment method</span><span class="v">Bank transfer</span></div>'+
+        '<div class="field-row"><span class="k">Account name</span><span class="v">'+esc(p.bankAccountName)+'</span></div>'+
+        '<div class="field-row"><span class="k">BSB</span><span class="v">'+esc(p.bankBsb)+'</span></div>'+
+        '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(p.bankAccountNumber)+'</span></div>';
+    }
+    return '<div class="card"><h2>Landlord\'s lease (payment to the real estate)</h2><div class="field-list">'+rows+'</div></div>';
+  }
+
   function renderPropertyDetail(id){
     var p = propertyOf(id);
     if (!p){ return pageHeader('Property not found', '') + notFoundState('Property', '#/properties', 'Back to properties'); }
@@ -885,6 +960,7 @@ import * as migrationService from './services/migrationService.js';
       '<div class="field-row"><span class="k">Bathrooms</span><span class="v">'+p.bathrooms+'</span></div>'+
       (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
       '</div></div>'+
+      leasePaymentCardHtml(p)+
       '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Rooms</h2>'+
       '<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">+ Add room</button></div>'+roomsHtml+'</div>'+
       '<div class="card"><h2>Bills</h2>'+
@@ -2038,6 +2114,38 @@ import * as migrationService from './services/migrationService.js';
       billAllocationCard(b);
   }
 
+  /** Deja solo los dígitos de un teléfono guardado (quita espacios, guiones, paréntesis y el
+   *  '+') para armar un link wa.me — WhatsApp exige el número completo con código de país pero
+   *  sin ningún símbolo. Si no quedan suficientes dígitos como para ser un número real, devuelve
+   *  null (no hay a quién mandarle el mensaje). */
+  function phoneDigitsForWhatsApp(phone){
+    var digits = (phone || '').replace(/[^0-9]/g, '');
+    return digits.length >= 8 ? digits : null;
+  }
+
+  /** Arma el link de WhatsApp (wa.me) que abre un chat con el inquilino y ya trae redactado el
+   *  aviso de cobro de este bill — proveedor, servicio, monto que le corresponde y fecha límite.
+   *  El admin solo tiene que revisar y tocar enviar; nada se manda automáticamente. */
+  function billAllocationWhatsAppLink(bill, property, tenant, amount){
+    var digits = phoneDigitsForWhatsApp(tenant.phone);
+    if (!digits) return null;
+    var message = 'Hola ' + tenant.fullName + ', te escribo de ' + (property ? property.name : 'la propiedad') +
+      ' para avisarte que te corresponde pagar ' + money(amount) + ' por el servicio de ' + bill.billType +
+      ' (' + bill.provider + '), del periodo ' + shortDate(bill.billingPeriodStart) + ' al ' + shortDate(bill.billingPeriodEnd) +
+      (bill.dueDate ? ('. Fecha límite de pago: ' + shortDate(bill.dueDate)) : '') + '. ¡Gracias!';
+    return 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message);
+  }
+
+  /** El botoncito "Send WhatsApp" que se muestra junto a cada inquilino en el reparto de un
+   *  bill — solo aparece si el inquilino tiene teléfono guardado; si no, muestra un aviso corto
+   *  en vez del botón, para que quede claro por qué no puede mandarlo desde ahí. */
+  function whatsAppButtonHtml(bill, property, tenant, amount){
+    if (!tenant) return '';
+    var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
+    if (!link) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
+    return '<a class="text-link" style="font-size:11.5px;" href="'+link+'" target="_blank" rel="noopener">Send WhatsApp</a>';
+  }
+
   /** The little "Upload receipt" / "View receipt" link shown under a tenant's allocation row or
    *  the admin's provider-payment row. `path` is the file's storage path, or null/undefined if
    *  nothing's been attached yet. */
@@ -2051,6 +2159,7 @@ import * as migrationService from './services/migrationService.js';
   }
 
   function billAllocationCard(b){
+    var p = propertyOf(b.propertyId);
     var methodLabel = { equal:'Equal split', days:'By days occupied', custom:'Custom' };
     // The admin's own payment to the provider — a second leg, separate from each tenant's
     // allocation, only unlocked once every tenant has paid their share.
@@ -2083,7 +2192,9 @@ import * as migrationService from './services/migrationService.js';
           ? '<button class="mini-btn" onclick="unmarkAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as unpaid</button>'
           : '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
         return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
-          '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div>'+receiptLinkHtml(a.receiptPath, b.id, a.tenantId)+'</div>'+
+          '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div>'+
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;">'+receiptLinkHtml(a.receiptPath, b.id, a.tenantId)+
+          (a.paid ? '' : whatsAppButtonHtml(b, p, t, a.amount))+'</div></div>'+
           '<div style="display:flex;align-items:center;gap:10px;">'+
           '<div style="text-align:right;"><div style="font-weight:650;">'+money(a.amount)+'</div>'+paidBit+'</div>'+
           actionBtn+
@@ -2544,6 +2655,13 @@ import * as migrationService from './services/migrationService.js';
 
   /* ---------- Property form ---------- */
   var propertyModalEditId = null;
+  function onPropertyPaymentMethodChange(){
+    var method = document.getElementById('property-payment-method').value;
+    document.getElementById('property-bpay-fields').hidden = method !== 'bpay';
+    document.getElementById('property-bank-fields').hidden = method !== 'bank_transfer';
+  }
+  window.onPropertyPaymentMethodChange = onPropertyPaymentMethodChange;
+
   function openPropertyModal(propertyId){
     propertyModalEditId = propertyId || null;
     var p = propertyId ? propertyOf(propertyId) : null;
@@ -2553,6 +2671,16 @@ import * as migrationService from './services/migrationService.js';
     document.getElementById('property-bedrooms').value = p ? p.bedrooms : '';
     document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
     document.getElementById('property-notes').value = p ? (p.notes||'') : '';
+    document.getElementById('property-lease-day').value = (p && p.leasePaymentDay) ? p.leasePaymentDay : '';
+    document.getElementById('property-lease-amount').value = (p && p.leasePaymentAmount != null) ? p.leasePaymentAmount : '';
+    document.getElementById('property-lease-end').value = (p && p.leaseEndDate) ? p.leaseEndDate : '';
+    document.getElementById('property-payment-method').value = (p && p.leasePaymentMethod) ? p.leasePaymentMethod : '';
+    document.getElementById('property-bpay-biller').value = p ? (p.bpayBillerCode||'') : '';
+    document.getElementById('property-bpay-reference').value = p ? (p.bpayReference||'') : '';
+    document.getElementById('property-bank-name').value = p ? (p.bankAccountName||'') : '';
+    document.getElementById('property-bank-bsb').value = p ? (p.bankBsb||'') : '';
+    document.getElementById('property-bank-account').value = p ? (p.bankAccountNumber||'') : '';
+    onPropertyPaymentMethodChange();
     document.getElementById('property-modal-error').hidden = true;
     document.getElementById('property-modal').hidden = false;
   }
@@ -2572,12 +2700,55 @@ import * as migrationService from './services/migrationService.js';
       errorEl.hidden = false;
       return;
     }
+
+    // Todos estos campos son opcionales (una propiedad puede no tener un lease propio del
+    // admin con un real estate) — solo se validan si el admin empezó a llenarlos.
+    var leaseDayRaw = document.getElementById('property-lease-day').value;
+    var leasePaymentDay = leaseDayRaw ? parseInt(leaseDayRaw, 10) : null;
+    var leaseAmountRaw = document.getElementById('property-lease-amount').value;
+    var leasePaymentAmount = leaseAmountRaw ? parseFloat(leaseAmountRaw) : null;
+    var leaseEndDate = document.getElementById('property-lease-end').value || null;
+    var leasePaymentMethod = document.getElementById('property-payment-method').value || null;
+    var bpayBillerCode = document.getElementById('property-bpay-biller').value.trim();
+    var bpayReference = document.getElementById('property-bpay-reference').value.trim();
+    var bankAccountName = document.getElementById('property-bank-name').value.trim();
+    var bankBsb = document.getElementById('property-bank-bsb').value.trim();
+    var bankAccountNumber = document.getElementById('property-bank-account').value.trim();
+
+    if (leasePaymentDay !== null && (!isFinite(leasePaymentDay) || leasePaymentDay < 1 || leasePaymentDay > 31)){
+      errorEl.textContent = 'The rent payment day must be a number from 1 to 31.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (leaseAmountRaw && (!isFinite(leasePaymentAmount) || leasePaymentAmount <= 0)){
+      errorEl.textContent = "The lease amount to pay must be a valid number greater than 0.";
+      errorEl.hidden = false;
+      return;
+    }
+    if (leasePaymentMethod === 'bpay' && (!bpayBillerCode || !bpayReference)){
+      errorEl.textContent = 'Add the BPay biller code and reference number, or switch the payment method.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (leasePaymentMethod === 'bank_transfer' && (!bankAccountName || !bankBsb || !bankAccountNumber)){
+      errorEl.textContent = 'Add the account name, BSB and account number, or switch the payment method.';
+      errorEl.hidden = false;
+      return;
+    }
+
     var saveBtn = document.querySelector('#property-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
     errorEl.hidden = true;
     try {
-      var draft = { name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes };
+      var draft = { name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes,
+        leasePaymentDay:leasePaymentDay, leasePaymentAmount:leasePaymentAmount, leaseEndDate:leaseEndDate,
+        leasePaymentMethod:leasePaymentMethod,
+        bpayBillerCode: leasePaymentMethod==='bpay' ? bpayBillerCode : '',
+        bpayReference: leasePaymentMethod==='bpay' ? bpayReference : '',
+        bankAccountName: leasePaymentMethod==='bank_transfer' ? bankAccountName : '',
+        bankBsb: leasePaymentMethod==='bank_transfer' ? bankBsb : '',
+        bankAccountNumber: leasePaymentMethod==='bank_transfer' ? bankAccountNumber : '' };
       if (propertyModalEditId){
         var existing = propertyOf(propertyModalEditId);
         var saved = await propertyService.update(propertyModalEditId, draft);
