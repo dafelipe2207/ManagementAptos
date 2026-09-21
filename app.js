@@ -2191,6 +2191,82 @@ import * as migrationService from './services/migrationService.js';
     return '<a class="text-link" style="font-size:11.5px;" href="'+link+'" target="_blank" rel="noopener">Send WhatsApp</a>';
   }
 
+  /** Arma el mensaje general para el grupo de WhatsApp de la propiedad cuando ya se repartió un
+   *  bill entre los inquilinos — proveedor, servicio, periodo, fecha límite, y una línea
+   *  "Nombre: $monto" por cada inquilino con parte asignada (se marca aparte quién ya pagó). */
+  function billGroupWhatsAppMessage(bill, property, tenants){
+    var lines = tenants.map(function(row){
+      return '• ' + row.name + ': ' + money(row.amount) + (row.paid ? ' (ya pagó)' : '');
+    });
+    return 'Reparto de la factura de ' + bill.billType + ' (' + bill.provider + ') — ' +
+      (property ? property.name : 'la propiedad') + '\n' +
+      'Periodo: ' + shortDate(bill.billingPeriodStart) + ' al ' + shortDate(bill.billingPeriodEnd) +
+      (bill.dueDate ? ('\nFecha límite de pago: ' + shortDate(bill.dueDate)) : '') + '\n\n' +
+      lines.join('\n') +
+      '\n\nPor favor confirmen el pago con su comprobante. ¡Gracias!';
+  }
+
+  /** Baja el documento original del bill (guardado en el bucket privado `receipts`) como un
+   *  File listo para adjuntar al panel nativo de compartir. Devuelve null si el bill no tiene
+   *  documento adjunto o si algo falla al bajarlo (el mensaje se puede compartir igual sin
+   *  archivo adjunto). */
+  async function fetchBillReceiptFile(bill){
+    if (!bill.receiptPath) return null;
+    try {
+      var url = await storageService.getSignedUrl('receipts', bill.receiptPath, 300);
+      var res = await fetch(url);
+      if (!res.ok) return null;
+      var blob = await res.blob();
+      var name = bill.receiptPath.split('/').pop() || 'factura';
+      return new File([blob], name, { type: blob.type || 'application/octet-stream' });
+    } catch (_e){
+      return null;
+    }
+  }
+
+  /** Comparte el reparto de un bill al grupo de WhatsApp de la propiedad usando el panel nativo
+   *  de compartir del teléfono (Web Share API) — arma el mensaje y, si hay documento adjunto,
+   *  lo incluye como archivo. El admin elige el grupo y toca enviar; nada se manda solo. Si el
+   *  teléfono/navegador no soporta compartir archivos (o nada de compartir), cae a copiar el
+   *  mensaje al portapapeles y abrir el link del grupo para pegarlo a mano. */
+  async function shareBillToWhatsAppGroup(billId){
+    var bill = billOf(billId);
+    if (!bill || !bill.allocations || !bill.allocations.length) return;
+    var property = propertyOf(bill.propertyId);
+    if (!property || !property.whatsappGroupLink){
+      showToast('Agrega primero el link del grupo de WhatsApp de esta propiedad (Edit property).', 'error');
+      return;
+    }
+    var tenantsForMsg = bill.allocations.map(function(a){
+      var t = tenantOf(a.tenantId);
+      return { name: t ? t.fullName : 'Inquilino', amount: a.amount, paid: !!a.paid };
+    });
+    var message = billGroupWhatsAppMessage(bill, property, tenantsForMsg);
+    var file = await fetchBillReceiptFile(bill);
+
+    try {
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })){
+        await navigator.share({ files: [file], text: message, title: 'Reparto de factura' });
+        return;
+      }
+      if (navigator.share){
+        await navigator.share({ text: message, title: 'Reparto de factura' });
+        return;
+      }
+      throw new Error('not supported');
+    } catch (err){
+      if (err && err.name === 'AbortError') return; // person cancelled the share sheet — not an error
+      try {
+        await navigator.clipboard.writeText(message);
+        showToast('Tu teléfono no permite compartir directo — copiamos el mensaje, ábrelo y pégalo en el grupo.', 'info');
+      } catch (_e){
+        showToast('Copia este mensaje a mano y pégalo en el grupo:\n\n' + message, 'info');
+      }
+      window.open(property.whatsappGroupLink, '_blank', 'noopener');
+    }
+  }
+  window.shareBillToWhatsAppGroup = shareBillToWhatsAppGroup;
+
   /** The little "Upload receipt" / "View receipt" link shown under a tenant's allocation row or
    *  the admin's provider-payment row. `path` is the file's storage path, or null/undefined if
    *  nothing's been attached yet. */
@@ -2247,8 +2323,13 @@ import * as migrationService from './services/migrationService.js';
       }).join('');
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;">Allocation</h2>'+
-        '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button></div>'+
-        '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+'</p>'+
+        '<div style="display:flex;gap:8px;">'+
+        '<button class="mini-btn" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share to WhatsApp group</button>'+
+        '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
+        '</div></div>'+
+        '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+
+        (p && !p.whatsappGroupLink ? ' · <span style="color:var(--text-faint);">No WhatsApp group link set for this property yet.</span>' : '')+
+        '</p>'+
         rows+'</div>'+adminSectionHtml;
     }
     var propTenants = tenantsOfProperty(b.propertyId);
