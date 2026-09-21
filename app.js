@@ -952,6 +952,7 @@ import * as migrationService from './services/migrationService.js';
       '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
       '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div>'+
       '<div class="actions-row">'+
+      (p.whatsappGroupLink ? '<a class="mini-btn" href="'+esc(p.whatsappGroupLink)+'" target="_blank" rel="noopener">Open WhatsApp group</a>' : '')+
       '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
       '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>'+
       '</div>'+
@@ -2715,6 +2716,7 @@ import * as migrationService from './services/migrationService.js';
     document.getElementById('property-bedrooms').value = p ? p.bedrooms : '';
     document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
     document.getElementById('property-notes').value = p ? (p.notes||'') : '';
+    document.getElementById('property-whatsapp-group').value = p ? (p.whatsappGroupLink||'') : '';
     document.getElementById('property-lease-day').value = (p && p.leasePaymentDay) ? p.leasePaymentDay : '';
     document.getElementById('property-lease-amount').value = (p && p.leasePaymentAmount != null) ? p.leasePaymentAmount : '';
     document.getElementById('property-lease-end').value = (p && p.leaseEndDate) ? p.leaseEndDate : '';
@@ -2738,9 +2740,15 @@ import * as migrationService from './services/migrationService.js';
     var bedrooms = parseInt(document.getElementById('property-bedrooms').value, 10);
     var bathrooms = parseInt(document.getElementById('property-bathrooms').value, 10);
     var notes = document.getElementById('property-notes').value.trim();
+    var whatsappGroupLink = document.getElementById('property-whatsapp-group').value.trim();
     var errorEl = document.getElementById('property-modal-error');
     if (!name || !address || !isFinite(bedrooms) || bedrooms<0 || !isFinite(bathrooms) || bathrooms<0){
       errorEl.textContent = 'Add a name, address, and bedrooms/bathrooms as whole numbers of 0 or more.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (whatsappGroupLink && whatsappGroupLink.indexOf('chat.whatsapp.com') === -1){
+      errorEl.textContent = 'The WhatsApp group link should look like https://chat.whatsapp.com/... — copy it from the group\'s "Invite to group via link" option.';
       errorEl.hidden = false;
       return;
     }
@@ -2786,6 +2794,7 @@ import * as migrationService from './services/migrationService.js';
     errorEl.hidden = true;
     try {
       var draft = { name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes,
+        whatsappGroupLink:whatsappGroupLink,
         leasePaymentDay:leasePaymentDay, leasePaymentAmount:leasePaymentAmount, leaseEndDate:leaseEndDate,
         leasePaymentMethod:leasePaymentMethod,
         bpayBillerCode: leasePaymentMethod==='bpay' ? bpayBillerCode : '',
