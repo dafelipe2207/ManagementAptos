@@ -46,6 +46,21 @@ import * as migrationService from './services/migrationService.js';
     return y+'-'+m+'-'+day;
   }
 
+  /** Suma `days` días HÁBILES (de lunes a viernes, sin contar feriados) a una fecha 'YYYY-MM-DD'.
+   *  Se usa para calcular una fecha límite de pago por defecto cuando un bill importado con IA
+   *  no trae due date impresa/legible — 10 días hábiles después de la fecha de emisión, en vez
+   *  de dejar el campo vacío y bloquear el guardado. */
+  function addBusinessDays(isoDate, days){
+    var d = new Date(isoDate+'T00:00:00');
+    var added = 0;
+    while (added < days){
+      d.setDate(d.getDate()+1);
+      var dow = d.getDay(); // 0=domingo, 6=sábado
+      if (dow !== 0 && dow !== 6) added++;
+    }
+    return toIsoLocal(d);
+  }
+
   /**
    * rentService — genera rent charges a partir de un RentSchedule.
    * Aislado del resto de la lógica (sección 35 del brief: servicios propios
@@ -1191,19 +1206,31 @@ import * as migrationService from './services/migrationService.js';
       var current = importQueue.find(function(i){ return i.id===item.id; });
       if (!current) return; // se eliminó de la cola mientras se analizaba
       current.status = 'ready';
+      var issueDate = data.issueDate || '';
+      var dueDate = data.dueDate || '';
+      var dueDateWasGuessed = false;
+      if (!dueDate && issueDate){
+        // El recibo no traía (o la IA no encontró) una fecha límite de pago legible —
+        // se asume 10 días hábiles después de la fecha de emisión en vez de dejarlo en blanco.
+        dueDate = addBusinessDays(issueDate, 10);
+        dueDateWasGuessed = true;
+      }
       current.extracted = {
         propertyId: data.propertyId || '',
         billType: BILL_TYPES.indexOf(data.billType) >= 0 ? data.billType : 'other',
         provider: data.provider || '',
         invoiceNumber: data.invoiceNumber || '',
-        issueDate: data.issueDate || '',
-        dueDate: data.dueDate || '',
+        issueDate: issueDate,
+        dueDate: dueDate,
         billingPeriodStart: data.billingPeriodStart || '',
         billingPeriodEnd: data.billingPeriodEnd || '',
         amount: isFinite(parseFloat(data.amount)) ? parseFloat(data.amount) : ''
       };
       if (!data.propertyId && data.propertyGuessText){
         showToast('AI couldn\'t confidently match a property — it found "'+data.propertyGuessText+'" on the bill. Pick the property manually when reviewing.', 'info');
+      }
+      if (dueDateWasGuessed){
+        showToast('No due date found on the bill — set to 10 business days after the issue date. Check it before saving.', 'info');
       }
       render();
     } catch(err){
@@ -1242,12 +1269,32 @@ import * as migrationService from './services/migrationService.js';
       rows+'</div>';
   }
 
+  /** Busca un bill ya guardado que probablemente sea el mismo que se está por guardar:
+   *  mismo número de factura (si ambos lo tienen), o mismo proveedor + propiedad + periodo
+   *  de facturación. Sirve para avisar antes de guardar un bill repetido por error (ej. subir
+   *  la misma foto dos veces, o re-escanear un recibo que ya se había cargado). */
+  function findDuplicateBill(propertyId, provider, invoiceNumber, periodStart, periodEnd){
+    var providerNorm = (provider || '').trim().toLowerCase();
+    var invoiceNorm = (invoiceNumber || '').trim().toLowerCase();
+    return bills.find(function(b){
+      if (b.propertyId !== propertyId) return false;
+      if (invoiceNorm && b.invoiceNumber && b.invoiceNumber.trim().toLowerCase() === invoiceNorm) return true;
+      var bProviderNorm = (b.provider || '').trim().toLowerCase();
+      return bProviderNorm === providerNorm && bProviderNorm !== '' &&
+        b.billingPeriodStart === periodStart && b.billingPeriodEnd === periodEnd;
+    });
+  }
+
   /* ---------- Review extracted data (revisar/editar antes de confirmar) ---------- */
   var reviewItemId = null;
+  var reviewDuplicateOverride = false; // true una vez que el usuario confirma "Save anyway" sobre un posible duplicado
   function openReviewModal(itemId){
     var item = importQueue.find(function(i){ return i.id===itemId; });
     if (!item || !item.extracted) return;
     reviewItemId = itemId;
+    reviewDuplicateOverride = false;
+    var saveBtnReset = document.querySelector('#review-modal .mini-btn.primary');
+    if (saveBtnReset) saveBtnReset.textContent = 'Save bill';
     var d = item.extracted;
     document.getElementById('review-property').value = d.propertyId;
     document.getElementById('review-billtype').value = d.billType;
@@ -1263,6 +1310,7 @@ import * as migrationService from './services/migrationService.js';
   }
   function closeReviewModal(){
     reviewItemId = null;
+    reviewDuplicateOverride = false;
     document.getElementById('review-modal').hidden = true;
   }
   function discardReviewItem(){
@@ -1283,6 +1331,19 @@ import * as migrationService from './services/migrationService.js';
       errorEl.textContent = 'Add a provider, both dates and a valid amount before saving.';
       errorEl.hidden = false;
       return;
+    }
+
+    var reviewPropertyId = document.getElementById('review-property').value;
+    var saveBtnEl = document.querySelector('#review-modal .mini-btn.primary');
+    if (!reviewDuplicateOverride){
+      var duplicate = findDuplicateBill(reviewPropertyId, provider, invoiceNumber, periodStart, periodEnd);
+      if (duplicate){
+        errorEl.textContent = 'This looks like a bill you already saved — same provider ('+esc(provider)+') and period for this property'+(invoiceNumber && duplicate.invoiceNumber ? ' (or a matching invoice number)' : '')+'. Tap "Save anyway" if this is a different bill, or Cancel to check it first.';
+        errorEl.hidden = false;
+        reviewDuplicateOverride = true;
+        if (saveBtnEl) saveBtnEl.textContent = 'Save anyway';
+        return;
+      }
     }
 
     var queueItem = importQueue.find(function(i){ return i.id===reviewItemId; }) || {};
