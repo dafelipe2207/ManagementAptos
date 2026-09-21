@@ -15,7 +15,7 @@ import * as billService from './services/billService.js';
 import * as billAllocationService from './services/billAllocationService.js';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
-import * as aiService from './services/aiService.js';
+import * as aiService from './services/aiService.js?v=2';
 import * as migrationService from './services/migrationService.js';
 
 (function(){
