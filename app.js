@@ -800,6 +800,21 @@ import * as migrationService from './services/migrationService.js';
 
   function roomsOf(propertyId){ return rooms.filter(function(r){ return r.propertyId===propertyId; }); }
   function currentTenantOf(roomId){ return tenants.find(function(t){ return t.roomId===roomId; }); }
+  /** Busca OTRO tenant (distinto de excludeTenantId) que ya esté asignado a esta habitación
+   *  con una estancia que se traslapa en fechas con [moveInDate, moveOutDate]. moveOutDate en
+   *  null significa "sigue viviendo ahí, sin fecha de salida" (estancia abierta). Un tenant que
+   *  ya se mudó por completo antes de que el nuevo llegara (o que llega después de que el nuevo
+   *  se fue) NO cuenta como conflicto — dos personas pueden pasar por la misma habitación en
+   *  momentos distintos. */
+  function overlappingRoomTenant(roomId, moveInDate, moveOutDate, excludeTenantId){
+    return tenants.find(function(t){
+      if (t.roomId !== roomId || t.id === excludeTenantId) return false;
+      var tEnd = t.actualMoveOutDate || t.expectedMoveOutDate || null;
+      var newStartsBeforeExistingEnds = !tEnd || moveInDate <= tEnd;
+      var existingStartsBeforeNewEnds = !moveOutDate || t.moveInDate <= moveOutDate;
+      return newStartsBeforeExistingEnds && existingStartsBeforeNewEnds;
+    });
+  }
   function propertyOf(id){ return properties.find(function(p){ return p.id===id; }); }
   function tenantOf(id){ return tenants.find(function(t){ return t.id===id; }); }
   function bondOf(tenantId){ return bonds.find(function(b){ return b.tenantId===tenantId; }); }
@@ -1385,10 +1400,14 @@ import * as migrationService from './services/migrationService.js';
       // repartir a la espera de un paso manual aparte.
       var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
       if (propTenantsForBill.length > 0){
-        var autoRows = computeAllocationRows(newBill, 'equal');
+        // Se reparte por días ocupados (no por partes iguales): un tenant que aún no se había
+        // mudado durante el periodo del bill no debe cargar con una parte del costo — el que sí
+        // vivió ahí todo el periodo asume el 100%, y si ambos vivieron todo el periodo, por días
+        // ocupados da el mismo resultado que partes iguales de todos modos.
+        var autoRows = computeAllocationRows(newBill, 'days');
         var allocRows = autoRows.map(function(r){ return { tenantId:r.tenantId, amount:round2(r.amount), paid:false, paidDate:null }; });
         var savedAllocations = await billAllocationService.replaceForBill(newBill.id, allocRows);
-        newBill.allocationMethod = 'equal';
+        newBill.allocationMethod = 'days';
         newBill.status = 'allocated';
         newBill = await billService.update(newBill.id, newBill);
         newBill.allocations = savedAllocations;
@@ -1478,8 +1497,8 @@ import * as migrationService from './services/migrationService.js';
           return { tenantId:a.tenantId, name:t?t.fullName:a.tenantId,
             days: t?occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd):0, amount:a.amount };
         })
-      : computeAllocationRows(bill, 'equal');
-    allocationDraft = { billId: billId, method: bill.allocations ? 'custom' : 'equal', periodDays: totalDays, rows: rows };
+      : computeAllocationRows(bill, 'days');
+    allocationDraft = { billId: billId, method: bill.allocations ? 'custom' : 'days', periodDays: totalDays, rows: rows };
     document.getElementById('allocate-modal-sub').textContent =
       esc(bill.provider) + ' • ' + money(bill.amount) + ' • ' + shortDate(bill.billingPeriodStart) + ' – ' + shortDate(bill.billingPeriodEnd);
     renderAllocateModal();
@@ -2803,9 +2822,13 @@ import * as migrationService from './services/migrationService.js';
       errorEl.hidden = false;
       return;
     }
-    var occupant = currentTenantOf(roomId);
-    if (occupant && occupant.id !== tenantModalEditId){
-      errorEl.textContent = 'That room already has a tenant assigned.';
+    var newMoveOutForCompare = actualMoveOutDate || expectedMoveOutDate || null;
+    var conflict = overlappingRoomTenant(roomId, moveInDate, newMoveOutForCompare, tenantModalEditId);
+    if (conflict){
+      var conflictEnd = conflict.actualMoveOutDate || conflict.expectedMoveOutDate;
+      errorEl.textContent = 'That room is already assigned to ' + conflict.fullName + ' from ' + shortDate(conflict.moveInDate) +
+        (conflictEnd ? ' to ' + shortDate(conflictEnd) : ' (no move-out date set)') +
+        ' — that overlaps with the dates you entered. Adjust the dates, or set an actual move-out date for ' + conflict.fullName + ' first.';
       errorEl.hidden = false;
       return;
     }
