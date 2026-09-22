@@ -61,7 +61,9 @@ export async function updateContact(profileId, p) {
 
 /** Creates a brand-new login (Administrator or Tenant) via the create-user Edge Function.
  *  `tenantId`, if given (role 'tenant'), links the new login to that existing tenant record so
- *  they immediately see their own data. Throws with a plain message on failure. */
+ *  they immediately see their own data. A tenant logs in with their PHONE number (no email
+ *  needed) — pass `phone`, not `email`, when role is 'tenant'; the Edge Function derives an
+ *  internal email behind the scenes. Throws with a plain message on failure. */
 export async function createUser({ email, password, firstName, lastName, phone, role, tenantId }) {
   const res = await supabase.functions.invoke('create-user', {
     body: { email, password, firstName, lastName, phone, role, tenantId: tenantId || null }
@@ -72,11 +74,44 @@ export async function createUser({ email, password, firstName, lastName, phone, 
   return res.data;
 }
 
-/** Sends the standard Supabase "reset your password" email to this address. Works for any
- *  account (Super Admin, Administrator or Tenant) — no admin secret needed for this one. */
+/* ============ Property assignment (which Administrator sees which properties) ============ */
+function assignmentFromRow(row) {
+  return { id: row.id, propertyId: row.property_id, profileId: row.profile_id };
+}
+
+export async function getPropertyAssignments() {
+  const { data, error } = await supabase.from('property_administrators').select('*');
+  if (error) throw error;
+  return data.map(assignmentFromRow);
+}
+
+export async function assignProperty(profileId, propertyId) {
+  const { data, error } = await supabase.from('property_administrators')
+    .insert({ profile_id: profileId, property_id: propertyId }).select().single();
+  if (error) throw error;
+  return assignmentFromRow(data);
+}
+
+export async function unassignProperty(profileId, propertyId) {
+  const { error } = await supabase.from('property_administrators')
+    .delete().eq('profile_id', profileId).eq('property_id', propertyId);
+  if (error) throw error;
+}
+
+/** Sends the standard Supabase "reset your password" email to this address. Only works for a
+ *  real email inbox — Administrator/Super Admin accounts, not a phone-login Tenant. */
 export async function sendPasswordReset(email) {
   const { error } = await supabase.auth.resetPasswordForEmail(email);
   if (error) throw error;
+}
+
+/** For a phone-login Tenant (no email inbox to send a reset link to): Super Admin sets a new
+ *  password directly via the reset-password Edge Function, then hands it to the tenant. */
+export async function forceSetPassword(profileId, newPassword) {
+  const res = await supabase.functions.invoke('reset-password', { body: { profileId, newPassword } });
+  if (res.error) throw await describeFunctionError(res.error);
+  if (res.data && res.data.error) throw new Error(res.data.error);
+  return res.data;
 }
 
 async function describeFunctionError(err) {
