@@ -1089,9 +1089,40 @@ import * as auditService from './services/auditService.js';
       '</div>'+
       '<div class="card"><h2>Contact</h2><div class="field-list">'+contactRows+'</div></div>'+
       (rentRows ? '<div class="card"><h2>Rent</h2><div class="field-list">'+rentRows+'</div></div>' : '') +
+      tenantRentHistoryHtml(t.id) +
       (bondRows ? '<div class="card"><h2>Bond</h2><div class="field-list">'+bondRows+'</div></div>' : '') +
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
+  }
+
+  /** "Rent history" card for a tenant's profile: which weeks/periods are already paid, and
+   *  which are still due, overdue or upcoming — split into two lists so what still needs
+   *  chasing isn't buried under months of already-settled periods. Each row reuses
+   *  chargeStatusBadge() so the colors match the Payments page exactly. */
+  function tenantRentHistoryHtml(tenantId){
+    var charges = rentCharges.filter(function(c){ return c.tenantId===tenantId; });
+    if (charges.length === 0) return '';
+    var paid = charges.filter(function(c){ return c.status==='paid'; })
+      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); });
+    var pending = charges.filter(function(c){ return c.status!=='paid'; })
+      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+    function row(c){
+      return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:8px;">'+money(c.amountDue)+chargeStatusBadge(c)+'</span></div>';
+    }
+    var PENDING_CAP = 20, PAID_CAP = 12;
+    var pendingShown = pending.slice(0, PENDING_CAP);
+    var pendingExtra = pending.length - pendingShown.length;
+    var paidShown = paid.slice(0, PAID_CAP);
+    var paidExtra = paid.length - paidShown.length;
+    return '<div class="card"><h2>Rent history</h2>'+
+      '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:0 0 6px;">Due &amp; upcoming ('+pending.length+')</h3>'+
+      (pendingShown.length ? '<div class="field-list">'+pendingShown.map(row).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0 0 10px;">Nothing due right now.</p>')+
+      (pendingExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+pendingExtra+' more further out, not shown.</p>' : '')+
+      '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
+      (paidShown.length ? '<div class="field-list">'+paidShown.map(row).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet.</p>')+
+      (paidExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+paidExtra+' earlier paid periods not shown.</p>' : '')+
+      '</div>';
   }
 
   function paymentDayLabel(t){
@@ -3207,7 +3238,8 @@ import * as auditService from './services/auditService.js';
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+esc(t.rentFrequency)+'</span></div>'+
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       (latestPayment ? '<div class="field-row"><span class="k">Latest payment</span><span class="v">'+money(latestPayment.amount)+' on '+shortDate(latestPayment.paymentDate)+'</span></div>' : '')+
-      '</div>';
+      '</div>'+
+      tenantRentHistoryHtml(t.id);
   }
 
   function renderTenantPayments(){
