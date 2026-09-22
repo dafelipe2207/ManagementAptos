@@ -1273,7 +1273,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
       '<select class="modal-input" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
       '</div>'+
-      '<button type="button" class="mini-btn" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
+      '<button type="button" class="mini-btn" style="flex:1;min-width:160px;" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
       '</div>';
 
     var charges = paymentsTenantFilter==='all' ? rentCharges : rentCharges.filter(function(c){ return c.tenantId===paymentsTenantFilter; });
@@ -1471,7 +1471,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     analyzeImportedFile(item);
   }
   var BLANK_EXTRACTED_BILL = { propertyId:'', billType:'other', provider:'', invoiceNumber:'', issueDate:'', dueDate:'', billingPeriodStart:'', billingPeriodEnd:'', amount:'' };
-  var BILL_TYPES = ['electricity','water','gas','internet','other'];
+  var BILL_TYPES = ['electricity','water','hot_water','gas','internet','other'];
+  var BILL_TYPE_LABELS = { electricity:'Electricity', water:'Water', hot_water:'Hot water', gas:'Gas', internet:'Internet', other:'Other' };
+  function billTypeLabel(t){ return BILL_TYPE_LABELS[t] || (t ? t.charAt(0).toUpperCase()+t.slice(1) : ''); }
   /** Envía la foto/PDF a la IA (Gemini, vía la Edge Function analyze-bill) para extraer
    *  proveedor, tipo de servicio, fechas, importe y una propiedad sugerida. Si el análisis
    *  falla (sin red, sin API key configurada del lado del servidor, foto poco clara, etc.) el
@@ -2389,7 +2391,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var p = propertyOf(b.propertyId);
     return '<a class="card" style="display:block;text-decoration:none;color:inherit;" href="#/bills/'+b.id+'">'+
       '<div class="row" style="border:none;padding:0;">'+
-      '<div class="who"><div class="name" style="text-transform:capitalize;">'+esc(b.billType)+'</div>'+
+      '<div class="who"><div class="name">'+esc(billTypeLabel(b.billType))+'</div>'+
       '<div class="meta">'+esc(b.provider)+' • '+esc(p?p.name:'—')+' • '+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</div></div>'+
       '<div class="amount">'+money(b.amount)+'<br/>'+billStatusBadge(b)+(b.adminPaid?' '+badge('paid','Sent to provider'):'')+'</div>'+
       '</div></a>';
@@ -2418,7 +2420,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       var p = propertyOf(b.propertyId);
       return '<tr class="report-row-link" onclick="location.hash=\'#/bills/'+b.id+'\'">'+
         '<td><div style="font-weight:650;">'+esc(b.provider)+'</div>'+
-        '<div style="font-size:11px;color:var(--text-faint);text-transform:capitalize;">'+esc(b.billType)+'</div></td>'+
+        '<div style="font-size:11px;color:var(--text-faint);">'+esc(billTypeLabel(b.billType))+'</div></td>'+
         (showPropertyCol ? '<td>'+esc(p?p.name:'—')+'</td>' : '')+
         '<td>'+(b.issueDate?shortDate(b.issueDate):'—')+'</td>'+
         '<td>'+(b.dueDate?shortDate(b.dueDate):'—')+'</td>'+
@@ -2477,7 +2479,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<button class="mini-btn" onclick="openManualBillModal()">+ Manual entry</button>'+
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
       '</div></div>'+
-      importQueueCard() + recurringBillsCardHtml() + propertyTabsHtml + statHtml + chipsHtml + rows;
+      importQueueCard() + propertyTabsHtml + statHtml + chipsHtml + rows;
   }
 
   /** "Recurring bills": templates para gas/internet/etc. que generan un bill nuevo cada mes solos
@@ -2487,7 +2489,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var rows = scoped.slice().sort(function(a,b){ return a.provider.localeCompare(b.provider); }).map(function(r){
       var p = propertyOf(r.propertyId);
       return '<div class="field-row"><span class="k">'+esc(r.provider)+
-        ' <span style="color:var(--text-faint);text-transform:capitalize;font-weight:400;">('+esc(r.billType)+')</span><br/>'+
+        ' <span style="color:var(--text-faint);font-weight:400;">('+esc(billTypeLabel(r.billType))+')</span><br/>'+
         '<span style="font-size:11px;color:var(--text-faint);">'+esc(p?p.name:'—')+' · day '+r.billingDay+' of each month · next '+shortDate(r.nextDueDate)+(r.isActive?'':' · paused')+'</span></span>'+
         '<span class="v" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+money(r.amount)+
         '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="openRecurringBillModal(\''+r.id+'\')">Edit</button>'+
@@ -2507,7 +2509,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var p = propertyOf(b.propertyId);
 
     return backLink('#/bills', 'Bills') +
-      '<div class="detail-head"><div><h1 class="page-title" style="text-transform:capitalize;">'+esc(b.billType)+'</h1>'+
+      '<div class="detail-head"><div><h1 class="page-title">'+esc(billTypeLabel(b.billType))+'</h1>'+
       '<p class="page-sub">'+esc(b.provider)+'</p></div>'+
       '<div class="occ"><div>'+money(b.amount)+'</div><div class="vacant">'+billStatusBadge(b)+'</div></div></div>'+
       '<div class="card"><div class="field-list">'+
