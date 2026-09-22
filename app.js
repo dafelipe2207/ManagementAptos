@@ -3319,7 +3319,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         ['super_admin','administrator','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
-        '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\',\''+esc(p.email)+'\','+phoneLogin+')">Reset password</button>'+
+        '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\')">Set / reset password</button>'+
         '</div>'+assignHtml+'</div>';
     }).join('');
     return pageHeader('Users', 'Every account and its role. Only a Super Admin sees this page.') +
@@ -3399,27 +3399,45 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.toggleUserActive = toggleUserActive;
 
-  async function resetUserPassword(profileId, email, isPhoneLogin){
-    if (isPhoneLogin){
-      var newPw = window.prompt('Enter a new password for this tenant (at least 8 characters). Give it to them directly — nothing is texted or emailed.');
-      if (!newPw) return;
-      if (newPw.length < 8){ showToast('Password must be at least 8 characters.', 'error'); return; }
-      try {
-        await profileService.forceSetPassword(profileId, newPw);
-        var target = allProfiles.find(function(p){ return p.id===profileId; });
-        if (target) target.currentPassword = newPw;
-        showToast('Password updated. Share it with the tenant directly.', 'success');
-        render();
-      } catch(err){
-        showToast('Could not update the password. ' + friendlyErrorMessage(err), 'error');
-      }
-      return;
-    }
+  /** El Super Admin asigna, cambia o restablece la clave de CUALQUIER usuario (Administrator o
+   *  Tenant) directamente — ya no se manda un link de reseteo por correo para nadie. En vez de
+   *  eso, después de guardar la nueva clave se ofrece compartirla por WhatsApp (con el teléfono
+   *  guardado en el perfil), igual que el resto de la app comparte cosas con los tenants. */
+  async function resetUserPassword(profileId){
+    var target = allProfiles.find(function(p){ return p.id===profileId; });
+    if (!target) return;
+    var label = (target.firstName + ' ' + target.lastName).trim() || target.email || 'this user';
+    var newPw = window.prompt('Set a password for ' + label + ' (at least 8 characters). You\'ll get the chance to send it to them over WhatsApp next.');
+    if (!newPw) return;
+    if (newPw.length < 8){ showToast('Password must be at least 8 characters.', 'error'); return; }
     try {
-      await profileService.sendPasswordReset(email);
-      showToast('Password reset email sent to ' + email + '.', 'success');
+      await profileService.forceSetPassword(profileId, newPw);
+      target.currentPassword = newPw;
+      showToast('Password saved.', 'success');
+      render();
+      offerPasswordWhatsAppShare(target, newPw);
     } catch(err){
-      showToast('Could not send the reset email. ' + friendlyErrorMessage(err), 'error');
+      showToast('Could not update the password. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  /** Ofrece compartir la clave recién asignada por WhatsApp — usa el panel nativo de compartir
+   *  cuando está disponible (igual que "Share to WhatsApp group" en Bills); si no, abre un chat
+   *  de WhatsApp directo con el teléfono guardado en el perfil; si no hay teléfono guardado,
+   *  solo avisa que hay que copiarla a mano (ya queda guardada y visible en Users). */
+  async function offerPasswordWhatsAppShare(profile, newPassword){
+    var loginId = isPhoneLoginProfile(profile) ? profile.phone : profile.email;
+    var name = (profile.firstName + ' ' + profile.lastName).trim() || 'there';
+    var message = 'Hi ' + name + ', your Belmont Manager login was updated.\n' +
+      'Username: ' + loginId + '\nPassword: ' + newPassword + '\n\nKeep this somewhere safe.';
+    if (navigator.share){
+      try { await navigator.share({ text: message, title: 'Belmont Manager login' }); return; }
+      catch(e){ /* user cancelled the share sheet — fall through to the direct link below */ }
+    }
+    var digits = phoneDigitsForWhatsApp(profile.phone);
+    if (digits){
+      window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent(message), '_blank', 'noopener');
+    } else {
+      showToast('No phone number saved for ' + name + ' — copy the password from Users to send it another way.', 'info');
     }
   }
   window.resetUserPassword = resetUserPassword;
