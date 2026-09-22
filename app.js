@@ -3,7 +3,7 @@
 // from artifact/index.html, preserved as closely as possible; the main
 // structural change is that persistence now goes through the async
 // services/* modules instead of synchronous localStorage.
-import * as auth from './lib/auth.js';
+import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
 import * as propertyService from './services/propertyService.js';
 import * as roomService from './services/roomService.js';
@@ -3279,8 +3279,60 @@ import * as recurringBillService from './services/recurringBillService.js';
       (backupStatusMessage ? '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;">'+esc(backupStatusMessage)+'</p>' : '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;"></p>')+
       '</div>'+
       '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Account</h2>'+
-      '<button class="mini-btn" onclick="signOutAndReload()">Sign out</button></div>';
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+      '<button class="mini-btn" onclick="openChangePasswordModal()">Change password</button>'+
+      '<button class="mini-btn" onclick="signOutAndReload()">Sign out</button>'+
+      '</div></div>';
   }
+
+  function openChangePasswordModal(){
+    document.getElementById('change-password-new').value = '';
+    document.getElementById('change-password-confirm').value = '';
+    document.getElementById('change-password-error').hidden = true;
+    document.getElementById('change-password-modal').hidden = false;
+  }
+  window.openChangePasswordModal = openChangePasswordModal;
+
+  function closeChangePasswordModal(){
+    document.getElementById('change-password-modal').hidden = true;
+  }
+  window.closeChangePasswordModal = closeChangePasswordModal;
+
+  async function saveChangePassword(){
+    var newPw = document.getElementById('change-password-new').value;
+    var confirmPw = document.getElementById('change-password-confirm').value;
+    var errorEl = document.getElementById('change-password-error');
+    if (!newPw || newPw.length < 8){
+      errorEl.textContent = 'The new password must be at least 8 characters.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (newPw !== confirmPw){
+      errorEl.textContent = 'The two passwords don\'t match.';
+      errorEl.hidden = false;
+      return;
+    }
+    var saveBtn = document.querySelector('#change-password-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    errorEl.hidden = true;
+    try {
+      await auth.updatePassword(newPw);
+      // Guarda la copia visible en Users (si esta cuenta es Administrator/Super Admin) — lo
+      // mismo que hace un reset hecho por el Super Admin, así "Users" no queda desactualizado.
+      if (currentProfile){
+        try { await profileService.forceSetPassword(currentProfile.id, newPw); } catch(_e){ /* best-effort */ }
+      }
+      closeChangePasswordModal();
+      showToast('Password updated.', 'success');
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveChangePassword = saveChangePassword;
 
   function renderMore(){
     var items = NAV.filter(function(i){ return !i.primary; });
@@ -3494,6 +3546,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
         '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\')">Set / reset password</button>'+
+        (phoneLogin ? '' : '<button class="mini-btn" onclick="sendUserPasswordResetEmail(\''+p.id+'\')">Email reset link</button>')+
         '<button class="mini-btn" onclick="openEditUserModal(\''+p.id+'\')">Edit</button>'+
         '<button class="mini-btn" style="color:var(--status-overdue);" onclick="confirmDeleteUser(\''+p.id+'\')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t delete your own account"':'')+'>Delete</button>'+
         '</div>'+assignHtml+'</div>';
@@ -3703,6 +3756,21 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.resetUserPassword = resetUserPassword;
+
+  /** Alternativa a "Set / reset password" para un usuario con correo (Administrator/Super
+   *  Admin) — en vez de que el Super Admin invente y comparta una clave nueva, le manda el
+   *  enlace estándar de Supabase para que la persona misma elija su nueva clave. */
+  async function sendUserPasswordResetEmail(profileId){
+    var p = allProfiles.find(function(x){ return x.id===profileId; });
+    if (!p || !p.email) return;
+    try {
+      await profileService.sendPasswordReset(p.email);
+      showToast('Password reset email sent to ' + p.email + '.', 'success');
+    } catch(err){
+      showToast('Could not send the reset email. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.sendUserPasswordResetEmail = sendUserPasswordResetEmail;
 
   function onUserRoleChange(){
     var role = document.getElementById('user-role').value;
@@ -4784,11 +4852,26 @@ import * as recurringBillService from './services/recurringBillService.js';
     return role==='super_admin' ? 'Super Admin' : role==='administrator' ? 'Administrator' : 'Tenant';
   }
 
+  // Un enlace de "reset your password" por correo deja a supabase-js crear automáticamente una
+  // sesión válida apenas carga la página (detectSessionInUrl) — sin esto, esa persona entraría
+  // directo a la app con su clave VIEJA sin darse cuenta de que nunca llegó a cambiarla. Detecta
+  // ese caso (evento PASSWORD_RECOVERY) y abre el modal de cambio de clave apenas entra.
+  var pendingPasswordRecovery = false;
+  auth.onAuthStateChange(function(event){
+    if (event !== 'PASSWORD_RECOVERY') return;
+    if (currentProfile) openChangePasswordModal(); // enterApp() ya terminó — ábrelo ya mismo
+    else pendingPasswordRecovery = true; // todavía no — initAuthGate lo revisa apenas entre
+  });
+
   async function initAuthGate(){
     var session;
     try { session = await auth.getSession(); } catch(e){ session = null; }
     if (session){
       await enterApp();
+      if (pendingPasswordRecovery && currentProfile){
+        pendingPasswordRecovery = false;
+        openChangePasswordModal();
+      }
     } else {
       document.getElementById('auth-screen').hidden = false;
     }
