@@ -1189,12 +1189,18 @@ import * as auditService from './services/auditService.js';
 
   var paymentsFilter = 'all';
   var paymentsTenantFilter = 'all';
+  var paymentsPropertyFilter = 'all';
+  var paymentsDateSort = 'desc'; // 'desc' = más actual primero, 'asc' = más antiguo primero
   var paymentsTab = 'rent'; // 'rent' | 'bills' — dos sub-pestañas separadas dentro de Payments
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
   function setPaymentsFilter(f){ paymentsFilter = f; render(); }
   function setPaymentsTenantFilter(tenantId){ paymentsTenantFilter = tenantId; render(); }
+  function setPaymentsPropertyFilter(propertyId){ paymentsPropertyFilter = propertyId; render(); }
+  function togglePaymentsDateSort(){ paymentsDateSort = paymentsDateSort==='desc' ? 'asc' : 'desc'; render(); }
   function setPaymentsTab(tab){ paymentsTab = tab; render(); }
   window.setPaymentsTab = setPaymentsTab;
+  window.setPaymentsPropertyFilter = setPaymentsPropertyFilter;
+  window.togglePaymentsDateSort = togglePaymentsDateSort;
   function chargeMatchesFilter(c, filter){
     if (filter==='paid') return c.status==='paid';
     if (filter==='overdue') return c.status==='overdue';
@@ -1238,17 +1244,33 @@ import * as auditService from './services/auditService.js';
       return '<button class="chip'+(paymentsFilter===f[0]?' active':'')+'" onclick="setPaymentsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
     }).join('') + '</div>';
 
+    var propertyOptions = '<option value="all"'+(paymentsPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
+      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
+        return '<option value="'+p.id+'"'+(paymentsPropertyFilter===p.id?' selected':'')+'>'+esc(p.name)+'</option>';
+      }).join('');
     var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>All tenants</option>'+
       tenants.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
         return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
       }).join('');
-    var tenantFilterHtml = '<div style="margin:10px 0;">'+
+    var tenantFilterHtml = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;align-items:flex-end;">'+
+      '<div style="flex:1;min-width:160px;">'+
+      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by property</label>'+
+      '<select class="modal-input" onchange="setPaymentsPropertyFilter(this.value)">'+propertyOptions+'</select>'+
+      '</div>'+
+      '<div style="flex:1;min-width:160px;">'+
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
-      '<select class="modal-input" style="max-width:280px;" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
+      '<select class="modal-input" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
+      '</div>'+
+      '<button type="button" class="mini-btn" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
       '</div>';
 
     var charges = paymentsTenantFilter==='all' ? rentCharges : rentCharges.filter(function(c){ return c.tenantId===paymentsTenantFilter; });
-    var filtered = charges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); });
+    if (paymentsPropertyFilter !== 'all'){
+      charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); return t && t.propertyId === paymentsPropertyFilter; });
+    }
+    var filtered = charges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); })
+      .slice()
+      .sort(function(a,b){ return paymentsDateSort==='asc' ? a.periodStart.localeCompare(b.periodStart) : b.periodStart.localeCompare(a.periodStart); });
 
     var rows = filtered.length===0
       ? (rentCharges.length===0
@@ -1264,6 +1286,7 @@ import * as auditService from './services/auditService.js';
               '<button class="mini-btn" onclick="openPartialModal(\''+c.id+'\')">Partial payment</button>'+
               '</div>'
             : '';
+          var prop = t ? properties.find(function(p){ return p.id===t.propertyId; }) : null;
           var amountShown = c.status === 'paid' ? c.amountDue : (c.remaining > 0 ? c.remaining : c.amountDue);
           var paidLine = (c.status === 'paid' && c.paidDate)
             ? '<div class="meta">Paid '+shortDate(c.paidDate)+'</div>'
@@ -1272,7 +1295,7 @@ import * as auditService from './services/auditService.js';
               : '';
           return '<div class="card">'+
             '<div class="row" style="border:none;padding:0;">'+
-            '<div class="who"><div class="name">'+esc(t?t.fullName:'')+'</div>'+
+            '<div class="who"><div class="name">'+esc(t?t.fullName:'')+(prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</div>'+
             '<div class="meta">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</div>'+paidLine+'</div>'+
             '<div class="amount">'+money(amountShown)+'<br/>'+chargeStatusBadge(c)+'</div>'+
             '</div>'+actions+
