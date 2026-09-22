@@ -185,12 +185,63 @@
         <label for="review-amount">Amount</label>
         <input id="review-amount" type="number" min="0" step="0.01" />
       </div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:500;">
+          <input id="review-recurring" type="checkbox" style="width:auto;" onchange="toggleReviewRecurringDay()" />
+          Repeats every month (gas, internet, etc.)
+        </label>
+      </div>
+      <div class="form-row" id="review-recurring-day-row" hidden>
+        <label for="review-recurring-day">Billing day of month</label>
+        <input id="review-recurring-day" type="number" min="1" max="28" placeholder="e.g. 5" />
+      </div>
       <p id="review-modal-error" class="form-error" hidden></p>
       <div class="modal-actions" style="justify-content:space-between;">
         <button class="mini-btn" onclick="discardReviewItem()">Discard</button>
         <div style="display:flex;gap:8px;">
           <button class="mini-btn" onclick="closeReviewModal()">Cancel</button>
           <button class="mini-btn primary" onclick="confirmReviewedBill()">Save bill</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="recurring-bill-modal" hidden>
+    <div class="card modal-card" style="max-width:360px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Recurring bill</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">A bill like this is created automatically each month, ready to review and allocate.</p>
+      <div class="form-row">
+        <label for="recurring-property">Property</label>
+        <select id="recurring-property"></select>
+      </div>
+      <div class="form-row">
+        <label for="recurring-billtype">Bill type</label>
+        <select id="recurring-billtype">
+          <option value="electricity">Electricity</option>
+          <option value="water">Water</option>
+          <option value="gas">Gas</option>
+          <option value="internet">Internet</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="recurring-provider">Provider</label>
+        <input id="recurring-provider" type="text" />
+      </div>
+      <div class="form-row">
+        <label for="recurring-amount">Amount</label>
+        <input id="recurring-amount" type="number" min="0" step="0.01" />
+      </div>
+      <div class="form-row">
+        <label for="recurring-day">Billing day of month</label>
+        <input id="recurring-day" type="number" min="1" max="28" placeholder="e.g. 5" />
+      </div>
+      <p id="recurring-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions" style="justify-content:space-between;">
+        <button class="mini-btn" id="recurring-delete-btn" hidden onclick="deleteRecurringBillModal()">Delete</button>
+        <div style="display:flex;gap:8px;">
+          <button class="mini-btn" onclick="closeRecurringBillModal()">Cancel</button>
+          <button class="mini-btn primary" onclick="saveRecurringBillModal()">Save</button>
         </div>
       </div>
     </div>
@@ -506,6 +557,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=24"></script>
+<script type="module" src="app.js?v=25"></script>
 </body>
 </html>
