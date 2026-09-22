@@ -17,7 +17,7 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=2';
 import * as migrationService from './services/migrationService.js';
-import * as profileService from './services/profileService.js?v=2';
+import * as profileService from './services/profileService.js?v=3';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as auditService from './services/auditService.js';
@@ -149,10 +149,14 @@ import * as auditService from './services/auditService.js';
 
       return periods.map(function(period){
         var amountDue = schedule.amount;
-        var need = amountDue, amountPaid = 0;
+        var need = amountDue, amountPaid = 0, lastPaidDate = null;
         while (need > 0.004 && payIdx < pays.length){
           var take = Math.min(need, payLeft);
           amountPaid += take; need -= take; payLeft -= take;
+          // La fecha del pago que efectivamente cubrió (parte de) este periodo — si el periodo
+          // queda totalmente pagado, esta es "cuándo se pagó"; si queda con saldo, es la fecha
+          // del último abono parcial recibido.
+          lastPaidDate = pays[payIdx].date;
           if (payLeft <= 0.004){ payIdx++; payLeft = payIdx < pays.length ? pays[payIdx].amount : 0; }
         }
         amountPaid = round2(amountPaid);
@@ -166,6 +170,7 @@ import * as auditService from './services/auditService.js';
           amountDue: amountDue,
           amountPaid: amountPaid,
           remaining: remaining,
+          paidDate: amountPaid > 0 ? lastPaidDate : null,
           status: computeStatus(period, amountPaid, remaining, asOfIso)
         };
       });
@@ -1107,7 +1112,9 @@ import * as auditService from './services/auditService.js';
     var pending = charges.filter(function(c){ return c.status!=='paid'; })
       .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
     function row(c){
-      return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</span>'+
+      var label = shortDate(c.periodStart)+' – '+shortDate(c.periodEnd);
+      if (c.status === 'paid' && c.paidDate) label += ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>';
+      return '<div class="field-row"><span class="k">'+label+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:8px;">'+money(c.amountDue)+chargeStatusBadge(c)+'</span></div>';
     }
     var PENDING_CAP = 20, PAID_CAP = 12;
@@ -1253,11 +1260,17 @@ import * as auditService from './services/auditService.js';
               '<button class="mini-btn" onclick="openPartialModal(\''+c.id+'\')">Partial payment</button>'+
               '</div>'
             : '';
+          var amountShown = c.status === 'paid' ? c.amountDue : (c.remaining > 0 ? c.remaining : c.amountDue);
+          var paidLine = (c.status === 'paid' && c.paidDate)
+            ? '<div class="meta">Paid '+shortDate(c.paidDate)+'</div>'
+            : (c.status === 'partially_paid' && c.paidDate)
+              ? '<div class="meta">Last payment '+shortDate(c.paidDate)+'</div>'
+              : '';
           return '<div class="card">'+
             '<div class="row" style="border:none;padding:0;">'+
             '<div class="who"><div class="name">'+esc(t?t.fullName:'')+'</div>'+
-            '<div class="meta">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</div></div>'+
-            '<div class="amount">'+money(c.remaining)+'<br/>'+chargeStatusBadge(c)+'</div>'+
+            '<div class="meta">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</div>'+paidLine+'</div>'+
+            '<div class="amount">'+money(amountShown)+'<br/>'+chargeStatusBadge(c)+'</div>'+
             '</div>'+actions+
             '<button class="text-link" onclick="openHistoryModal(\''+c.tenantId+'\')">View history</button>'+
             '</div>';
@@ -3013,6 +3026,14 @@ import * as auditService from './services/auditService.js';
         badge(p.isActive ? 'paid' : 'overdue', p.isActive ? 'Active' : 'Deactivated')+
         '</div>'+
         '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+identityLine+'</p>'+
+        (p.currentPassword
+          ? '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">'+
+            '<span style="font-size:11.5px;color:var(--text-faint);">Password:</span>'+
+            '<span class="pw-mask" data-pw="'+esc(p.currentPassword)+'" data-shown="0" style="font-family:monospace;font-size:12.5px;letter-spacing:1px;">••••••••</span>'+
+            '<button type="button" class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="togglePasswordVisible(this)">Show</button>'+
+            '<button type="button" class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="copyPasswordToClipboard(this)">Copy</button>'+
+            '</div>'
+          : '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0;">No saved password yet — use Reset password to set one.</p>')+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;">'+
         '<select onchange="changeUserRole(\''+p.id+'\',this.value)" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t change your own role"':'')+'>'+
         ['super_admin','administrator','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
@@ -3042,6 +3063,37 @@ import * as auditService from './services/auditService.js';
     }
   }
   window.togglePropertyAdmin = togglePropertyAdmin;
+
+  /** Shows/hides the plaintext password stashed next to a user (Users page) — hidden by default
+   *  so it isn't left on-screen by accident, revealed on tap. */
+  function togglePasswordVisible(btn){
+    var span = btn.previousElementSibling;
+    if (!span || !span.classList.contains('pw-mask')) return;
+    var shown = span.getAttribute('data-shown') === '1';
+    if (shown){
+      span.textContent = '••••••••';
+      span.setAttribute('data-shown', '0');
+      btn.textContent = 'Show';
+    } else {
+      span.textContent = span.getAttribute('data-pw') || '';
+      span.setAttribute('data-shown', '1');
+      btn.textContent = 'Hide';
+    }
+  }
+  window.togglePasswordVisible = togglePasswordVisible;
+
+  function copyPasswordToClipboard(btn){
+    var span = btn.parentElement.querySelector('.pw-mask');
+    var pw = span ? span.getAttribute('data-pw') : '';
+    if (!pw) return;
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(pw).then(function(){ showToast('Password copied.', 'success'); })
+        .catch(function(){ showToast('Could not copy — press and hold the password to copy it manually.', 'error'); });
+    } else {
+      showToast('Could not copy — press and hold the password to copy it manually.', 'error');
+    }
+  }
+  window.copyPasswordToClipboard = copyPasswordToClipboard;
 
   async function changeUserRole(profileId, role){
     try {
@@ -3074,7 +3126,10 @@ import * as auditService from './services/auditService.js';
       if (newPw.length < 8){ showToast('Password must be at least 8 characters.', 'error'); return; }
       try {
         await profileService.forceSetPassword(profileId, newPw);
+        var target = allProfiles.find(function(p){ return p.id===profileId; });
+        if (target) target.currentPassword = newPw;
         showToast('Password updated. Share it with the tenant directly.', 'success');
+        render();
       } catch(err){
         showToast('Could not update the password. ' + friendlyErrorMessage(err), 'error');
       }
