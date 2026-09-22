@@ -75,6 +75,28 @@ export async function createUser({ email, password, firstName, lastName, phone, 
   return res.data;
 }
 
+/** Edits another user's name/phone/email (Super Admin only) via the update-user Edge Function —
+ *  needed instead of a plain client-side update because an email change also has to update the
+ *  real auth.users login, which requires the service role key. */
+export async function updateUser(profileId, { firstName, lastName, phone, email }) {
+  const res = await supabase.functions.invoke('update-user', {
+    body: { profileId, firstName, lastName, phone, email }
+  });
+  if (res.error) throw await describeFunctionError(res.error);
+  if (res.data && res.data.error) throw new Error(res.data.error);
+  return res.data && res.data.profile ? fromRow(res.data.profile) : null;
+}
+
+/** Permanently deletes another user's login (Super Admin only) via the delete-user Edge
+ *  Function — removes their profiles row and their auth.users account; a tenant record stays,
+ *  just unlinked from any login. */
+export async function deleteUser(profileId) {
+  const res = await supabase.functions.invoke('delete-user', { body: { profileId } });
+  if (res.error) throw await describeFunctionError(res.error);
+  if (res.data && res.data.error) throw new Error(res.data.error);
+  return res.data;
+}
+
 /* ============ Property assignment (which Administrator sees which properties) ============ */
 function assignmentFromRow(row) {
   return { id: row.id, propertyId: row.property_id, profileId: row.profile_id };
@@ -102,7 +124,13 @@ export async function unassignProperty(profileId, propertyId) {
 /** Sends the standard Supabase "reset your password" email to this address. Only works for a
  *  real email inbox — Administrator/Super Admin accounts, not a phone-login Tenant. */
 export async function sendPasswordReset(email) {
-  const { error } = await supabase.auth.resetPasswordForEmail(email);
+  // Without an explicit redirectTo, Supabase sends the user to whatever "Site URL" is configured
+  // in the project's Auth settings (often left at a dev default like localhost) — which is why the
+  // emailed link can land on a page that doesn't exist. Pointing it at wherever this app is
+  // actually running fixes that, as long as this exact URL is also added to the project's
+  // Auth → URL Configuration → Redirect URLs allow list in the Supabase dashboard.
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
   if (error) throw error;
 }
 
