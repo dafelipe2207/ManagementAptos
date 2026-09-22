@@ -21,6 +21,7 @@ import * as profileService from './services/profileService.js?v=3';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as auditService from './services/auditService.js';
+import * as recurringBillService from './services/recurringBillService.js';
 
 (function(){
   "use strict";
@@ -455,6 +456,7 @@ import * as auditService from './services/auditService.js';
   window.setBillsPropertyFilter = setBillsPropertyFilter;
 
   var bills = [];
+  var recurringBills = [];
   /** Persists a bill's mutable fields (status/allocationMethod/receiptPath/etc) back to Supabase. Throws on failure — callers decide how to surface it. */
   async function persistBill(bill){
     var saved = await billService.update(bill.id, bill);
@@ -475,6 +477,16 @@ import * as auditService from './services/auditService.js';
   }
   function daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
   function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function addMonthsIso(iso, months){
+    var d = new Date(iso + 'T00:00:00');
+    d.setMonth(d.getMonth() + months);
+    return toIsoLocal(d);
+  }
+  function stepDateIso(iso, days){
+    var d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    return toIsoLocal(d);
+  }
 
   /* ============ dashboardService (misma lógica que src/services/dashboardService.ts) ============ */
   function isRoomOccupied(room){
@@ -1268,38 +1280,53 @@ import * as auditService from './services/auditService.js';
     if (paymentsPropertyFilter !== 'all'){
       charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); return t && t.propertyId === paymentsPropertyFilter; });
     }
-    var filtered = charges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); })
-      .slice()
-      .sort(function(a,b){ return paymentsDateSort==='asc' ? a.periodStart.localeCompare(b.periodStart) : b.periodStart.localeCompare(a.periodStart); });
+    var filtered = charges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); });
 
-    var rows = filtered.length===0
+    function sortByDate(list){
+      return list.slice().sort(function(a,b){ return paymentsDateSort==='asc' ? a.periodStart.localeCompare(b.periodStart) : b.periodStart.localeCompare(a.periodStart); });
+    }
+    function pendingRow(c){
+      return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+
+        money(c.remaining)+chargeStatusBadge(c)+
+        '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openChargePaidModal(\''+c.id+'\')">Pay</button>'+
+        '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="openPartialModal(\''+c.id+'\')">Partial</button>'+
+        '</span></div>';
+    }
+    function paidRow(c){
+      var paidNote = c.paidDate ? ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>' : '';
+      return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+'</span>'+
+        '<span class="v">'+money(c.amountDue)+'</span></div>';
+    }
+
+    // Agrupado por tenant — dos bloques fijos por tenant ("Por pagar" / "Pagado") en vez de una
+    // tarjeta separada por cada semana, para que 19+ semanas no inunden la pantalla.
+    var relevantTenantIds = {};
+    filtered.forEach(function(c){ relevantTenantIds[c.tenantId] = true; });
+    var groupTenants = tenants.filter(function(t){ return relevantTenantIds[t.id]; })
+      .sort(function(a,b){ return a.fullName.localeCompare(b.fullName); });
+
+    var rows = groupTenants.length===0
       ? (rentCharges.length===0
           ? emptyState('payments', 'No rent charges yet',
               'Add a tenant with a rent amount and charges will show up here automatically.',
               '<a class="mini-btn primary" href="#/tenants" style="display:inline-block;">Go to tenants</a>')
           : emptyState('payments', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every charge.', ''))
-      : filtered.map(function(c){
-          var t = tenantOf(c.tenantId);
-          var actions = c.status !== 'paid'
-            ? '<div style="display:flex;gap:8px;margin-top:10px;">'+
-              '<button class="mini-btn primary" onclick="openChargePaidModal(\''+c.id+'\')">Mark as Paid</button>'+
-              '<button class="mini-btn" onclick="openPartialModal(\''+c.id+'\')">Partial payment</button>'+
-              '</div>'
-            : '';
-          var prop = t ? properties.find(function(p){ return p.id===t.propertyId; }) : null;
-          var amountShown = c.status === 'paid' ? c.amountDue : (c.remaining > 0 ? c.remaining : c.amountDue);
-          var paidLine = (c.status === 'paid' && c.paidDate)
-            ? '<div class="meta">Paid '+shortDate(c.paidDate)+'</div>'
-            : (c.status === 'partially_paid' && c.paidDate)
-              ? '<div class="meta">Last payment '+shortDate(c.paidDate)+'</div>'
-              : '';
+      : groupTenants.map(function(t){
+          var tCharges = filtered.filter(function(c){ return c.tenantId===t.id; });
+          var pending = sortByDate(tCharges.filter(function(c){ return c.status!=='paid'; }));
+          var paid = sortByDate(tCharges.filter(function(c){ return c.status==='paid'; }));
+          var prop = properties.find(function(p){ return p.id===t.propertyId; });
+          var pendingTotal = pending.reduce(function(s,c){ return s+c.remaining; }, 0);
+          var paidTotal = paid.reduce(function(s,c){ return s+c.amountDue; }, 0);
           return '<div class="card">'+
-            '<div class="row" style="border:none;padding:0;">'+
-            '<div class="who"><div class="name">'+esc(t?t.fullName:'')+(prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</div>'+
-            '<div class="meta">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</div>'+paidLine+'</div>'+
-            '<div class="amount">'+money(amountShown)+'<br/>'+chargeStatusBadge(c)+'</div>'+
-            '</div>'+actions+
-            '<button class="text-link" onclick="openHistoryModal(\''+c.tenantId+'\')">View history</button>'+
+            '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
+            (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
+            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Por pagar ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
+            (pending.length ? '<div class="field-list">'+pending.map(pendingRow).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>')+
+            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Pagado ('+paid.length+') · '+money(paidTotal)+'</h3>'+
+            (paid.length ? '<div class="field-list">'+paid.map(paidRow).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet.</p>')+
+            '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
             '</div>';
         }).join('');
 
@@ -1555,6 +1582,9 @@ import * as auditService from './services/auditService.js';
     document.getElementById('review-period-start').value = d.billingPeriodStart;
     document.getElementById('review-period-end').value = d.billingPeriodEnd;
     document.getElementById('review-amount').value = d.amount;
+    document.getElementById('review-recurring').checked = false;
+    document.getElementById('review-recurring-day').value = '';
+    document.getElementById('review-recurring-day-row').hidden = true;
     document.getElementById('review-modal-error').hidden = true;
     document.getElementById('review-modal').hidden = false;
   }
@@ -1567,6 +1597,40 @@ import * as auditService from './services/auditService.js';
     if (reviewItemId) removeImportQueueItem(reviewItemId);
     closeReviewModal();
   }
+  /** Muestra/oculta el campo "día del mes" cuando se marca "Repeats every month" — y si el
+   *  usuario ya cargó una fecha de vencimiento, la usa para adivinar el día por defecto. */
+  function toggleReviewRecurringDay(){
+    var checked = document.getElementById('review-recurring').checked;
+    var row = document.getElementById('review-recurring-day-row');
+    row.hidden = !checked;
+    if (checked){
+      var dayField = document.getElementById('review-recurring-day');
+      if (!dayField.value){
+        var due = document.getElementById('review-due').value;
+        if (due) dayField.value = Math.min(28, parseInt(due.slice(8,10), 10) || 1);
+      }
+    }
+  }
+  window.toggleReviewRecurringDay = toggleReviewRecurringDay;
+  /** Abre el modal de revisión de bill en blanco, sin pasar por la foto/IA — para un bill que
+   *  el administrador prefiere escribir a mano. Reutiliza el mismo modal y el mismo guardado
+   *  (confirmReviewedBill) que el flujo de importar una foto. */
+  function openManualBillModal(){
+    var item = {
+      id: 'manual-' + Date.now() + '-' + Math.round(Math.random()*1000),
+      fileName: 'Manual entry',
+      kind: 'manual',
+      previewUrl: null,
+      file: null,
+      addedAt: TODAY,
+      status: 'ready',
+      extracted: Object.assign({}, BLANK_EXTRACTED_BILL),
+      aiError: null
+    };
+    importQueue.push(item);
+    openReviewModal(item.id);
+  }
+  window.openManualBillModal = openManualBillModal;
   async function confirmReviewedBill(){
     var provider = document.getElementById('review-provider').value.trim();
     var invoiceNumber = document.getElementById('review-invoice').value.trim();
@@ -1630,28 +1694,38 @@ import * as auditService from './services/auditService.js';
         }
       }
 
-      // Auto-allocate: reparte el bill entre los inquilinos que pagan renta en
-      // esta propiedad ahora mismo (split 'equal'), en vez de dejarlo sin
-      // repartir a la espera de un paso manual aparte.
-      var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
-      if (propTenantsForBill.length > 0){
-        // Se reparte por días ocupados (no por partes iguales): un tenant que aún no se había
-        // mudado durante el periodo del bill no debe cargar con una parte del costo — el que sí
-        // vivió ahí todo el periodo asume el 100%, y si ambos vivieron todo el periodo, por días
-        // ocupados da el mismo resultado que partes iguales de todos modos.
-        var autoRows = computeAllocationRows(newBill, 'days');
-        var allocRows = autoRows.map(function(r){ return { tenantId:r.tenantId, amount:round2(r.amount), paid:false, paidDate:null }; });
-        var savedAllocations = await billAllocationService.replaceForBill(newBill.id, allocRows);
-        newBill.allocationMethod = 'days';
-        newBill.status = 'allocated';
-        newBill = await billService.update(newBill.id, newBill);
-        newBill.allocations = savedAllocations;
+      newBill = await autoAllocateNewBill(newBill);
+
+      // "Repeats every month" — además de este bill, guarda un template (recurring_bills) que
+      // genera automáticamente el del próximo mes cuando llegue su fecha, sin tener que volver
+      // a cargarlo a mano cada vez (gas, internet, etc.).
+      var makeRecurring = document.getElementById('review-recurring').checked;
+      if (makeRecurring){
+        var billingDay = parseInt(document.getElementById('review-recurring-day').value, 10);
+        if (isFinite(billingDay) && billingDay >= 1 && billingDay <= 28){
+          try {
+            var tpl = await recurringBillService.create({
+              propertyId: newBill.propertyId,
+              billType: newBill.billType,
+              provider: newBill.provider,
+              amount: newBill.amount,
+              billingDay: billingDay,
+              nextDueDate: addMonthsIso(newBill.dueDate, 1),
+              isActive: true,
+              notes: 'Auto-generated from a manually saved bill.'
+            });
+            recurringBills.push(tpl);
+            showToast('Bill saved — it will repeat automatically every month.', 'success');
+          } catch(recErr){
+            showToast('Bill saved, but could not set up the monthly repeat. ' + friendlyErrorMessage(recErr), 'error');
+          }
+        }
       }
 
       bills.push(newBill);
       removeImportQueueItem(reviewItemId);
       closeReviewModal();
-      showToast('Bill saved successfully.', 'success');
+      if (!makeRecurring) showToast('Bill saved successfully.', 'success');
       // Paso 7 del flujo (revisar y confirmar el reparto): en vez de aterrizar
       // en el listado de Bills, se abre directamente el detalle del bill recién
       // creado, donde la tarjeta de Allocation ya muestra el reparto por
@@ -1721,6 +1795,159 @@ import * as auditService from './services/auditService.js';
       return { tenantId: t.id, name: t.fullName, days: days[i], amount: amounts[i] };
     });
   }
+
+  /** Reparte automáticamente un bill recién guardado entre los inquilinos que pagan renta en esa
+   *  propiedad ahora mismo (por días ocupados), usado tanto al guardar un bill desde el modal de
+   *  revisión como al generar uno automáticamente desde un recurring bill. */
+  async function autoAllocateNewBill(newBill){
+    var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
+    if (propTenantsForBill.length > 0){
+      var autoRows = computeAllocationRows(newBill, 'days');
+      var allocRows = autoRows.map(function(r){ return { tenantId:r.tenantId, amount:round2(r.amount), paid:false, paidDate:null }; });
+      var savedAllocations = await billAllocationService.replaceForBill(newBill.id, allocRows);
+      newBill.allocationMethod = 'days';
+      newBill.status = 'allocated';
+      newBill = await billService.update(newBill.id, newBill);
+      newBill.allocations = savedAllocations;
+    }
+    return newBill;
+  }
+
+  /** Revisa cada recurring bill activo y, si ya llegó (o pasó) su próxima fecha de facturación,
+   *  crea el bill correspondiente y lo reparte automáticamente — igual que rentService genera
+   *  los rent charges a partir de un schedule, pero para bills mensuales (gas, internet, etc.).
+   *  Si la app estuvo varios meses sin abrirse, genera uno por cada mes que quedó pendiente. */
+  async function generateDueRecurringBills(){
+    for (var i=0; i<recurringBills.length; i++){
+      var tpl = recurringBills[i];
+      if (!tpl.isActive) continue;
+      var guard = 0;
+      while (tpl.nextDueDate <= TODAY && guard < 24){
+        guard++;
+        var periodEnd = stepDateIso(tpl.nextDueDate, -1);
+        var periodStart = addMonthsIso(tpl.nextDueDate, -1);
+        var draftBill = {
+          propertyId: tpl.propertyId,
+          provider: tpl.provider,
+          billType: tpl.billType,
+          invoiceNumber: '',
+          issueDate: periodStart,
+          dueDate: tpl.nextDueDate,
+          billingPeriodStart: periodStart,
+          billingPeriodEnd: periodEnd,
+          amount: tpl.amount,
+          status: 'pending',
+          notes: 'Auto-generated recurring bill (' + tpl.provider + ').'
+        };
+        try {
+          var newBill = await billService.create(draftBill);
+          newBill = await autoAllocateNewBill(newBill);
+          bills.push(newBill);
+        } catch(err){
+          console.error('generateDueRecurringBills: could not create bill for template', tpl.id, err);
+          break; // no sigas intentando avanzar este template si falló — se reintenta en el próximo bootstrap
+        }
+        var advanced = await recurringBillService.advanceNextDueDate(tpl.id, addMonthsIso(tpl.nextDueDate, 1));
+        tpl.nextDueDate = advanced.nextDueDate;
+      }
+    }
+  }
+
+  /* ---------- Recurring bills (gas, internet, etc. — repiten cada mes) ---------- */
+  var recurringModalId = null; // null = creando uno nuevo
+  function openRecurringBillModal(id){
+    recurringModalId = id || null;
+    var tpl = id ? recurringBills.find(function(r){ return r.id===id; }) : null;
+    refreshStaticSelects();
+    document.getElementById('recurring-property').value = tpl ? tpl.propertyId : (properties[0] ? properties[0].id : '');
+    document.getElementById('recurring-billtype').value = tpl ? tpl.billType : 'other';
+    document.getElementById('recurring-provider').value = tpl ? tpl.provider : '';
+    document.getElementById('recurring-amount').value = tpl ? tpl.amount : '';
+    document.getElementById('recurring-day').value = tpl ? tpl.billingDay : '';
+    document.getElementById('recurring-delete-btn').hidden = !tpl;
+    var errEl = document.getElementById('recurring-modal-error');
+    errEl.hidden = true; errEl.textContent = '';
+    document.getElementById('recurring-bill-modal').hidden = false;
+  }
+  window.openRecurringBillModal = openRecurringBillModal;
+  function closeRecurringBillModal(){
+    recurringModalId = null;
+    document.getElementById('recurring-bill-modal').hidden = true;
+  }
+  window.closeRecurringBillModal = closeRecurringBillModal;
+  /** El día de facturación puede caer más adelante este mes (todavía no llegó) o ya haber
+   *  pasado (entonces la próxima ocurrencia es el mes que viene) — generateDueRecurringBills
+   *  se encarga de generar el bill apenas llegue esa fecha. */
+  function nextDueDateForBillingDay(day){
+    var thisMonth = TODAY.slice(0,7) + '-' + String(day).padStart(2,'0');
+    return thisMonth >= TODAY ? thisMonth : addMonthsIso(thisMonth, 1);
+  }
+  async function saveRecurringBillModal(){
+    var propertyId = document.getElementById('recurring-property').value;
+    var billType = document.getElementById('recurring-billtype').value;
+    var provider = document.getElementById('recurring-provider').value.trim();
+    var amount = parseFloat(document.getElementById('recurring-amount').value);
+    var billingDay = parseInt(document.getElementById('recurring-day').value, 10);
+    var errEl = document.getElementById('recurring-modal-error');
+    if (!propertyId || !provider || !isFinite(amount) || amount <= 0 || !isFinite(billingDay) || billingDay < 1 || billingDay > 28){
+      errEl.textContent = 'Add a property, provider, a valid amount, and a billing day between 1 and 28.';
+      errEl.hidden = false;
+      return;
+    }
+    var saveBtn = document.querySelector('#recurring-bill-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    try {
+      if (recurringModalId){
+        var existing = recurringBills.find(function(r){ return r.id===recurringModalId; });
+        var saved = await recurringBillService.update(recurringModalId, {
+          propertyId: propertyId, billType: billType, provider: provider, amount: round2(amount),
+          billingDay: billingDay, nextDueDate: existing.nextDueDate, isActive: existing.isActive
+        });
+        Object.assign(existing, saved);
+      } else {
+        var created = await recurringBillService.create({
+          propertyId: propertyId, billType: billType, provider: provider, amount: round2(amount),
+          billingDay: billingDay, nextDueDate: nextDueDateForBillingDay(billingDay), isActive: true
+        });
+        recurringBills.push(created);
+      }
+      closeRecurringBillModal();
+      showToast('Recurring bill saved.', 'success');
+      render();
+    } catch(err){
+      errEl.textContent = 'Could not save this recurring bill. ' + friendlyErrorMessage(err);
+      errEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveRecurringBillModal = saveRecurringBillModal;
+  async function deleteRecurringBillModal(){
+    if (!recurringModalId) return;
+    try {
+      await recurringBillService.remove(recurringModalId);
+      recurringBills = recurringBills.filter(function(r){ return r.id!==recurringModalId; });
+      closeRecurringBillModal();
+      showToast('Recurring bill deleted.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not delete this recurring bill. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.deleteRecurringBillModal = deleteRecurringBillModal;
+  async function toggleRecurringBillActive(id, nextActive){
+    try {
+      var saved = await recurringBillService.setActive(id, nextActive);
+      var tpl = recurringBills.find(function(r){ return r.id===id; });
+      if (tpl) Object.assign(tpl, saved);
+      showToast(nextActive ? 'Recurring bill resumed.' : 'Recurring bill paused.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not update this recurring bill. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.toggleRecurringBillActive = toggleRecurringBillActive;
 
   function openAllocateModal(billId){
     var bill = billOf(billId);
@@ -2246,8 +2473,32 @@ import * as auditService from './services/auditService.js';
       : billsTableHtml(filtered, billsPropertyFilter==='all');
 
     return '<div class="detail-head">'+pageHeader('Bills', 'Electricity, gas, water, internet and more.')+
-      '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button></div>'+
-      importQueueCard() + propertyTabsHtml + statHtml + chipsHtml + rows;
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+      '<button class="mini-btn" onclick="openManualBillModal()">+ Manual entry</button>'+
+      '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
+      '</div></div>'+
+      importQueueCard() + recurringBillsCardHtml() + propertyTabsHtml + statHtml + chipsHtml + rows;
+  }
+
+  /** "Recurring bills": templates para gas/internet/etc. que generan un bill nuevo cada mes solos
+   *  (ver generateDueRecurringBills) — así no hay que volver a cargar el mismo bill a mano cada vez. */
+  function recurringBillsCardHtml(){
+    var scoped = billsPropertyFilter==='all' ? recurringBills : recurringBills.filter(function(r){ return r.propertyId===billsPropertyFilter; });
+    var rows = scoped.slice().sort(function(a,b){ return a.provider.localeCompare(b.provider); }).map(function(r){
+      var p = propertyOf(r.propertyId);
+      return '<div class="field-row"><span class="k">'+esc(r.provider)+
+        ' <span style="color:var(--text-faint);text-transform:capitalize;font-weight:400;">('+esc(r.billType)+')</span><br/>'+
+        '<span style="font-size:11px;color:var(--text-faint);">'+esc(p?p.name:'—')+' · day '+r.billingDay+' of each month · next '+shortDate(r.nextDueDate)+(r.isActive?'':' · paused')+'</span></span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+money(r.amount)+
+        '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="openRecurringBillModal(\''+r.id+'\')">Edit</button>'+
+        '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="toggleRecurringBillActive(\''+r.id+'\','+(!r.isActive)+')">'+(r.isActive?'Pause':'Resume')+'</button>'+
+        '</span></div>';
+    }).join('');
+    return '<div class="card"><div class="detail-head" style="margin-top:0;">'+
+      '<h2 style="margin:0;font-size:14px;">Recurring bills</h2>'+
+      '<button class="mini-btn" onclick="openRecurringBillModal()">+ New recurring</button></div>'+
+      (rows ? '<div class="field-list">'+rows+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">None yet — set one up for a bill that arrives every month, like gas or internet.</p>')+
+      '</div>';
   }
 
   function renderBillDetail(id){
@@ -3385,6 +3636,14 @@ import * as auditService from './services/auditService.js';
       }).join('');
       if (properties.some(function(p){ return p.id===prevVal; })) reviewPropertySelect.value = prevVal;
     }
+    var recurringPropertySelect = document.getElementById('recurring-property');
+    if (recurringPropertySelect){
+      var prevRecVal = recurringPropertySelect.value;
+      recurringPropertySelect.innerHTML = properties.map(function(p){
+        return '<option value="'+p.id+'">'+esc(p.name)+'</option>';
+      }).join('');
+      if (properties.some(function(p){ return p.id===prevRecVal; })) recurringPropertySelect.value = prevRecVal;
+    }
     var docTenantSelect = document.getElementById('doc-tenant');
     if (docTenantSelect){
       var prevTenantVal = docTenantSelect.value;
@@ -4042,7 +4301,8 @@ import * as auditService from './services/auditService.js';
       billAllocationService.getAll(),
       tenantDocumentService.getAll(),
       maintenanceService.getAll(),
-      notificationService.getAll()
+      notificationService.getAll(),
+      recurringBillService.getAll()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -4059,10 +4319,12 @@ import * as auditService from './services/auditService.js';
     tenantDocuments = results[8];
     maintenanceRequests = results[9];
     notificationsList = results[10];
+    recurringBills = results[11];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
     }
+    try { await generateDueRecurringBills(); } catch(_e){ console.error('generateDueRecurringBills failed', _e); }
     recomputeRentCharges();
     refreshStaticSelects();
   }
