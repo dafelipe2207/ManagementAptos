@@ -17,6 +17,10 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=2';
 import * as migrationService from './services/migrationService.js';
+import * as profileService from './services/profileService.js';
+import * as maintenanceService from './services/maintenanceService.js';
+import * as notificationService from './services/notificationService.js';
+import * as auditService from './services/auditService.js';
 
 (function(){
   "use strict";
@@ -29,6 +33,17 @@ import * as migrationService from './services/migrationService.js';
   var rooms = [];
   var tenants = [];
   var bonds = [];
+  /* Role/session state — set once by enterApp() right after sign-in, before anything else
+   * loads. currentProfile is the signed-in user's own profiles row (role, name, active status);
+   * allProfiles/maintenanceRequests/notificationsList are populated by bootstrapData(). RLS is
+   * what actually enforces who can see what — these helpers just drive what the UI *offers*. */
+  var currentProfile = null;
+  var allProfiles = [];
+  var maintenanceRequests = [];
+  var notificationsList = [];
+  function isSuperAdmin(){ return !!currentProfile && currentProfile.role === 'super_admin'; }
+  function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator'); }
+  function isTenantRole(){ return !!currentProfile && currentProfile.role === 'tenant'; }
   /**
    * Convierte un objeto Date (construido en hora LOCAL, p.ej. con
    * `new Date(iso+'T00:00:00')`) de vuelta a 'YYYY-MM-DD' usando sus
@@ -679,29 +694,51 @@ import * as migrationService from './services/migrationService.js';
   }
 
   /* ============ Navegación ============ */
-  var NAV = [
+  // Two separate menus — which one is active is only known after the signed-in user's role
+  // loads (enterApp() calls buildNavDom() again once currentProfile is set). Staff (super_admin/
+  // administrator) get today's full app plus Maintenance, and Users/Audit Log for super_admin
+  // only; Tenant gets a small menu limited to their own data (see the "Tenant → solamente sus
+  // propios datos" rule).
+  var STAFF_NAV = [
     { hash:'#/', label:'Dashboard', icon:'dashboard', primary:true },
     { hash:'#/properties', label:'Properties', icon:'building', primary:true },
     { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:false },
+    { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
     { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
     { hash:'#/documents', label:'Documents', icon:'document', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
+    { hash:'#/users', label:'Users', icon:'tenants', primary:false, superAdminOnly:true },
+    { hash:'#/audit-log', label:'Audit log', icon:'chart', primary:false, superAdminOnly:true },
     { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
   ];
+  var TENANT_NAV = [
+    { hash:'#/', label:'My Dashboard', icon:'dashboard', primary:true },
+    { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
+    { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
+    { hash:'#/documents', label:'Documents', icon:'document', primary:true },
+    { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
+    { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
+    { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
+  ];
+  var NAV = STAFF_NAV;
   var MORE = { hash:'#/more', label:'More', icon:'more' };
 
-  var sidebarNav = document.getElementById('sidebar-nav');
-  sidebarNav.innerHTML = NAV.map(function(item){
-    return '<a href="'+item.hash+'" data-hash="'+item.hash+'">'+svg(item.icon)+item.label+'</a>';
-  }).join('');
+  function buildNavDom(navList){
+    NAV = navList.filter(function(i){ return !i.superAdminOnly || (currentProfile && currentProfile.role === 'super_admin'); });
+    var sidebarNavEl = document.getElementById('sidebar-nav');
+    sidebarNavEl.innerHTML = NAV.map(function(item){
+      return '<a href="'+item.hash+'" data-hash="'+item.hash+'">'+svg(item.icon)+item.label+'</a>';
+    }).join('');
 
-  var bottomNav = document.getElementById('bottom-nav');
-  bottomNav.innerHTML = NAV.filter(function(i){ return i.primary; }).map(function(item){
-    return '<a href="'+item.hash+'" data-hash="'+item.hash+'">'+svg(item.icon)+item.label+'</a>';
-  }).join('') + '<a href="'+MORE.hash+'" data-hash="'+MORE.hash+'" data-more="1">'+svg(MORE.icon)+MORE.label+'</a>';
+    var bottomNavEl = document.getElementById('bottom-nav');
+    bottomNavEl.innerHTML = NAV.filter(function(i){ return i.primary; }).map(function(item){
+      return '<a href="'+item.hash+'" data-hash="'+item.hash+'">'+svg(item.icon)+item.label+'</a>';
+    }).join('') + '<a href="'+MORE.hash+'" data-hash="'+MORE.hash+'" data-more="1">'+svg(MORE.icon)+MORE.label+'</a>';
+  }
+  buildNavDom(STAFF_NAV);
 
   var importPickerBtns = document.querySelectorAll('#import-modal-picker .import-option');
   var IMPORT_OPTIONS = [
@@ -849,7 +886,9 @@ import * as migrationService from './services/migrationService.js';
     });
   }
   function propertyOf(id){ return properties.find(function(p){ return p.id===id; }); }
+  function roomOf(id){ return rooms.find(function(r){ return r.id===id; }); }
   function tenantOf(id){ return tenants.find(function(t){ return t.id===id; }); }
+  function myTenantRecord(){ return tenants.find(function(t){ return t.authUserId === (currentProfile && currentProfile.authUserId); }); }
   function bondOf(tenantId){ return bonds.find(function(b){ return b.tenantId===tenantId; }); }
   function billOf(id){ return bills.find(function(b){ return b.id===id; }); }
   function billsOf(propertyId){ return bills.filter(function(b){ return b.propertyId===propertyId; }); }
@@ -954,7 +993,7 @@ import * as migrationService from './services/migrationService.js';
       '<div class="actions-row">'+
       (p.whatsappGroupLink ? '<a class="mini-btn" href="'+esc(p.whatsappGroupLink)+'" target="_blank" rel="noopener">Open WhatsApp group</a>' : '')+
       '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
-      '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>'+
+      (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
       '</div>'+
       '<div class="card"><div class="field-list">'+
       '<div class="field-row"><span class="k">Bedrooms</span><span class="v">'+p.bedrooms+'</span></div>'+
@@ -1042,7 +1081,7 @@ import * as migrationService from './services/migrationService.js';
       '<div class="actions-row">'+
       '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
       '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
-      '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>'+
+      (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>' : '')+
       '</div>'+
       '<div class="card"><h2>Contact</h2><div class="field-list">'+contactRows+'</div></div>'+
       (rentRows ? '<div class="card"><h2>Rent</h2><div class="field-list">'+rentRows+'</div></div>' : '') +
@@ -2156,8 +2195,26 @@ import * as migrationService from './services/migrationService.js';
       '<div class="field-row"><span class="k">Status</span><span class="v">'+billStatusBadge(b)+'</span></div>'+
       (b.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(b.notes)+'</span></div>' : '')+
       '</div></div>'+
+      (isSuperAdmin() ? '<button class="mini-btn danger" style="margin-bottom:12px;" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
       billAllocationCard(b);
   }
+
+  function deleteBillConfirm(billId){
+    var b = billOf(billId);
+    if (!b) return;
+    openConfirmModal('Delete bill', 'Delete this '+b.billType+' bill from '+esc(b.provider)+'? This also removes its allocations. This cannot be undone.', async function(){
+      try {
+        await billAllocationService.removeForBill(billId);
+        await billService.remove(billId);
+        bills = bills.filter(function(x){ return x.id!==billId; });
+        location.hash = '#/bills';
+        showToast('Bill deleted.', 'success');
+      } catch(err){
+        return { blocked:true, message: friendlyErrorMessage(err) };
+      }
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.deleteBillConfirm = deleteBillConfirm;
 
   /** Deja solo los dígitos de un teléfono guardado (quita espacios, guiones, paréntesis y el
    *  '+') para armar un link wa.me — WhatsApp exige el número completo con código de país pero
@@ -2505,12 +2562,36 @@ import * as migrationService from './services/migrationService.js';
             '</div>';
         }).join('') + '</div>';
 
+    var dbNotifHtml = notificationsList.length === 0 ? '' :
+      '<div class="card" style="margin-bottom:14px;"><h2 style="text-transform:none;letter-spacing:0;">Updates</h2>' +
+      notificationsList.slice(0, 20).map(function(n){
+        return '<div class="notif-row'+(n.isRead?' read':'')+'" style="padding:8px 0;">'+
+          '<span style="min-width:0;flex:1;"><div style="font-weight:600;font-size:13.5px;">'+esc(n.title)+'</div>'+
+          (n.body ? '<div class="meta" style="font-size:12px;color:var(--text-dim);">'+esc(n.body)+'</div>' : '')+
+          '<div class="meta" style="font-size:11px;color:var(--text-faint);">'+shortDate((n.createdAt||'').slice(0,10))+'</div></span>'+
+          (n.isRead ? '' : '<button class="notif-dot-btn" title="Mark as read" onclick="markDbNotifRead(\''+n.id+'\')"><span class="notif-dot unread"></span></button>')+
+          '</div>';
+      }).join('') + '</div>';
+
     return pageHeader('Notifications', 'Reminders for rent due dates, overdue payments, bills and move-in/out.') +
+      dbNotifHtml +
       (unreadCount>0 ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">'+unreadCount+' unread</p>' : '') +
       rows +
       '<div class="card" style="margin-top:14px;"><h2 style="text-transform:none;letter-spacing:0;">About notifications</h2>'+
       "<p style=\"font-size:13px;color:var(--text-dim);margin:0;\">This is an in-app notification centre — check this screen when you open the app. Real push notifications (system alerts even when the app is closed) need a backend and browser permissions, and aren't available yet.</p></div>";
   }
+
+  async function markDbNotifRead(id){
+    try {
+      await notificationService.markRead(id);
+      var n = notificationsList.find(function(x){ return x.id===id; });
+      if (n) n.isRead = true;
+      render();
+    } catch(err){
+      showToast('Could not mark as read. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.markDbNotifRead = markDbNotifRead;
 
   /* ---------- FASE 14: App lock (PIN local) + Backup/restore ---------- */
   var APP_PIN_KEY = 'belmont-manager-app-pin';
@@ -2705,6 +2786,394 @@ import * as migrationService from './services/migrationService.js';
       return '<a href="'+item.hash+'">'+svg(item.icon)+'<span>'+item.label+'</span>'+svg('chevron','class="chev"')+'</a>';
     }).join('');
     return pageHeader('More', 'Everything else, in one place.') + '<div class="more-list">'+rows+'</div>';
+  }
+
+  function accessDeniedPage(){
+    return pageHeader('Access denied', "You don't have permission to view this page.") +
+      '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">If you think this is a mistake, ask your Super Admin to check your role.</p></div>';
+  }
+
+  /* ============ Maintenance (shared page: staff see/manage every request, tenants see and
+   * report only their own — RLS enforces this, the UI just adapts what it offers) ============ */
+  var MAINTENANCE_STATUS_BADGE = { open:'due', in_progress:'neutral', resolved:'paid', closed:'neutral' };
+  var MAINTENANCE_STATUS_LABEL = { open:'Open', in_progress:'In progress', resolved:'Resolved', closed:'Closed' };
+  var MAINTENANCE_CATEGORY_LABEL = { plumbing:'Plumbing', electrical:'Electrical', appliance:'Appliance', pest_control:'Pest control', cleaning:'Cleaning', structural:'Structural', other:'Other' };
+
+  function renderMaintenance(){
+    var staff = isStaff();
+    var rows = maintenanceRequests.slice().sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); });
+    var listHtml = rows.length === 0
+      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No maintenance requests yet.</p></div>'
+      : rows.map(function(m){
+          var p = propertyOf(m.propertyId);
+          var r = m.roomId ? roomOf(m.roomId) : null;
+          var t = m.tenantId ? tenantOf(m.tenantId) : null;
+          return '<div class="card" style="cursor:pointer;" onclick="openMaintenanceModal(\''+m.id+'\')">'+
+            '<div class="detail-head" style="margin-top:0;align-items:center;">'+
+            '<h2 style="margin:0;font-size:14px;">'+esc(m.title)+'</h2>'+
+            badge(MAINTENANCE_STATUS_BADGE[m.status]||'neutral', MAINTENANCE_STATUS_LABEL[m.status]||m.status)+
+            '</div>'+
+            '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+
+            (p ? esc(p.name) : '') + (r ? ' · '+esc(r.name) : '') + (t ? ' · '+esc(t.fullName) : '') +
+            '</p>'+
+            '<p style="font-size:11.5px;color:var(--text-faint);margin:0;">'+
+            (MAINTENANCE_CATEGORY_LABEL[m.category]||m.category) + ' · Priority: ' + m.priority + ' · ' + shortDate((m.createdAt||'').slice(0,10)) +
+            '</p>'+
+            '</div>';
+        }).join('');
+    return pageHeader('Maintenance', staff ? 'Every property\'s open and past requests.' : 'Report a problem and track its status.') +
+      '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openMaintenanceModal(null)">'+(staff?'New request':'Report a problem')+'</button>'+
+      listHtml;
+  }
+
+  var maintenanceModalEditId = null;
+  function onMaintenancePropertyChange(){
+    var propId = document.getElementById('maintenance-property').value;
+    var roomSelect = document.getElementById('maintenance-room');
+    var propRooms = rooms.filter(function(r){ return r.propertyId === propId; });
+    roomSelect.innerHTML = '<option value="">— Not specific to a room —</option>' +
+      propRooms.map(function(r){ return '<option value="'+r.id+'">'+esc(r.name)+'</option>'; }).join('');
+  }
+  window.onMaintenancePropertyChange = onMaintenancePropertyChange;
+
+  function openMaintenanceModal(id){
+    maintenanceModalEditId = id || null;
+    var m = id ? maintenanceRequests.find(function(x){ return x.id===id; }) : null;
+    var staff = isStaff();
+    document.getElementById('maintenance-modal-title').textContent = m ? 'Maintenance request' : 'Report a problem';
+    document.getElementById('maintenance-property-row').hidden = !staff;
+    document.getElementById('maintenance-room-row').hidden = !staff;
+    document.getElementById('maintenance-status-row').hidden = !(staff && m);
+    if (staff){
+      var propSelect = document.getElementById('maintenance-property');
+      propSelect.innerHTML = properties.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
+      propSelect.value = m ? m.propertyId : (properties[0] ? properties[0].id : '');
+      onMaintenancePropertyChange();
+      if (m && m.roomId) document.getElementById('maintenance-room').value = m.roomId;
+    }
+    document.getElementById('maintenance-title').value = m ? m.title : '';
+    document.getElementById('maintenance-title').disabled = !!(m && !staff);
+    document.getElementById('maintenance-description').value = m ? (m.description||'') : '';
+    document.getElementById('maintenance-description').disabled = !!(m && !staff);
+    document.getElementById('maintenance-category').value = m ? m.category : 'other';
+    document.getElementById('maintenance-category').disabled = !!(m && !staff);
+    document.getElementById('maintenance-priority').value = m ? m.priority : 'normal';
+    document.getElementById('maintenance-priority').disabled = !!(m && !staff);
+    document.getElementById('maintenance-status').value = m ? m.status : 'open';
+    document.getElementById('maintenance-photo').value = '';
+    var photoRow = document.getElementById('maintenance-photo').closest('.form-row');
+    if (photoRow) photoRow.hidden = !!(m && !staff);
+    document.getElementById('maintenance-modal-error').hidden = true;
+    document.getElementById('maintenance-modal').hidden = false;
+    var saveBtn = document.querySelector('#maintenance-modal .mini-btn.primary');
+    if (saveBtn) saveBtn.hidden = !!(m && !staff);
+  }
+  window.openMaintenanceModal = openMaintenanceModal;
+
+  function closeMaintenanceModal(){
+    document.getElementById('maintenance-modal').hidden = true;
+    maintenanceModalEditId = null;
+  }
+  window.closeMaintenanceModal = closeMaintenanceModal;
+
+  async function saveMaintenanceForm(){
+    var title = document.getElementById('maintenance-title').value.trim();
+    var description = document.getElementById('maintenance-description').value.trim();
+    var category = document.getElementById('maintenance-category').value;
+    var priority = document.getElementById('maintenance-priority').value;
+    var status = document.getElementById('maintenance-status').value;
+    var errorEl = document.getElementById('maintenance-modal-error');
+    if (!title){
+      errorEl.textContent = 'Add a short title for the problem.';
+      errorEl.hidden = false;
+      return;
+    }
+
+    var propertyId, roomId, tenantId;
+    var existing = maintenanceModalEditId ? maintenanceRequests.find(function(x){ return x.id===maintenanceModalEditId; }) : null;
+    if (isStaff()){
+      propertyId = document.getElementById('maintenance-property').value;
+      roomId = document.getElementById('maintenance-room').value || null;
+      if (!propertyId){
+        errorEl.textContent = 'Choose a property.';
+        errorEl.hidden = false;
+        return;
+      }
+      tenantId = existing ? existing.tenantId : null;
+    } else {
+      var myTenant = myTenantRecord();
+      if (!myTenant){
+        errorEl.textContent = 'Your account is not linked to a tenant record yet — ask your Super Admin.';
+        errorEl.hidden = false;
+        return;
+      }
+      propertyId = myTenant.propertyId;
+      roomId = myTenant.roomId || null;
+      tenantId = myTenant.id;
+    }
+
+    var photoFile = document.getElementById('maintenance-photo').files[0];
+    var saveBtn = document.querySelector('#maintenance-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    errorEl.hidden = true;
+    try {
+      var photoPath = existing ? existing.photoPath : null;
+      if (photoFile){
+        photoPath = await storageService.uploadMaintenancePhoto(photoFile);
+      }
+      var draft = { propertyId:propertyId, roomId:roomId, tenantId:tenantId, title:title, description:description,
+        category:category, priority:priority, photoPath:photoPath, status: existing ? status : 'open',
+        assignedTo: existing ? existing.assignedTo : null };
+      if (existing){
+        var saved = await maintenanceService.update(existing.id, draft);
+        Object.assign(existing, saved);
+        if (isStaff() && status !== existing.status){
+          // handled by Object.assign above already updating status; notify the tenant who reported it, if linked.
+        }
+        var reporterTenant = existing.tenantId ? tenantOf(existing.tenantId) : null;
+        if (isStaff() && reporterTenant && reporterTenant.authUserId){
+          await notificationService.notify(reporterTenant.authUserId, 'Maintenance update: ' + existing.title,
+            'Status is now: ' + (MAINTENANCE_STATUS_LABEL[existing.status] || existing.status), 'maintenance_requests', existing.id);
+        }
+      } else {
+        var created = await maintenanceService.create(draft);
+        maintenanceRequests.unshift(created);
+      }
+      closeMaintenanceModal();
+      showToast('Maintenance request saved.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveMaintenanceForm = saveMaintenanceForm;
+
+  /* ============ Users (Super Admin only) ============ */
+  var ROLE_LABEL = { super_admin:'Super Admin', administrator:'Administrator', tenant:'Tenant' };
+
+  function renderUsers(){
+    if (!isSuperAdmin()) return accessDeniedPage();
+    var rows = allProfiles.map(function(p){
+      return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
+        '<h2 style="margin:0;font-size:14px;">'+esc((p.firstName+' '+p.lastName).trim() || p.email)+'</h2>'+
+        badge(p.isActive ? 'paid' : 'overdue', p.isActive ? 'Active' : 'Deactivated')+
+        '</div>'+
+        '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+esc(p.email)+(p.phone?' · '+esc(p.phone):'')+'</p>'+
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;">'+
+        '<select onchange="changeUserRole(\''+p.id+'\',this.value)" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t change your own role"':'')+'>'+
+        ['super_admin','administrator','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
+        '</select>'+
+        '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
+        '<button class="mini-btn" onclick="resetUserPassword(\''+esc(p.email)+'\')">Reset password</button>'+
+        '</div></div>';
+    }).join('');
+    return pageHeader('Users', 'Every account and its role. Only a Super Admin sees this page.') +
+      '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openUserModal()">Create user</button>'+
+      (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No users yet.</p></div>');
+  }
+
+  async function changeUserRole(profileId, role){
+    try {
+      var saved = await profileService.setRole(profileId, role);
+      Object.assign(allProfiles.find(function(p){ return p.id===profileId; }), saved);
+      showToast('Role updated.', 'success');
+    } catch(err){
+      showToast('Could not update the role. ' + friendlyErrorMessage(err), 'error');
+      render();
+    }
+  }
+  window.changeUserRole = changeUserRole;
+
+  async function toggleUserActive(profileId, nextActive){
+    try {
+      var saved = await profileService.setActive(profileId, nextActive);
+      Object.assign(allProfiles.find(function(p){ return p.id===profileId; }), saved);
+      showToast(nextActive ? 'User activated.' : 'User deactivated.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not update this user. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.toggleUserActive = toggleUserActive;
+
+  async function resetUserPassword(email){
+    try {
+      await profileService.sendPasswordReset(email);
+      showToast('Password reset email sent to ' + email + '.', 'success');
+    } catch(err){
+      showToast('Could not send the reset email. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.resetUserPassword = resetUserPassword;
+
+  function onUserRoleChange(){
+    var role = document.getElementById('user-role').value;
+    var row = document.getElementById('user-tenant-link-row');
+    row.hidden = role !== 'tenant';
+    if (role === 'tenant'){
+      var select = document.getElementById('user-tenant-link');
+      var unlinked = tenants.filter(function(t){ return !t.authUserId; });
+      select.innerHTML = '<option value="">— Not linked yet —</option>' +
+        unlinked.map(function(t){ return '<option value="'+t.id+'">'+esc(t.fullName)+'</option>'; }).join('');
+    }
+  }
+  window.onUserRoleChange = onUserRoleChange;
+
+  function openUserModal(){
+    document.getElementById('user-first-name').value = '';
+    document.getElementById('user-last-name').value = '';
+    document.getElementById('user-email').value = '';
+    document.getElementById('user-phone').value = '';
+    document.getElementById('user-password').value = '';
+    document.getElementById('user-role').value = 'administrator';
+    onUserRoleChange();
+    document.getElementById('user-modal-error').hidden = true;
+    document.getElementById('user-modal').hidden = false;
+  }
+  window.openUserModal = openUserModal;
+
+  function closeUserModal(){
+    document.getElementById('user-modal').hidden = true;
+  }
+  window.closeUserModal = closeUserModal;
+
+  async function saveUserForm(){
+    var firstName = document.getElementById('user-first-name').value.trim();
+    var lastName = document.getElementById('user-last-name').value.trim();
+    var email = document.getElementById('user-email').value.trim();
+    var phone = document.getElementById('user-phone').value.trim();
+    var password = document.getElementById('user-password').value;
+    var role = document.getElementById('user-role').value;
+    var tenantId = role === 'tenant' ? (document.getElementById('user-tenant-link').value || null) : null;
+    var errorEl = document.getElementById('user-modal-error');
+    if (!firstName || !email || !email.includes('@')){
+      errorEl.textContent = 'Add a first name and a valid email.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (!password || password.length < 8){
+      errorEl.textContent = 'The initial password must be at least 8 characters.';
+      errorEl.hidden = false;
+      return;
+    }
+    var saveBtn = document.querySelector('#user-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Creating…'; }
+    errorEl.hidden = true;
+    try {
+      var result = await profileService.createUser({ email:email, password:password, firstName:firstName, lastName:lastName, phone:phone, role:role, tenantId:tenantId });
+      allProfiles = await profileService.getAll();
+      if (tenantId){
+        var t = tenantOf(tenantId);
+        if (t) t.authUserId = (result && result.userId) || t.authUserId;
+      }
+      closeUserModal();
+      showToast(result && result.warning ? result.warning : 'User created. Share the email and password with them directly.', result && result.warning ? 'error' : 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveUserForm = saveUserForm;
+
+  /* ============ Audit log (Super Admin only) ============ */
+  var auditLogRows = null; // lazy-loaded on first visit
+  function renderAuditLog(){
+    if (!isSuperAdmin()) return accessDeniedPage();
+    if (auditLogRows === null){
+      loadAuditLog();
+      return pageHeader('Audit log', 'Every change to payments, bills, tenants, rooms, properties and roles.') +
+        '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Loading…</p></div>';
+    }
+    var rows = auditLogRows.map(function(r){
+      return '<div class="card">'+
+        '<p style="font-size:12.5px;margin:0 0 2px;"><strong>'+esc(r.action)+'</strong> on <strong>'+esc(r.table_name)+'</strong></p>'+
+        '<p style="font-size:11.5px;color:var(--text-faint);margin:0;">'+new Date(r.created_at).toLocaleString()+'</p>'+
+        '</div>';
+    }).join('');
+    return pageHeader('Audit log', 'Every change to payments, bills, tenants, rooms, properties and roles. Showing the latest 100.') +
+      (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No changes recorded yet.</p></div>');
+  }
+  async function loadAuditLog(){
+    try {
+      auditLogRows = await auditService.getRecent(100);
+    } catch(_e){
+      auditLogRows = [];
+    }
+    render();
+  }
+
+  /* ============ Tenant portal: read-only views of the tenant's own data (RLS already limits
+   * every array below to just this person — see myTenantRecord()) ============ */
+  function renderTenantDashboard(){
+    var t = myTenantRecord();
+    if (!t) return pageHeader('My Dashboard', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
+    var p = propertyOf(t.propertyId);
+    var r = t.roomId ? roomOf(t.roomId) : null;
+    var myPayments = paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.paymentDate||'').localeCompare(a.paymentDate||''); });
+    var latestPayment = myPayments[0];
+    var myAllocations = [];
+    bills.forEach(function(b){ (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); }); });
+    var outstanding = myAllocations.filter(function(x){ return !x.alloc.paid; }).reduce(function(s,x){ return s+x.alloc.amount; }, 0);
+    return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') +
+      '<div class="card">'+
+      '<div class="field-row"><span class="k">Property</span><span class="v">'+(p?esc(p.name):'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Room</span><span class="v">'+(r?esc(r.name):'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+esc(t.rentFrequency)+'</span></div>'+
+      '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
+      (latestPayment ? '<div class="field-row"><span class="k">Latest payment</span><span class="v">'+money(latestPayment.amount)+' on '+shortDate(latestPayment.paymentDate)+'</span></div>' : '')+
+      '</div>';
+  }
+
+  function renderTenantPayments(){
+    var t = myTenantRecord();
+    var rows = t ? paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.paymentDate||'').localeCompare(a.paymentDate||''); }) : [];
+    var body = rows.length === 0
+      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No payments recorded yet.</p></div>'
+      : rows.map(function(pmt){
+          return '<div class="card"><div class="field-row"><span class="k">'+shortDate(pmt.paymentDate)+'</span><span class="v">'+money(pmt.amount)+'</span></div></div>';
+        }).join('');
+    return pageHeader('My Payments', 'Rent payments on file. You can view these — only staff can change them.') + body;
+  }
+
+  function renderTenantBills(){
+    var t = myTenantRecord();
+    var myAllocations = [];
+    if (t){
+      bills.forEach(function(b){ (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); }); });
+    }
+    myAllocations.sort(function(a,b){ return (b.bill.billingPeriodEnd||'').localeCompare(a.bill.billingPeriodEnd||''); });
+    var body = myAllocations.length === 0
+      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No shared bills yet.</p></div>'
+      : myAllocations.map(function(x){
+          return '<div class="card">'+
+            '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(x.bill.billType)+'</h2>'+
+            badge(x.alloc.paid?'paid':'due', x.alloc.paid?'Paid':'Pending')+'</div>'+
+            '<div class="field-row"><span class="k">Total bill</span><span class="v">'+money(x.bill.amount)+'</span></div>'+
+            '<div class="field-row"><span class="k">Your share</span><span class="v">'+money(x.alloc.amount)+'</span></div>'+
+            '<div class="field-row"><span class="k">Period</span><span class="v">'+shortDate(x.bill.billingPeriodStart)+' – '+shortDate(x.bill.billingPeriodEnd)+'</span></div>'+
+            '</div>';
+        }).join('');
+    return pageHeader('My Bills', 'Just your share of each shared bill — not other tenants\' amounts.') + body;
+  }
+
+  function renderTenantDocuments(){
+    var t = myTenantRecord();
+    var myDocs = t ? tenantDocuments.filter(function(d){ return d.tenantId===t.id; }) : [];
+    var body = myDocs.length === 0
+      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No documents uploaded yet.</p></div>'
+      : myDocs.map(function(d){
+          return '<div class="card"><div class="field-row"><span class="k">'+esc(d.fileName||d.docType)+'</span>'+
+            '<span class="v"><button class="text-link" onclick="viewReceipt(\'documents\',\''+d.storagePath+'\')">View</button></span></div></div>';
+        }).join('');
+    return pageHeader('My Documents', 'Your rental agreement, receipts and other files.') + body;
   }
 
   /* ============ FASE 15 — CRUD: properties, rooms, tenants, bonds ============ */
@@ -3020,8 +3489,8 @@ import * as migrationService from './services/migrationService.js';
     return '<div class="room-line">'+linkOrDiv+
       '<button type="button" class="icon-mini-btn" title="Edit room" '+
       'onclick="event.preventDefault();event.stopPropagation();openRoomModal(\''+propertyId+'\',\''+r.id+'\')">✎</button>'+
-      '<button type="button" class="icon-mini-btn danger" title="Delete room"'+(hasAnyTenant?' disabled':'')+' '+
-      'onclick="event.preventDefault();event.stopPropagation();deleteRoomConfirm(\''+r.id+'\')">✕</button>'+
+      (isSuperAdmin() ? '<button type="button" class="icon-mini-btn danger" title="Delete room"'+(hasAnyTenant?' disabled':'')+' '+
+      'onclick="event.preventDefault();event.stopPropagation();deleteRoomConfirm(\''+r.id+'\')">✕</button>' : '')+
       '</div>';
   }
 
@@ -3319,19 +3788,33 @@ import * as migrationService from './services/migrationService.js';
     if (e.key === 'Escape' && !document.getElementById('search-modal').hidden) closeSearchModal();
   });
 
-  var ROUTES = {
+  var STAFF_ROUTES = {
     '#/': renderDashboard,
     '#/properties': renderProperties,
     '#/tenants': renderTenants,
     '#/payments': renderPayments,
     '#/bills': renderBills,
+    '#/maintenance': renderMaintenance,
     '#/calendar': renderCalendar,
     '#/reports': renderReports,
     '#/documents': renderDocuments,
     '#/notifications': renderNotifications,
+    '#/users': renderUsers,
+    '#/audit-log': renderAuditLog,
     '#/settings': renderSettings,
     '#/more': renderMore
   };
+  var TENANT_ROUTES = {
+    '#/': renderTenantDashboard,
+    '#/payments': renderTenantPayments,
+    '#/bills': renderTenantBills,
+    '#/documents': renderTenantDocuments,
+    '#/maintenance': renderMaintenance,
+    '#/notifications': renderNotifications,
+    '#/settings': renderSettings,
+    '#/more': renderMore
+  };
+  var ROUTES = STAFF_ROUTES;
 
   var content = document.getElementById('content');
   function render(){
@@ -3340,6 +3823,12 @@ import * as migrationService from './services/migrationService.js';
     var tenantMatch = hash.match(/^#\/tenants\/(.+)$/);
     var billMatch = hash.match(/^#\/bills\/(.+)$/);
     var html;
+    // Staff-only detail pages (full edit/delete UI) — a tenant typing one of these hashes by
+    // hand gets sent to their own dashboard instead of the admin view of that record.
+    if ((propertyMatch || tenantMatch || billMatch) && isTenantRole()){
+      location.hash = '#/';
+      return;
+    }
     if (propertyMatch) html = renderPropertyDetail(decodeURIComponent(propertyMatch[1]));
     else if (tenantMatch) html = renderTenantDetail(decodeURIComponent(tenantMatch[1]));
     else if (billMatch) html = renderBillDetail(decodeURIComponent(billMatch[1]));
@@ -3359,7 +3848,9 @@ import * as migrationService from './services/migrationService.js';
       paymentService.getAll(),
       billService.getAll(),
       billAllocationService.getAll(),
-      tenantDocumentService.getAll()
+      tenantDocumentService.getAll(),
+      maintenanceService.getAll(),
+      notificationService.getAll()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -3374,6 +3865,11 @@ import * as migrationService from './services/migrationService.js';
       return b;
     });
     tenantDocuments = results[8];
+    maintenanceRequests = results[9];
+    notificationsList = results[10];
+    if (isSuperAdmin()){
+      try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
+    }
     recomputeRentCharges();
     refreshStaticSelects();
   }
@@ -3414,18 +3910,8 @@ import * as migrationService from './services/migrationService.js';
   }
 
   /* ============ Auth gate: sign in before loading/rendering any app data ============ */
-  var authMode = 'signin'; // 'signin' | 'signup'
-  function setAuthMode(mode){
-    authMode = mode;
-    document.getElementById('auth-title').textContent = mode==='signup' ? 'Create your account' : 'Sign in';
-    document.getElementById('auth-submit-btn').textContent = mode==='signup' ? 'Create account' : 'Sign in';
-    document.getElementById('auth-toggle-link').textContent = mode==='signup' ? 'Already have an account? Sign in' : "First time here? Create an account";
-    document.getElementById('auth-error').hidden = true;
-  }
-  window.setAuthMode = setAuthMode;
-  function toggleAuthMode(){ setAuthMode(authMode==='signup' ? 'signin' : 'signup'); }
-  window.toggleAuthMode = toggleAuthMode;
-
+  // Self-signup is gone — accounts are created by a Super Admin (Users page), who hands the
+  // person their email + initial password directly. This form is sign-in only now.
   async function submitAuthForm(){
     var email = document.getElementById('auth-email').value.trim();
     var password = document.getElementById('auth-password').value;
@@ -3437,22 +3923,11 @@ import * as migrationService from './services/migrationService.js';
       return;
     }
     var originalLabel = btn.textContent;
-    btn.disabled = true; btn.textContent = authMode==='signup' ? 'Creating account…' : 'Signing in…';
+    btn.disabled = true; btn.textContent = 'Signing in…';
     errorEl.hidden = true;
     try {
-      if (authMode === 'signup'){
-        var result = await auth.signUp(email, password);
-        if (result.session){
-          await enterApp();
-        } else {
-          errorEl.textContent = 'Account created. Check your email to confirm it, then sign in.';
-          errorEl.hidden = false;
-          setAuthMode('signin');
-        }
-      } else {
-        await auth.signIn(email, password);
-        await enterApp();
-      }
+      await auth.signIn(email, password);
+      await enterApp();
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
       errorEl.hidden = false;
@@ -3461,6 +3936,25 @@ import * as migrationService from './services/migrationService.js';
     }
   }
   window.submitAuthForm = submitAuthForm;
+
+  async function requestAuthPasswordReset(){
+    var email = document.getElementById('auth-email').value.trim();
+    var errorEl = document.getElementById('auth-error');
+    if (!email){
+      errorEl.textContent = 'Enter your email above first, then tap "Forgot password?" again.';
+      errorEl.hidden = false;
+      return;
+    }
+    try {
+      await profileService.sendPasswordReset(email);
+      errorEl.textContent = 'Check your email for a link to reset your password.';
+      errorEl.hidden = false;
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.requestAuthPasswordReset = requestAuthPasswordReset;
 
   async function signOutAndReload(){
     try { await auth.signOut(); } catch(e){ /* ignore */ }
@@ -3472,14 +3966,25 @@ import * as migrationService from './services/migrationService.js';
     document.getElementById('auth-screen').hidden = true;
     document.getElementById('app-loading-screen').hidden = false;
     try {
+      currentProfile = await profileService.getMyProfile();
+      if (!currentProfile){
+        throw new Error('Your account has no profile set up yet. Ask your Super Admin to check your access.');
+      }
+      if (!currentProfile.isActive){
+        throw new Error('Your account has been deactivated. Ask your Super Admin to reactivate it.');
+      }
       await bootstrapData();
     } catch(err){
       document.getElementById('app-loading-screen').hidden = true;
       document.getElementById('auth-screen').hidden = false;
-      document.getElementById('auth-error').textContent = 'Signed in, but could not load your data. ' + friendlyErrorMessage(err);
+      document.getElementById('auth-error').textContent = friendlyErrorMessage(err);
       document.getElementById('auth-error').hidden = false;
+      try { await auth.signOut(); } catch(_e){ /* ignore */ }
+      currentProfile = null;
       return;
     }
+    buildNavDom(isTenantRole() ? TENANT_NAV : STAFF_NAV);
+    ROUTES = isTenantRole() ? TENANT_ROUTES : STAFF_ROUTES;
     document.getElementById('app-loading-screen').hidden = true;
     document.querySelector('.shell').hidden = false;
     startRouter();
@@ -3487,6 +3992,10 @@ import * as migrationService from './services/migrationService.js';
       document.getElementById('lock-screen').hidden = false;
       document.getElementById('lock-pin-input').focus();
     }
+  }
+
+  function roleLabel(role){
+    return role==='super_admin' ? 'Super Admin' : role==='administrator' ? 'Administrator' : 'Tenant';
   }
 
   async function initAuthGate(){

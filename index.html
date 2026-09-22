@@ -11,12 +11,12 @@
   <div id="auth-screen" class="modal-overlay" hidden style="z-index:200;background:var(--bg);">
     <div class="card modal-card" style="max-width:320px;">
       <h2 id="auth-title" style="text-transform:none;letter-spacing:0;font-size:16px;">Sign in</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Belmont Manager stores your data in your own private Supabase project. The first time you open this app, create an account below.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Belmont Manager stores your data in your own private Supabase project. Accounts are created by a Super Admin — if you don't have one yet, ask them.</p>
       <div class="form-row"><label for="auth-email">Email</label><input id="auth-email" type="email" autocomplete="username" /></div>
       <div class="form-row"><label for="auth-password">Password</label><input id="auth-password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuthForm()" /></div>
       <p id="auth-error" class="form-error" hidden></p>
       <div class="modal-actions" style="justify-content:space-between;">
-        <button class="text-link" type="button" id="auth-toggle-link" style="margin:0;" onclick="toggleAuthMode()">First time here? Create an account</button>
+        <button class="text-link" type="button" id="auth-toggle-link" style="margin:0;" onclick="requestAuthPasswordReset()">Forgot password?</button>
       </div>
       <div class="modal-actions">
         <button class="mini-btn primary" id="auth-submit-btn" style="width:100%;" onclick="submitAuthForm()">Sign in</button>
@@ -332,6 +332,88 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="user-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Create user</h2>
+      <div class="form-row form-row-2">
+        <div><label for="user-first-name">First name</label><input id="user-first-name" type="text" /></div>
+        <div><label for="user-last-name">Last name</label><input id="user-last-name" type="text" /></div>
+      </div>
+      <div class="form-row"><label for="user-email">Email</label><input id="user-email" type="email" autocomplete="off" /></div>
+      <div class="form-row"><label for="user-phone">Phone (optional)</label><input id="user-phone" type="tel" /></div>
+      <div class="form-row"><label for="user-password">Initial password</label><input id="user-password" type="text" autocomplete="off" placeholder="At least 8 characters" /></div>
+      <div class="form-row">
+        <label for="user-role">Role</label>
+        <select id="user-role" onchange="onUserRoleChange()">
+          <option value="administrator">Administrator</option>
+          <option value="tenant">Tenant</option>
+          <option value="super_admin">Super Admin</option>
+        </select>
+      </div>
+      <div class="form-row" id="user-tenant-link-row" hidden>
+        <label for="user-tenant-link">Link to existing tenant (optional)</label>
+        <select id="user-tenant-link"><option value="">— Not linked yet —</option></select>
+      </div>
+      <p id="user-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeUserModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveUserForm()">Create user</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="maintenance-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 id="maintenance-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Report a problem</h2>
+      <div class="form-row" id="maintenance-property-row">
+        <label for="maintenance-property">Property</label>
+        <select id="maintenance-property" onchange="onMaintenancePropertyChange()"></select>
+      </div>
+      <div class="form-row" id="maintenance-room-row">
+        <label for="maintenance-room">Room (optional)</label>
+        <select id="maintenance-room"><option value="">— Not specific to a room —</option></select>
+      </div>
+      <div class="form-row"><label for="maintenance-title">Title</label><input id="maintenance-title" type="text" /></div>
+      <div class="form-row"><label for="maintenance-description">Description</label><textarea id="maintenance-description"></textarea></div>
+      <div class="form-row form-row-2">
+        <div><label for="maintenance-category">Category</label>
+          <select id="maintenance-category">
+            <option value="plumbing">Plumbing</option>
+            <option value="electrical">Electrical</option>
+            <option value="appliance">Appliance</option>
+            <option value="pest_control">Pest control</option>
+            <option value="cleaning">Cleaning</option>
+            <option value="structural">Structural</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div><label for="maintenance-priority">Priority</label>
+          <select id="maintenance-priority">
+            <option value="low">Low</option>
+            <option value="normal" selected>Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row"><label for="maintenance-photo">Photo (optional)</label><input id="maintenance-photo" type="file" accept="image/*" /></div>
+      <div class="form-row" id="maintenance-status-row" hidden>
+        <label for="maintenance-status">Status</label>
+        <select id="maintenance-status">
+          <option value="open">Open</option>
+          <option value="in_progress">In progress</option>
+          <option value="resolved">Resolved</option>
+          <option value="closed">Closed</option>
+        </select>
+      </div>
+      <p id="maintenance-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeMaintenanceModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveMaintenanceForm()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="room-modal" hidden>
     <div class="card modal-card">
       <h2 id="room-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add room</h2>
@@ -423,6 +505,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=17"></script>
+<script type="module" src="app.js?v=18"></script>
 </body>
 </html>
