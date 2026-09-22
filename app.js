@@ -39,8 +39,12 @@ import * as auditService from './services/auditService.js';
    * what actually enforces who can see what — these helpers just drive what the UI *offers*. */
   var currentProfile = null;
   var allProfiles = [];
+  var propertyAssignments = []; // [{id, propertyId, profileId}] — which Administrator sees which property (super_admin only, loaded in bootstrapData)
   var maintenanceRequests = [];
   var notificationsList = [];
+  var PHONE_LOGIN_SUFFIX = '@tenant.belmontmanager.internal'; // must match the create-user Edge Function exactly
+  function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
+  function phoneDigitsOnly(raw){ return (raw || '').replace(/[^0-9]/g, ''); }
   function isSuperAdmin(){ return !!currentProfile && currentProfile.role === 'super_admin'; }
   function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator'); }
   function isTenantRole(){ return !!currentProfile && currentProfile.role === 'tenant'; }
@@ -2958,23 +2962,55 @@ import * as auditService from './services/auditService.js';
   function renderUsers(){
     if (!isSuperAdmin()) return accessDeniedPage();
     var rows = allProfiles.map(function(p){
+      var phoneLogin = isPhoneLoginProfile(p);
+      var identityLine = phoneLogin ? ('Logs in with: '+esc(p.phone||'—')) : (esc(p.email)+(p.phone?' · '+esc(p.phone):''));
+      var assignHtml = '';
+      if (p.role === 'administrator'){
+        var assignedIds = propertyAssignments.filter(function(a){ return a.profileId===p.id; }).map(function(a){ return a.propertyId; });
+        assignHtml = '<div style="margin-top:8px;"><div style="font-size:11.5px;color:var(--text-faint);margin-bottom:4px;">Assigned properties</div>'+
+          '<div style="display:flex;flex-wrap:wrap;gap:6px;">'+
+          properties.map(function(prop){
+            var checked = assignedIds.indexOf(prop.id) > -1;
+            return '<label style="display:flex;align-items:center;gap:4px;font-size:12px;border:1px solid var(--border);border-radius:8px;padding:4px 8px;">'+
+              '<input type="checkbox" '+(checked?'checked':'')+' onchange="togglePropertyAdmin(\''+p.id+'\',\''+prop.id+'\',this.checked)" />'+esc(prop.name)+'</label>';
+          }).join('') +
+          (properties.length===0 ? '<span style="font-size:12px;color:var(--text-faint);">No properties yet.</span>' : '')+
+          '</div></div>';
+      }
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;font-size:14px;">'+esc((p.firstName+' '+p.lastName).trim() || p.email)+'</h2>'+
         badge(p.isActive ? 'paid' : 'overdue', p.isActive ? 'Active' : 'Deactivated')+
         '</div>'+
-        '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+esc(p.email)+(p.phone?' · '+esc(p.phone):'')+'</p>'+
+        '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+identityLine+'</p>'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;">'+
         '<select onchange="changeUserRole(\''+p.id+'\',this.value)" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t change your own role"':'')+'>'+
         ['super_admin','administrator','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
-        '<button class="mini-btn" onclick="resetUserPassword(\''+esc(p.email)+'\')">Reset password</button>'+
-        '</div></div>';
+        '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\',\''+esc(p.email)+'\','+phoneLogin+')">Reset password</button>'+
+        '</div>'+assignHtml+'</div>';
     }).join('');
     return pageHeader('Users', 'Every account and its role. Only a Super Admin sees this page.') +
       '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openUserModal()">Create user</button>'+
       (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No users yet.</p></div>');
   }
+
+  async function togglePropertyAdmin(profileId, propertyId, assign){
+    try {
+      if (assign){
+        var created = await profileService.assignProperty(profileId, propertyId);
+        propertyAssignments.push(created);
+      } else {
+        await profileService.unassignProperty(profileId, propertyId);
+        propertyAssignments = propertyAssignments.filter(function(a){ return !(a.profileId===profileId && a.propertyId===propertyId); });
+      }
+      showToast(assign ? 'Property assigned.' : 'Property unassigned.', 'success');
+    } catch(err){
+      showToast('Could not update the assignment. ' + friendlyErrorMessage(err), 'error');
+      render();
+    }
+  }
+  window.togglePropertyAdmin = togglePropertyAdmin;
 
   async function changeUserRole(profileId, role){
     try {
@@ -3000,7 +3036,19 @@ import * as auditService from './services/auditService.js';
   }
   window.toggleUserActive = toggleUserActive;
 
-  async function resetUserPassword(email){
+  async function resetUserPassword(profileId, email, isPhoneLogin){
+    if (isPhoneLogin){
+      var newPw = window.prompt('Enter a new password for this tenant (at least 8 characters). Give it to them directly — nothing is texted or emailed.');
+      if (!newPw) return;
+      if (newPw.length < 8){ showToast('Password must be at least 8 characters.', 'error'); return; }
+      try {
+        await profileService.forceSetPassword(profileId, newPw);
+        showToast('Password updated. Share it with the tenant directly.', 'success');
+      } catch(err){
+        showToast('Could not update the password. ' + friendlyErrorMessage(err), 'error');
+      }
+      return;
+    }
     try {
       await profileService.sendPasswordReset(email);
       showToast('Password reset email sent to ' + email + '.', 'success');
@@ -3012,9 +3060,13 @@ import * as auditService from './services/auditService.js';
 
   function onUserRoleChange(){
     var role = document.getElementById('user-role').value;
+    var isTenant = role === 'tenant';
     var row = document.getElementById('user-tenant-link-row');
-    row.hidden = role !== 'tenant';
-    if (role === 'tenant'){
+    row.hidden = !isTenant;
+    document.getElementById('user-email-row').hidden = isTenant;
+    document.getElementById('user-phone-label').textContent = isTenant ? 'Phone number (this is how they log in)' : 'Phone (optional)';
+    document.getElementById('user-phone-hint').hidden = !isTenant;
+    if (isTenant){
       var select = document.getElementById('user-tenant-link');
       var unlinked = tenants.filter(function(t){ return !t.authUserId; });
       select.innerHTML = '<option value="">— Not linked yet —</option>' +
@@ -3022,6 +3074,20 @@ import * as auditService from './services/auditService.js';
     }
   }
   window.onUserRoleChange = onUserRoleChange;
+
+  /** Picking a tenant to link auto-fills their name/phone already on file, so the Super Admin
+   *  doesn't have to retype what's already in the Tenants page. */
+  function onUserTenantLinkChange(){
+    var tenantId = document.getElementById('user-tenant-link').value;
+    if (!tenantId) return;
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    var nameParts = (t.fullName || '').trim().split(/\s+/);
+    document.getElementById('user-first-name').value = nameParts[0] || '';
+    document.getElementById('user-last-name').value = nameParts.slice(1).join(' ');
+    if (t.phone) document.getElementById('user-phone').value = t.phone;
+  }
+  window.onUserTenantLinkChange = onUserTenantLinkChange;
 
   function openUserModal(){
     document.getElementById('user-first-name').value = '';
@@ -3048,10 +3114,22 @@ import * as auditService from './services/auditService.js';
     var phone = document.getElementById('user-phone').value.trim();
     var password = document.getElementById('user-password').value;
     var role = document.getElementById('user-role').value;
-    var tenantId = role === 'tenant' ? (document.getElementById('user-tenant-link').value || null) : null;
+    var isTenant = role === 'tenant';
+    var tenantId = isTenant ? (document.getElementById('user-tenant-link').value || null) : null;
     var errorEl = document.getElementById('user-modal-error');
-    if (!firstName || !email || !email.includes('@')){
-      errorEl.textContent = 'Add a first name and a valid email.';
+    if (!firstName){
+      errorEl.textContent = 'Add a first name.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (isTenant){
+      if (phoneDigitsOnly(phone).length < 8){
+        errorEl.textContent = 'Add a valid phone number, with country code — that\'s what this tenant will log in with.';
+        errorEl.hidden = false;
+        return;
+      }
+    } else if (!email || !email.includes('@')){
+      errorEl.textContent = 'Add a valid email.';
       errorEl.hidden = false;
       return;
     }
@@ -3065,7 +3143,7 @@ import * as auditService from './services/auditService.js';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Creating…'; }
     errorEl.hidden = true;
     try {
-      var result = await profileService.createUser({ email:email, password:password, firstName:firstName, lastName:lastName, phone:phone, role:role, tenantId:tenantId });
+      var result = await profileService.createUser({ email: isTenant ? undefined : email, password:password, firstName:firstName, lastName:lastName, phone:phone, role:role, tenantId:tenantId });
       allProfiles = await profileService.getAll();
       if (tenantId){
         var t = tenantOf(tenantId);
@@ -3869,6 +3947,7 @@ import * as auditService from './services/auditService.js';
     notificationsList = results[10];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
+      try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
     }
     recomputeRentCharges();
     refreshStaticSelects();
@@ -3912,13 +3991,22 @@ import * as auditService from './services/auditService.js';
   /* ============ Auth gate: sign in before loading/rendering any app data ============ */
   // Self-signup is gone — accounts are created by a Super Admin (Users page), who hands the
   // person their email + initial password directly. This form is sign-in only now.
+  /** Tenants log in with their phone number, not an email (see PHONE_LOGIN_SUFFIX above) — the
+   *  same conversion the create-user Edge Function does when it creates their login. Anything
+   *  with an "@" is treated as a real email (Administrator/Super Admin) and used as-is. */
+  function loginIdentifierToEmail(raw){
+    var trimmed = (raw || '').trim();
+    if (trimmed.indexOf('@') > -1) return trimmed;
+    return phoneDigitsOnly(trimmed) + PHONE_LOGIN_SUFFIX;
+  }
+
   async function submitAuthForm(){
-    var email = document.getElementById('auth-email').value.trim();
+    var rawInput = document.getElementById('auth-email').value.trim();
     var password = document.getElementById('auth-password').value;
     var errorEl = document.getElementById('auth-error');
     var btn = document.getElementById('auth-submit-btn');
-    if (!email || !password){
-      errorEl.textContent = 'Enter an email and password.';
+    if (!rawInput || !password){
+      errorEl.textContent = 'Enter your email or phone number, and your password.';
       errorEl.hidden = false;
       return;
     }
@@ -3926,7 +4014,7 @@ import * as auditService from './services/auditService.js';
     btn.disabled = true; btn.textContent = 'Signing in…';
     errorEl.hidden = true;
     try {
-      await auth.signIn(email, password);
+      await auth.signIn(loginIdentifierToEmail(rawInput), password);
       await enterApp();
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
@@ -3938,15 +4026,20 @@ import * as auditService from './services/auditService.js';
   window.submitAuthForm = submitAuthForm;
 
   async function requestAuthPasswordReset(){
-    var email = document.getElementById('auth-email').value.trim();
+    var rawInput = document.getElementById('auth-email').value.trim();
     var errorEl = document.getElementById('auth-error');
-    if (!email){
-      errorEl.textContent = 'Enter your email above first, then tap "Forgot password?" again.';
+    if (!rawInput){
+      errorEl.textContent = 'Enter your email or phone number above first, then tap "Forgot password?" again.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (rawInput.indexOf('@') === -1){
+      errorEl.textContent = "Tenants log in with a phone number, so there's no email to send a reset link to — ask your Super Admin to set you a new password.";
       errorEl.hidden = false;
       return;
     }
     try {
-      await profileService.sendPasswordReset(email);
+      await profileService.sendPasswordReset(rawInput);
       errorEl.textContent = 'Check your email for a link to reset your password.';
       errorEl.hidden = false;
     } catch(err){
