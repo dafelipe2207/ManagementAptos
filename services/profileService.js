@@ -16,6 +16,7 @@ function fromRow(row) {
     role: row.role,
     avatarUrl: row.avatar_url || '',
     isActive: row.is_active,
+    currentPassword: row.current_password || '',
     createdAt: row.created_at
   };
 }
