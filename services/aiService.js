@@ -44,6 +44,19 @@ export async function analyzeBill(file, properties, today) {
   return res.data;
 }
 
+/**
+ * Analyzes the account's existing bill HISTORY (no image involved) to spot each property/bill
+ * type/provider's usual billing cadence and predict which ones look overdue for a new invoice
+ * that hasn't been loaded yet. Returns { predictions: [...] } — see predict-bills Edge Function
+ * for the shape of each entry. Throws on failure (missing API key, network, etc.).
+ */
+export async function predictMissingBills(bills, today) {
+  var res = await supabase.functions.invoke('predict-bills', { body: { bills: bills, today: today } });
+  if (res.error) throw await describeFunctionError(res.error);
+  if (res.data && res.data.error) throw new Error(res.data.error);
+  return res.data;
+}
+
 // supabase-js's default error for a non-2xx Edge Function response is a generic
 // "Edge Function returned a non-2xx status code" — it doesn't read the response body.
 // The actual, useful message (from our Edge Function's own json({error: '...'}) replies)
