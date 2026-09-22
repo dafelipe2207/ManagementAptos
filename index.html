@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Belmont Manager</title>
+<title>Manager</title>
 <link rel="stylesheet" href="styles.css?v=9">
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div id="auth-screen" class="modal-overlay" hidden style="z-index:200;background:var(--bg);">
     <div class="card modal-card" style="max-width:320px;">
       <h2 id="auth-title" style="text-transform:none;letter-spacing:0;font-size:16px;">Sign in</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Belmont Manager stores your data in your own private Supabase project. Accounts are created by a Super Admin — if you don't have one yet, ask them.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Manager stores your data in your own private Supabase project. Accounts are created by a Super Admin — if you don't have one yet, ask them.</p>
       <div class="form-row"><label for="auth-email">Email or phone number</label><input id="auth-email" type="text" autocomplete="username" placeholder="Tenants: use your phone number" /></div>
       <div class="form-row"><label for="auth-password">Password</label><input id="auth-password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuthForm()" /></div>
       <p id="auth-error" class="form-error" hidden></p>
@@ -32,7 +32,7 @@
 
   <div class="modal-overlay" id="lock-screen" hidden style="z-index:100;background:var(--bg);">
     <div class="card modal-card" style="text-align:center;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:16px;">Belmont Manager</h2>
+      <h2 style="text-transform:none;letter-spacing:0;font-size:16px;">Manager</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Enter your PIN to continue. (Local screen lock only — not real encryption.)</p>
       <input id="lock-pin-input" type="password" inputmode="numeric" maxlength="6" class="modal-input"
         style="text-align:center;font-size:18px;letter-spacing:6px;" placeholder="••••" />
@@ -46,10 +46,10 @@
   <div class="shell" hidden>
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">BM</div>
+        <div class="brand-mark">M</div>
         <div>
-          <div class="brand-name">Belmont Manager</div>
-          <div class="brand-sub">Belmont &amp; more</div>
+          <div class="brand-name">Manager</div>
+          <div class="brand-sub">Property management</div>
         </div>
       </div>
       <nav class="nav" id="sidebar-nav"></nav>
@@ -123,11 +123,12 @@
   <div class="modal-overlay" id="import-modal" hidden>
     <div class="card modal-card" style="max-width:340px;">
       <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add bill</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Import a photo or PDF of the bill. A mock analysis service will extract the details for you.</p>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Import a photo or PDF of the bill and a mock analysis service will extract the details for you — or enter it by hand.</p>
       <div id="import-modal-picker" class="import-picker">
         <button class="import-option" type="button" onclick="triggerImportInput('camera')"></button>
         <button class="import-option" type="button" onclick="triggerImportInput('gallery')"></button>
         <button class="import-option" type="button" onclick="triggerImportInput('pdf')"></button>
+        <button class="import-option" type="button" onclick="chooseManualBillEntry()"></button>
       </div>
       <div id="import-modal-preview" hidden>
         <div class="import-preview-box">
@@ -395,7 +396,12 @@
       <div class="form-row" id="user-email-row"><label for="user-email">Email</label><input id="user-email" type="email" autocomplete="off" /></div>
       <div class="form-row"><label for="user-phone" id="user-phone-label">Phone (optional)</label><input id="user-phone" type="tel" placeholder="With country code, e.g. +61 4xx xxx xxx" /></div>
       <p id="user-phone-hint" class="form-error" hidden style="color:var(--text-dim);background:transparent;">This tenant will log in with this phone number instead of an email — no SMS is sent, just tell them the number + password directly.</p>
-      <div class="form-row"><label for="user-password">Initial password</label><input id="user-password" type="text" autocomplete="off" placeholder="At least 8 characters" /></div>
+      <div class="form-row"><label for="user-password">Initial password (auto-generated)</label>
+        <div style="display:flex;gap:6px;">
+          <input id="user-password" type="text" autocomplete="off" placeholder="At least 8 characters" style="flex:1;" />
+          <button class="mini-btn" type="button" style="flex-shrink:0;" onclick="regenerateUserPassword()">Regenerate</button>
+        </div>
+      </div>
       <div class="form-row">
         <label for="user-role">Role</label>
         <select id="user-role" onchange="onUserRoleChange()">
@@ -559,6 +565,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=27"></script>
+<script type="module" src="app.js?v=29"></script>
 </body>
 </html>
