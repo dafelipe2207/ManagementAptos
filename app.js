@@ -15,7 +15,7 @@ import * as billService from './services/billService.js';
 import * as billAllocationService from './services/billAllocationService.js';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
-import * as aiService from './services/aiService.js?v=2';
+import * as aiService from './services/aiService.js?v=3';
 import * as migrationService from './services/migrationService.js';
 import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
@@ -1779,7 +1779,12 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
 
   function computeAllocationRows(bill, method){
-    var propTenants = tenantsOfProperty(bill.propertyId);
+    // Solo entran quienes realmente se solaparon con el periodo del bill — alguien que se mudó
+    // antes de que empezara, o después de que terminó (o que ya no vive ahí hoy), queda afuera
+    // en vez de aparecer con $0 para repartir a mano.
+    var propTenants = tenantsOfProperty(bill.propertyId).filter(function(t){
+      return occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd) > 0;
+    });
     var days = propTenants.map(function(t){ return occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd); });
     var amounts;
     if (method === 'days'){
@@ -1954,7 +1959,9 @@ import * as recurringBillService from './services/recurringBillService.js';
           var t = tenantOf(a.tenantId);
           return { tenantId:a.tenantId, name:t?t.fullName:a.tenantId,
             days: t?occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd):0, amount:a.amount };
-        })
+        // Filtra allocations viejas de alguien que no se solapó con el periodo (o que ya no vive
+        // ahí) — quedaron con $0 de una repartición anterior y no deberían seguir apareciendo.
+        }).filter(function(row){ return row.days > 0 || row.amount > 0; })
       : computeAllocationRows(bill, 'days');
     allocationDraft = { billId: billId, method: bill.allocations ? 'custom' : 'days', periodDays: totalDays, rows: rows };
     document.getElementById('allocate-modal-sub').textContent =
@@ -2426,7 +2433,25 @@ import * as recurringBillService from './services/recurringBillService.js';
     return '<div class="card"><div class="report-table-wrap"><table class="report-table bills-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
   }
 
+  var billsViewTab = 'list'; // 'list' | 'missing'
+  function setBillsViewTab(tab){
+    billsViewTab = tab;
+    if (tab === 'missing' && missingBillsAiState === 'idle') runMissingBillsAnalysis();
+    render();
+  }
+  window.setBillsViewTab = setBillsViewTab;
+  function billsViewTabsHtml(){
+    return '<div class="filter-chips" style="margin-bottom:10px;">'+
+      '<button class="chip'+(billsViewTab==='list'?' active':'')+'" onclick="setBillsViewTab(\'list\')">Bills</button>'+
+      '<button class="chip'+(billsViewTab==='missing'?' active':'')+'" onclick="setBillsViewTab(\'missing\')">Missing invoices</button>'+
+      '</div>';
+  }
+
   function renderBills(){
+    return billsViewTabsHtml() + (billsViewTab==='missing' ? renderMissingInvoicesTab() : renderBillsListTab());
+  }
+
+  function renderBillsListTab(){
     // Pestaña por propiedad — "All properties" o una específica; el filtro de estado (chips)
     // y las stats se calculan DESPUÉS de aplicar esta, así cada pestaña muestra sus propios
     // números en vez de los del portafolio completo.
@@ -2473,6 +2498,71 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
       '</div></div>'+
       importQueueCard() + propertyTabsHtml + billsTimelineHtml() + statHtml + chipsHtml + rows;
+  }
+
+  /* ============ "Missing invoices" tab — AI-based prediction (predict-bills Edge Function) ============ */
+  var missingBillsAiState = 'idle'; // 'idle' | 'loading' | 'done' | 'error'
+  var missingBillsAiResult = null;  // array of predictions once done
+  var missingBillsAiError = '';
+
+  async function runMissingBillsAnalysis(){
+    if (!bills.length){ missingBillsAiState = 'done'; missingBillsAiResult = []; render(); return; }
+    missingBillsAiState = 'loading';
+    render();
+    try {
+      var payload = bills.map(function(b){
+        var p = properties.find(function(x){ return x.id===b.propertyId; });
+        return {
+          propertyId: b.propertyId, propertyName: p ? p.name : '—',
+          billType: b.billType, provider: b.provider,
+          issueDate: b.issueDate, dueDate: b.dueDate,
+          billingPeriodStart: b.billingPeriodStart, billingPeriodEnd: b.billingPeriodEnd,
+          amount: b.amount
+        };
+      });
+      var result = await aiService.predictMissingBills(payload, TODAY);
+      missingBillsAiResult = (result && result.predictions) || [];
+      missingBillsAiState = 'done';
+    } catch(err){
+      missingBillsAiError = friendlyErrorMessage(err);
+      missingBillsAiState = 'error';
+    }
+    render();
+  }
+  window.runMissingBillsAnalysis = runMissingBillsAnalysis;
+
+  function missingInvoiceRowHtml(pred){
+    var overdueTxt = pred.daysOverdue!=null ? (pred.daysOverdue+' day'+(pred.daysOverdue===1?'':'s')+' overdue') : '';
+    return '<div class="card">'+
+      '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(pred.billType))+' — '+esc(pred.provider)+'</h2>'+
+      badge('overdue', overdueTxt || 'Missing')+'</div>'+
+      '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+esc(pred.propertyName)+'</p>'+
+      '<div class="field-list">'+
+      '<div class="field-row"><span class="k">Last bill</span><span class="v">'+(pred.lastBillDate?shortDate(pred.lastBillDate):'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Expected around</span><span class="v">'+(pred.predictedNextDate?shortDate(pred.predictedNextDate):'—')+'</span></div>'+
+      '</div>'+
+      (pred.note ? '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">'+esc(pred.note)+'</p>' : '')+
+      '<button class="mini-btn primary" style="margin-top:10px;" onclick="setBillsViewTab(\'list\');openImportModal();">+ Add this bill</button>'+
+      '</div>';
+  }
+
+  function renderMissingInvoicesTab(){
+    var header = pageHeader('Missing invoices', "AI looks at each property's billing history to guess when the next invoice should arrive, and flags the ones that seem overdue.") +
+      '<button class="mini-btn" style="margin-bottom:12px;" onclick="runMissingBillsAnalysis()" '+(missingBillsAiState==='loading'?'disabled':'')+'>'+
+      (missingBillsAiState==='loading' ? 'Analyzing…' : 'Re-analyze with AI') + '</button>';
+
+    if (missingBillsAiState === 'idle' || missingBillsAiState === 'loading'){
+      return header + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">'+
+        (missingBillsAiState==='loading' ? 'Reviewing your bill history for gaps…' : 'Not analyzed yet.')+'</p></div>';
+    }
+    if (missingBillsAiState === 'error'){
+      return header + '<div class="card"><p style="font-size:13.5px;color:var(--status-overdue);margin:0;">Could not run the AI analysis. '+esc(missingBillsAiError)+'</p></div>';
+    }
+    if (!missingBillsAiResult || !missingBillsAiResult.length){
+      return header + emptyState('receipt', 'Nothing missing', "Every recurring bill on file looks up to date — nothing seems overdue based on each property's usual pattern.", '');
+    }
+    var sorted = missingBillsAiResult.slice().sort(function(a,b){ return (b.daysOverdue||0)-(a.daysOverdue||0); });
+    return header + sorted.map(missingInvoiceRowHtml).join('');
   }
 
   /** Detecta bills "recurrentes" (electricidad, agua, hot water, gas, internet — no "other") que
