@@ -17,7 +17,7 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=2';
 import * as migrationService from './services/migrationService.js';
-import * as profileService from './services/profileService.js?v=3';
+import * as profileService from './services/profileService.js?v=4';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as auditService from './services/auditService.js';
@@ -712,7 +712,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     camera:'<path d="M4 8h3l1.6-2.4A1 1 0 0 1 9.4 5h5.2a1 1 0 0 1 .8.6L16.8 8H20a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.4"/>',
     gallery:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 16.5l-5.2-5.2-4 4-2.8-2.8L3 17"/>',
     plus:'<path d="M12 5v14M5 12h14"/>',
-    inbox:'<path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13l3 7v8a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-8z"/>'
+    inbox:'<path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13l3 7v8a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-8z"/>',
+    edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'
   };
   function svg(name, extra){
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'+(extra?' '+extra:'')+'>'+ICONS[name]+'</svg>';
@@ -726,13 +727,13 @@ import * as recurringBillService from './services/recurringBillService.js';
   // propios datos" rule).
   var STAFF_NAV = [
     { hash:'#/', label:'Dashboard', icon:'dashboard', primary:true },
-    { hash:'#/properties', label:'Properties', icon:'building', primary:true },
-    { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
-    { hash:'#/bills', label:'Bills', icon:'receipt', primary:false },
+    { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
+    { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:true },
+    { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
+    { hash:'#/properties', label:'Properties', icon:'building', primary:false },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
     { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
-    { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
     { hash:'#/documents', label:'Documents', icon:'document', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { hash:'#/users', label:'Users', icon:'tenants', primary:false, superAdminOnly:true },
@@ -769,11 +770,12 @@ import * as recurringBillService from './services/recurringBillService.js';
   var IMPORT_OPTIONS = [
     ['camera','Take a photo'],
     ['gallery','Choose from photos'],
-    ['pdf','Upload PDF']
+    ['pdf','Upload PDF'],
+    ['manual','Enter manually']
   ];
   importPickerBtns.forEach(function(btn, i){
     var opt = IMPORT_OPTIONS[i];
-    btn.innerHTML = svg(opt[0]==='pdf' ? 'document' : opt[0]) + '<span>'+opt[1]+'</span>';
+    btn.innerHTML = svg(opt[0]==='pdf' ? 'document' : opt[0]==='manual' ? 'edit' : opt[0]) + '<span>'+opt[1]+'</span>';
   });
   document.getElementById('import-preview-file').innerHTML = svg('document') + '<span>PDF file</span>';
 
@@ -1633,6 +1635,13 @@ import * as recurringBillService from './services/recurringBillService.js';
     openReviewModal(item.id);
   }
   window.openManualBillModal = openManualBillModal;
+  /** "Enter manually" option inside the "+ Add bill" picker — closes that modal and opens the
+   *  same blank review form as before, just reached from one place instead of two buttons. */
+  function chooseManualBillEntry(){
+    closeImportModal();
+    openManualBillModal();
+  }
+  window.chooseManualBillEntry = chooseManualBillEntry;
   async function confirmReviewedBill(){
     var provider = document.getElementById('review-provider').value.trim();
     var invoiceNumber = document.getElementById('review-invoice').value.trim();
@@ -2476,7 +2485,6 @@ import * as recurringBillService from './services/recurringBillService.js';
 
     return '<div class="detail-head">'+pageHeader('Bills', 'Electricity, gas, water, internet and more.')+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
-      '<button class="mini-btn" onclick="openManualBillModal()">+ Manual entry</button>'+
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
       '</div></div>'+
       importQueueCard() + propertyTabsHtml + statHtml + chipsHtml + rows;
@@ -3076,7 +3084,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var pin = getAppPin();
     var hasLocalData = migrationService.hasLocalData();
     var migrationCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Migrate local data to cloud</h2>'+
-      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">If this browser still has data saved from an older, offline version of Belmont Manager, this copies it into your Supabase account (new cloud IDs are assigned, and everything is relinked). Your old local data is left untouched as a safety-net backup.</p>'+
+      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">If this browser still has data saved from an older, offline version of this app, this copies it into your Supabase account (new cloud IDs are assigned, and everything is relinked). Your old local data is left untouched as a safety-net backup.</p>'+
       (hasLocalData
         ? '<button class="mini-btn primary" id="migrate-btn" onclick="runLocalMigration()">Migrate local data to cloud</button>'
         : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No old local data was found in this browser.</p>')+
@@ -3427,10 +3435,10 @@ import * as recurringBillService from './services/recurringBillService.js';
   async function offerPasswordWhatsAppShare(profile, newPassword){
     var loginId = isPhoneLoginProfile(profile) ? profile.phone : profile.email;
     var name = (profile.firstName + ' ' + profile.lastName).trim() || 'there';
-    var message = 'Hi ' + name + ', your Belmont Manager login was updated.\n' +
+    var message = 'Hi ' + name + ', your Manager login was updated.\n' +
       'Username: ' + loginId + '\nPassword: ' + newPassword + '\n\nKeep this somewhere safe.';
     if (navigator.share){
-      try { await navigator.share({ text: message, title: 'Belmont Manager login' }); return; }
+      try { await navigator.share({ text: message, title: 'Manager login' }); return; }
       catch(e){ /* user cancelled the share sheet — fall through to the direct link below */ }
     }
     var digits = phoneDigitsForWhatsApp(profile.phone);
@@ -3473,12 +3481,25 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.onUserTenantLinkChange = onUserTenantLinkChange;
 
+  /** 8 caracteres, sin 0/O/1/l/I (se prestan a confusión al transcribirlos a mano o por WhatsApp/correo). */
+  function generatePassword(len){
+    len = len || 8;
+    var chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    var out = '';
+    for (var i=0;i<len;i++) out += chars.charAt(Math.floor(Math.random()*chars.length));
+    return out;
+  }
+  function regenerateUserPassword(){
+    document.getElementById('user-password').value = generatePassword(8);
+  }
+  window.regenerateUserPassword = regenerateUserPassword;
+
   function openUserModal(){
     document.getElementById('user-first-name').value = '';
     document.getElementById('user-last-name').value = '';
     document.getElementById('user-email').value = '';
     document.getElementById('user-phone').value = '';
-    document.getElementById('user-password').value = '';
+    document.getElementById('user-password').value = generatePassword(8);
     document.getElementById('user-role').value = 'administrator';
     onUserRoleChange();
     document.getElementById('user-modal-error').hidden = true;
@@ -3534,7 +3555,14 @@ import * as recurringBillService from './services/recurringBillService.js';
         if (t) t.authUserId = (result && result.userId) || t.authUserId;
       }
       closeUserModal();
-      showToast(result && result.warning ? result.warning : 'User created. Share the email and password with them directly.', result && result.warning ? 'error' : 'success');
+      if (result && result.warning){
+        showToast(result.warning, 'error');
+      } else if (!isTenant && email){
+        showToast('User created. Opening email to send their login…', 'success');
+        offerNewUserEmailShare(email, (firstName + ' ' + lastName).trim(), password);
+      } else {
+        showToast('User created. Share the login and password with them directly.', 'success');
+      }
       render();
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
@@ -3544,6 +3572,20 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.saveUserForm = saveUserForm;
+
+  /** Tras crear un Administrator/Super Admin (login por correo), ofrece enviarle sus credenciales
+   *  por email — mismo patrón que offerPasswordWhatsAppShare: usa el panel nativo de compartir
+   *  cuando está disponible (puede elegirse Mail ahí mismo), si no abre un mailto: directo. */
+  async function offerNewUserEmailShare(email, name, password){
+    var subject = 'Your Manager login';
+    var message = 'Hi ' + (name || 'there') + ', your Manager account was created.\n' +
+      'Email: ' + email + '\nPassword: ' + password + '\n\nKeep this somewhere safe.';
+    if (navigator.share){
+      try { await navigator.share({ text: message, title: subject }); return; }
+      catch(e){ /* user cancelled the share sheet — fall through to mailto: below */ }
+    }
+    window.open('mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(message), '_blank');
+  }
 
   /* ============ Audit log (Super Admin only) ============ */
   var auditLogRows = null; // lazy-loaded on first visit
