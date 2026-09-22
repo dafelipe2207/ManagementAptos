@@ -107,6 +107,11 @@ import * as auditService from './services/auditService.js';
      * respetando la fecha de salida del inquilino si existe (sección 32:
      * nunca generar cargos para cuando el inquilino ya no vive ahí).
      */
+    // Regla de negocio: el tenant debe pagar con 2 semanas de anticipación — el vencimiento de
+    // cada periodo cae 14 días ANTES de que ese periodo empiece, no el mismo día. Así, si hoy es
+    // el vencimiento de la semana que arranca el 20/10, esa semana ya debía estar pagada desde
+    // el 06/10 (14 días antes), y el tenant siempre debe llevar 2 semanas de colchón pagado.
+    var ADVANCE_DAYS = 14;
     function generateAllPeriods(schedule, tenant, asOfIso){
       var periods = [];
       var cutoff = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || null;
@@ -116,12 +121,11 @@ import * as auditService from './services/auditService.js';
         var end = schedule.frequency === 'monthly'
           ? stepDate(addMonths(cursor, 1), -1)
           : stepDate(cursor, periodLengthDays(schedule.frequency) - 1);
-        // El alquiler se paga POR ADELANTADO: lo que corresponde a un periodo se debe pagar
-        // desde el primer día de ese periodo, no al final — por eso dueDate = periodStart, no
-        // periodEnd. Así, si el move-in fue ayer, hoy ese periodo ya aparece "overdue" (1 día
-        // atrasado) en vez de esperar a que termine toda la semana/quincena/mes.
-        periods.push({ periodStart: cursor, periodEnd: end, dueDate: cursor });
-        if (cursor > asOfIso) break;
+        var dueDate = stepDate(cursor, -ADVANCE_DAYS);
+        periods.push({ periodStart: cursor, periodEnd: end, dueDate: dueDate });
+        // Sigue generando periodos futuros mientras su vencimiento (2 semanas antes de que
+        // empiecen) ya haya llegado o esté por llegar, más un periodo "upcoming" de margen.
+        if (dueDate > asOfIso) break;
         cursor = schedule.frequency === 'monthly' ? addMonths(cursor, 1) : stepDate(cursor, periodLengthDays(schedule.frequency));
       }
       return periods;
@@ -223,7 +227,7 @@ import * as auditService from './services/auditService.js';
         var schedule = rentSchedules.find(function(s){ return s.tenantId===t.id; });
         return acc.concat(rentService.generateChargesForTenant(t, schedule, TODAY, paymentRecords));
       }, [])
-      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // más actual primero, más antiguo al final
   }
   recomputeRentCharges();
 
@@ -1110,7 +1114,7 @@ import * as auditService from './services/auditService.js';
     var paid = charges.filter(function(c){ return c.status==='paid'; })
       .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); });
     var pending = charges.filter(function(c){ return c.status!=='paid'; })
-      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // más actual primero
     function row(c){
       var label = shortDate(c.periodStart)+' – '+shortDate(c.periodEnd);
       if (c.status === 'paid' && c.paidDate) label += ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>';
