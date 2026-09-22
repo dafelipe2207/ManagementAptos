@@ -12,7 +12,7 @@
     <div class="card modal-card" style="max-width:320px;">
       <h2 id="auth-title" style="text-transform:none;letter-spacing:0;font-size:16px;">Sign in</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Belmont Manager stores your data in your own private Supabase project. Accounts are created by a Super Admin — if you don't have one yet, ask them.</p>
-      <div class="form-row"><label for="auth-email">Email</label><input id="auth-email" type="email" autocomplete="username" /></div>
+      <div class="form-row"><label for="auth-email">Email or phone number</label><input id="auth-email" type="text" autocomplete="username" placeholder="Tenants: use your phone number" /></div>
       <div class="form-row"><label for="auth-password">Password</label><input id="auth-password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuthForm()" /></div>
       <p id="auth-error" class="form-error" hidden></p>
       <div class="modal-actions" style="justify-content:space-between;">
@@ -339,8 +339,9 @@
         <div><label for="user-first-name">First name</label><input id="user-first-name" type="text" /></div>
         <div><label for="user-last-name">Last name</label><input id="user-last-name" type="text" /></div>
       </div>
-      <div class="form-row"><label for="user-email">Email</label><input id="user-email" type="email" autocomplete="off" /></div>
-      <div class="form-row"><label for="user-phone">Phone (optional)</label><input id="user-phone" type="tel" /></div>
+      <div class="form-row" id="user-email-row"><label for="user-email">Email</label><input id="user-email" type="email" autocomplete="off" /></div>
+      <div class="form-row"><label for="user-phone" id="user-phone-label">Phone (optional)</label><input id="user-phone" type="tel" placeholder="With country code, e.g. +61 4xx xxx xxx" /></div>
+      <p id="user-phone-hint" class="form-error" hidden style="color:var(--text-dim);background:transparent;">This tenant will log in with this phone number instead of an email — no SMS is sent, just tell them the number + password directly.</p>
       <div class="form-row"><label for="user-password">Initial password</label><input id="user-password" type="text" autocomplete="off" placeholder="At least 8 characters" /></div>
       <div class="form-row">
         <label for="user-role">Role</label>
@@ -352,7 +353,7 @@
       </div>
       <div class="form-row" id="user-tenant-link-row" hidden>
         <label for="user-tenant-link">Link to existing tenant (optional)</label>
-        <select id="user-tenant-link"><option value="">— Not linked yet —</option></select>
+        <select id="user-tenant-link" onchange="onUserTenantLinkChange()"><option value="">— Not linked yet —</option></select>
       </div>
       <p id="user-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -505,6 +506,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=18"></script>
+<script type="module" src="app.js?v=19"></script>
 </body>
 </html>
