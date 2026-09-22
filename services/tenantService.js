@@ -21,6 +21,7 @@ function fromRow(row) {
   if (row.expected_move_out_date) t.expectedMoveOutDate = row.expected_move_out_date;
   if (row.actual_move_out_date) t.actualMoveOutDate = row.actual_move_out_date;
   if (row.notes) t.notes = row.notes;
+  t.authUserId = row.auth_user_id || null;
   return t;
 }
 

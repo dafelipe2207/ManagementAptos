@@ -26,6 +26,14 @@ export async function uploadDocument(tenantId, file) {
   return path;
 }
 
+export async function uploadMaintenancePhoto(file) {
+  const userId = await getCurrentUserId();
+  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
+  const { error } = await supabase.storage.from('maintenance-photos').upload(path, file, { upsert: false });
+  if (error) throw error;
+  return path;
+}
+
 /** Buckets are private — always use a signed URL (expires after `expiresInSeconds`) to display/open a file. */
 export async function getSignedUrl(bucket, path, expiresInSeconds) {
   const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, expiresInSeconds || 3600);
