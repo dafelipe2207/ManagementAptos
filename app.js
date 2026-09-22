@@ -17,7 +17,7 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=2';
 import * as migrationService from './services/migrationService.js';
-import * as profileService from './services/profileService.js?v=4';
+import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as auditService from './services/auditService.js';
@@ -1205,14 +1205,20 @@ import * as recurringBillService from './services/recurringBillService.js';
   var paymentsTenantFilter = 'all';
   var paymentsPropertyFilter = 'all';
   var paymentsDateSort = 'desc'; // 'desc' = más actual primero, 'asc' = más antiguo primero
-  var paymentsTab = 'rent'; // 'rent' | 'bills' — dos sub-pestañas separadas dentro de Payments
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
   function setPaymentsFilter(f){ paymentsFilter = f; render(); }
   function setPaymentsTenantFilter(tenantId){ paymentsTenantFilter = tenantId; render(); }
-  function setPaymentsPropertyFilter(propertyId){ paymentsPropertyFilter = propertyId; render(); }
+  /** Elegir una propiedad ya no deja el filtro de tenant apuntando a alguien de OTRA
+   *  propiedad — si el tenant seleccionado no vive en la propiedad elegida, vuelve a "All". */
+  function setPaymentsPropertyFilter(propertyId){
+    paymentsPropertyFilter = propertyId;
+    if (propertyId !== 'all' && paymentsTenantFilter !== 'all'){
+      var t = tenantOf(paymentsTenantFilter);
+      if (!t || t.propertyId !== propertyId) paymentsTenantFilter = 'all';
+    }
+    render();
+  }
   function togglePaymentsDateSort(){ paymentsDateSort = paymentsDateSort==='desc' ? 'asc' : 'desc'; render(); }
-  function setPaymentsTab(tab){ paymentsTab = tab; render(); }
-  window.setPaymentsTab = setPaymentsTab;
   window.setPaymentsPropertyFilter = setPaymentsPropertyFilter;
   window.togglePaymentsDateSort = togglePaymentsDateSort;
   function chargeMatchesFilter(c, filter){
@@ -1234,36 +1240,18 @@ import * as recurringBillService from './services/recurringBillService.js';
     return out.sort(function(x,y){ return (x.bill.dueDate||'').localeCompare(y.bill.dueDate||''); });
   }
 
-  /** El selector "Rent" / "Bills" que separa las dos secciones de Payments en pestañas
-   *  independientes, en vez de mostrarlas una debajo de la otra en el mismo scroll. */
-  function paymentsTabChipsHtml(){
-    return '<div class="filter-chips" style="margin-bottom:10px;">'+
-      '<button class="chip'+(paymentsTab==='rent'?' active':'')+'" onclick="setPaymentsTab(\'rent\')">Rent</button>'+
-      '<button class="chip'+(paymentsTab==='bills'?' active':'')+'" onclick="setPaymentsTab(\'bills\')">Bills</button>'+
-      '</div>';
-  }
+  var PAYMENTS_ROW_LIMIT = 5; // cuántas filas se muestran por bloque antes de mandar a "View history"
 
   function renderPaymentsRentTab(){
-    var expected = rentCharges.reduce(function(s,c){ return s+c.amountDue; },0);
-    var received = rentCharges.reduce(function(s,c){ return s+c.amountPaid; },0);
-    var outstanding = rentCharges.reduce(function(s,c){ return s+c.remaining; },0);
-
-    var statHtml = '<div class="stat-grid cols-3">'+
-      '<div class="stat"><div class="label">Expected</div><div class="value">'+money(expected)+'</div></div>'+
-      '<div class="stat"><div class="label">Received</div><div class="value">'+money(received)+'</div></div>'+
-      '<div class="stat"><div class="label">Outstanding</div><div class="value'+(outstanding>0?' warn':'')+'">'+money(outstanding)+'</div></div>'+
-      '</div>';
-
-    var chipsHtml = '<div class="filter-chips">' + PAYMENTS_FILTERS.map(function(f){
-      return '<button class="chip'+(paymentsFilter===f[0]?' active':'')+'" onclick="setPaymentsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
-    }).join('') + '</div>';
-
     var propertyOptions = '<option value="all"'+(paymentsPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
       properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
         return '<option value="'+p.id+'"'+(paymentsPropertyFilter===p.id?' selected':'')+'>'+esc(p.name)+'</option>';
       }).join('');
+    // Con una propiedad elegida, "All tenants" deja de listar a todo el mundo — solo a quienes
+    // viven ahí, para no poder seleccionar (ni confundir con) un tenant de otra propiedad.
+    var tenantPool = paymentsPropertyFilter==='all' ? tenants : tenants.filter(function(t){ return t.propertyId===paymentsPropertyFilter; });
     var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>All tenants</option>'+
-      tenants.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
+      tenantPool.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
         return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
       }).join('');
     var tenantFilterHtml = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;align-items:flex-end;">'+
@@ -1278,10 +1266,27 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<button type="button" class="mini-btn" style="flex:1;min-width:160px;" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
       '</div>';
 
+    // Property + tenant scope al filtrar los rent charges — los 3 stats de arriba (Expected/
+    // Received/Outstanding) se calculan DESPUÉS de este filtro, así "All properties" sigue
+    // sumando el portafolio completo pero elegir una propiedad limita los 3 números a ella sola.
     var charges = paymentsTenantFilter==='all' ? rentCharges : rentCharges.filter(function(c){ return c.tenantId===paymentsTenantFilter; });
     if (paymentsPropertyFilter !== 'all'){
       charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); return t && t.propertyId === paymentsPropertyFilter; });
     }
+
+    var expected = charges.reduce(function(s,c){ return s+c.amountDue; },0);
+    var received = charges.reduce(function(s,c){ return s+c.amountPaid; },0);
+    var outstanding = charges.reduce(function(s,c){ return s+c.remaining; },0);
+    var statHtml = '<div class="stat-grid cols-3">'+
+      '<div class="stat"><div class="label">Expected</div><div class="value">'+money(expected)+'</div></div>'+
+      '<div class="stat"><div class="label">Received</div><div class="value">'+money(received)+'</div></div>'+
+      '<div class="stat"><div class="label">Outstanding</div><div class="value'+(outstanding>0?' warn':'')+'">'+money(outstanding)+'</div></div>'+
+      '</div>';
+
+    var chipsHtml = '<div class="filter-chips">' + PAYMENTS_FILTERS.map(function(f){
+      return '<button class="chip'+(paymentsFilter===f[0]?' active':'')+'" onclick="setPaymentsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
+    }).join('') + '</div>';
+
     var filtered = charges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); });
 
     function sortByDate(list){
@@ -1300,11 +1305,39 @@ import * as recurringBillService from './services/recurringBillService.js';
       return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+'</span>'+
         '<span class="v">'+money(c.amountDue)+'</span></div>';
     }
+    function billOwedRow(o){
+      var b = o.bill, a = o.alloc;
+      var overdue = b.dueDate && b.dueDate < TODAY;
+      return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
+        '<div class="who"><div>'+esc(billTypeLabel(b.billType))+' — '+esc(b.provider)+'</div><div class="meta">'+(b.dueDate?('Due '+shortDate(b.dueDate)):'No due date')+'</div></div>'+
+        '<div style="display:flex;align-items:center;gap:10px;">'+
+        (overdue ? badge('overdue','Overdue') : badge('due','Unpaid'))+
+        '<b>'+money(a.amount)+'</b>'+
+        '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+o.tenant.id+'\')">Mark as paid</button>'+
+        '</div></div>';
+    }
+    /** Recorta una lista a los primeros N y, si sobran más, agrega una nota + el link que ya
+     *  abre el historial completo — en vez de un botón "Bills"/"Rent" aparte, esa es la única
+     *  puerta a "ver más" de cualquiera de los tres bloques. */
+    function limitedSection(list, rowFn, emptyText, moreLabel, tenantId){
+      if (!list.length) return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+emptyText+'</p>';
+      var shown = list.slice(0, PAYMENTS_ROW_LIMIT);
+      var html = '<div class="field-list">'+shown.map(rowFn).join('')+'</div>';
+      if (list.length > PAYMENTS_ROW_LIMIT){
+        html += '<button class="text-link" style="margin-top:4px;" onclick="openHistoryModal(\''+tenantId+'\')">'+moreLabel+' ('+(list.length-PAYMENTS_ROW_LIMIT)+' more) — view history</button>';
+      }
+      return html;
+    }
 
-    // Agrupado por tenant — dos bloques fijos por tenant ("Por pagar" / "Pagado") en vez de una
-    // tarjeta separada por cada semana, para que 19+ semanas no inunden la pantalla.
+    // Agrupado por tenant — tres bloques fijos por tenant ("Por pagar" / "Pagado" / "Bills") en
+    // vez de una tarjeta separada por cada semana o una pestaña Bills aparte.
     var relevantTenantIds = {};
     filtered.forEach(function(c){ relevantTenantIds[c.tenantId] = true; });
+    (paymentsPropertyFilter==='all' ? tenants : tenantPool).forEach(function(t){
+      if (paymentsTenantFilter==='all' || paymentsTenantFilter===t.id){
+        if (unpaidBillAllocationsFor(t.id).length) relevantTenantIds[t.id] = true;
+      }
+    });
     var groupTenants = tenants.filter(function(t){ return relevantTenantIds[t.id]; })
       .sort(function(a,b){ return a.fullName.localeCompare(b.fullName); });
 
@@ -1318,16 +1351,20 @@ import * as recurringBillService from './services/recurringBillService.js';
           var tCharges = filtered.filter(function(c){ return c.tenantId===t.id; });
           var pending = sortByDate(tCharges.filter(function(c){ return c.status!=='paid'; }));
           var paid = sortByDate(tCharges.filter(function(c){ return c.status==='paid'; }));
+          var owedBills = unpaidBillAllocationsFor(t.id).map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; });
           var prop = properties.find(function(p){ return p.id===t.propertyId; });
           var pendingTotal = pending.reduce(function(s,c){ return s+c.remaining; }, 0);
           var paidTotal = paid.reduce(function(s,c){ return s+c.amountDue; }, 0);
+          var billsTotal = owedBills.reduce(function(s,o){ return s+o.alloc.amount; }, 0);
           return '<div class="card">'+
             '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Por pagar ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
-            (pending.length ? '<div class="field-list">'+pending.map(pendingRow).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>')+
+            limitedSection(pending, pendingRow, 'Nothing due right now.', 'Por pagar', t.id)+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Pagado ('+paid.length+') · '+money(paidTotal)+'</h3>'+
-            (paid.length ? '<div class="field-list">'+paid.map(paidRow).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet.</p>')+
+            limitedSection(paid, paidRow, 'No payments recorded yet.', 'Pagado', t.id)+
+            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
+            limitedSection(owedBills, billOwedRow, 'Nothing owed on bills right now.', 'Bills', t.id)+
             '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
             '</div>';
         }).join('');
@@ -1335,60 +1372,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     return statHtml + chipsHtml + tenantFilterHtml + rows;
   }
 
-  function renderPaymentsBillsTab(){
-    var relevantTenants = paymentsTenantFilter==='all' ? tenants : tenants.filter(function(t){ return t.id===paymentsTenantFilter; });
-    var allOwed = relevantTenants.reduce(function(acc, t){
-      return acc.concat(unpaidBillAllocationsFor(t.id).map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; }));
-    }, []);
-    var totalOwed = allOwed.reduce(function(s,o){ return s+o.alloc.amount; }, 0);
-    var overdueCount = allOwed.filter(function(o){ return o.bill.dueDate && o.bill.dueDate < TODAY; }).length;
-
-    var statHtml = '<div class="stat-grid cols-3">'+
-      '<div class="stat"><div class="label">Tenants owing</div><div class="value">'+(new Set(allOwed.map(function(o){return o.tenant.id;}))).size+'</div></div>'+
-      '<div class="stat"><div class="label">Total owed</div><div class="value'+(totalOwed>0?' warn':'')+'">'+money(totalOwed)+'</div></div>'+
-      '<div class="stat"><div class="label">Overdue shares</div><div class="value'+(overdueCount>0?' warn':'')+'">'+overdueCount+'</div></div>'+
-      '</div>';
-
-    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>All tenants</option>'+
-      tenants.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
-        return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
-      }).join('');
-    var tenantFilterHtml = '<div style="margin:10px 0;">'+
-      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
-      '<select class="modal-input" style="max-width:280px;" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
-      '</div>';
-
-    var billRows = relevantTenants.reduce(function(acc, t){
-      var owed = unpaidBillAllocationsFor(t.id);
-      if (!owed.length) return acc;
-      var rowsHtml = owed.map(function(o){
-        var b = o.bill, a = o.alloc;
-        var overdue = b.dueDate && b.dueDate < TODAY;
-        return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
-          '<div class="who"><div>'+esc(b.provider)+'</div><div class="meta">'+(b.dueDate?('Due '+shortDate(b.dueDate)):'No due date')+'</div></div>'+
-          '<div style="display:flex;align-items:center;gap:10px;">'+
-          (overdue ? badge('overdue','Overdue') : badge('due','Unpaid'))+
-          '<b>'+money(a.amount)+'</b>'+
-          '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+t.id+'\')">Mark as paid</button>'+
-          '</div></div>';
-      }).join('');
-      acc.push('<div class="card"><div class="who" style="margin-bottom:6px;"><div class="name">'+esc(t.fullName)+'</div></div>'+rowsHtml+'</div>');
-      return acc;
-    }, []);
-
-    var billsSectionHtml = billRows.length
-      ? billRows.join('')
-      : emptyState('payments', 'Nothing owed on bills right now', 'Once a bill is allocated between tenants, what each one still owes shows up here.', '');
-
-    return statHtml + tenantFilterHtml + billsSectionHtml;
-  }
-
   function renderPayments(){
-    var subtitle = paymentsTab==='rent'
-      ? "What tenants owe, what they've paid, and what's outstanding."
-      : "What each tenant still owes toward shared bills (electricity, water, gas, internet).";
-    var body = paymentsTab==='rent' ? renderPaymentsRentTab() : renderPaymentsBillsTab();
-    return pageHeader('Payments', subtitle) + paymentsTabChipsHtml() + body;
+    return pageHeader('Payments', "What tenants owe on rent and shared bills, what they've paid, and what's outstanding.") + renderPaymentsRentTab();
   }
 
   var billsFilter = 'all';
@@ -2487,7 +2472,98 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
       '</div></div>'+
-      importQueueCard() + propertyTabsHtml + statHtml + chipsHtml + rows;
+      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + statHtml + chipsHtml + rows;
+  }
+
+  /** Detecta bills "recurrentes" (electricidad, agua, hot water, gas, internet — no "other") que
+   *  llevan más de ~45 días sin uno nuevo cargado, comparado con el último que sí llegó, para
+   *  esa propiedad + tipo. Solo aplica una vez hay al menos 2 bills de ese tipo en esa propiedad
+   *  (si no, no hay todavía un patrón del que se pueda decir que "falta" algo). */
+  var BILL_RECURRING_TYPES = ['electricity','water','hot_water','gas','internet'];
+  function detectMissingBills(){
+    var byKey = {};
+    var countByKey = {};
+    bills.forEach(function(b){
+      if (BILL_RECURRING_TYPES.indexOf(b.billType) === -1) return;
+      var key = b.propertyId + '|' + b.billType;
+      countByKey[key] = (countByKey[key] || 0) + 1;
+      var latestDate = b.billingPeriodEnd || b.dueDate || b.issueDate || '';
+      var existingDate = byKey[key] ? (byKey[key].billingPeriodEnd || byKey[key].dueDate || byKey[key].issueDate || '') : '';
+      if (!byKey[key] || latestDate > existingDate) byKey[key] = b;
+    });
+    var gaps = [];
+    Object.keys(byKey).forEach(function(key){
+      if (countByKey[key] < 2) return;
+      var last = byKey[key];
+      var lastDate = last.billingPeriodEnd || last.dueDate || last.issueDate;
+      if (!lastDate) return;
+      var daysSince = Math.round((new Date(TODAY) - new Date(lastDate)) / 86400000);
+      if (daysSince > 45){
+        var prop = properties.find(function(p){ return p.id===last.propertyId; });
+        gaps.push({ propertyId:last.propertyId, propertyName: prop ? prop.name : '—', billType:last.billType, lastDate:lastDate, daysSince:daysSince });
+      }
+    });
+    return gaps;
+  }
+
+  /** Cuadrícula de los últimos 6 meses por propiedad × tipo de bill: un cuadro relleno = ese mes
+   *  llegó un bill; un cuadro con borde punteado = no llegó ninguno — así un hueco se ve de un
+   *  vistazo sin tener que revisar bill por bill. Respeta el filtro de propiedad de la pestaña. */
+  function billsTimelineHtml(){
+    var scopedProperties = billsPropertyFilter==='all' ? properties : properties.filter(function(p){ return p.id===billsPropertyFilter; });
+    if (!scopedProperties.length) return '';
+    var months = [];
+    for (var i=5; i>=0; i--) months.push(addMonthsIso(TODAY.slice(0,7)+'-01', -i).slice(0,7));
+    function monthLabel(ym){
+      var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return names[parseInt(ym.slice(5,7),10)-1];
+    }
+    var rows = [];
+    scopedProperties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).forEach(function(p){
+      var propBills = bills.filter(function(b){ return b.propertyId===p.id; });
+      var typesPresent = BILL_RECURRING_TYPES.filter(function(t){ return propBills.some(function(b){ return b.billType===t; }); });
+      if (!typesPresent.length) return;
+      var typeRows = typesPresent.map(function(bt){
+        var cells = months.map(function(ym){
+          var has = propBills.some(function(b){ return b.billType===bt && (b.billingPeriodStart||b.issueDate||'').slice(0,7)===ym; });
+          return '<div title="'+ym+(has?'':' — missing')+'" style="width:18px;height:18px;border-radius:5px;flex-shrink:0;'+
+            (has ? 'background:var(--accent);' : 'background:transparent;border:1.5px dashed var(--status-overdue);') + '"></div>';
+        }).join('');
+        return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">'+
+          '<span style="font-size:11.5px;color:var(--text-dim);width:72px;flex-shrink:0;">'+esc(billTypeLabel(bt))+'</span>'+
+          '<div style="display:flex;gap:5px;">'+cells+'</div></div>';
+      }).join('');
+      rows.push('<div style="margin-bottom:12px;"><div style="font-size:12.5px;font-weight:650;margin-bottom:4px;">'+esc(p.name)+'</div>'+typeRows+'</div>');
+    });
+    if (!rows.length) return '';
+    var monthHeaderCells = months.map(function(ym){ return '<div style="width:18px;font-size:9.5px;color:var(--text-faint);text-align:center;flex-shrink:0;">'+monthLabel(ym)+'</div>'; }).join('');
+    return '<div class="card">'+
+      '<h2 style="text-transform:none;letter-spacing:0;font-size:13.5px;margin:0 0 6px;">Invoice timeline</h2>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">A filled square means a bill was loaded that month; a dashed square means one seems to be missing.</p>'+
+      '<div style="display:flex;gap:8px;margin-bottom:4px;overflow-x:auto;"><span style="width:72px;flex-shrink:0;"></span><div style="display:flex;gap:5px;">'+monthHeaderCells+'</div></div>'+
+      rows.join('')+
+      '</div>';
+  }
+
+  /** Manda una notificación (al usuario actual) por cada hueco detectado que no se haya
+   *  avisado ya en los últimos 30 días — para no repetir el mismo aviso cada vez que se abre
+   *  la app. Corre una sola vez por carga, después de generar los recurring bills del mes. */
+  async function checkMissingBillsNotifications(){
+    if (isTenantRole() || !currentProfile) return;
+    var gaps = detectMissingBills();
+    if (!gaps.length) return;
+    var cutoff = addMonthsIso(TODAY, -1);
+    for (var i=0; i<gaps.length; i++){
+      var g = gaps[i];
+      var title = 'Missing bill: ' + billTypeLabel(g.billType) + ' at ' + g.propertyName;
+      var alreadyNotified = notificationsList.some(function(n){
+        return n.relatedTable==='bills' && n.relatedId===g.propertyId && n.title===title && n.createdAt && n.createdAt.slice(0,10) >= cutoff;
+      });
+      if (alreadyNotified) continue;
+      var body = 'No ' + billTypeLabel(g.billType).toLowerCase() + ' bill has been loaded for ' + g.propertyName + ' since ' + shortDate(g.lastDate) + ' (' + g.daysSince + ' days ago). Add it once it arrives.';
+      await notificationService.notify(currentProfile.authUserId, title, body, 'bills', g.propertyId);
+      notificationsList.unshift({ id:'local-'+Date.now()+'-'+i, authUserId:currentProfile.authUserId, title:title, body:body, relatedTable:'bills', relatedId:g.propertyId, isRead:false, createdAt:new Date().toISOString() });
+    }
   }
 
   /** "Recurring bills": templates para gas/internet/etc. que generan un bill nuevo cada mes solos
@@ -3328,6 +3404,8 @@ import * as recurringBillService from './services/recurringBillService.js';
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
         '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\')">Set / reset password</button>'+
+        '<button class="mini-btn" onclick="openEditUserModal(\''+p.id+'\')">Edit</button>'+
+        '<button class="mini-btn" style="color:var(--status-overdue);" onclick="confirmDeleteUser(\''+p.id+'\')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t delete your own account"':'')+'>Delete</button>'+
         '</div>'+assignHtml+'</div>';
     }).join('');
     return pageHeader('Users', 'Every account and its role. Only a Super Admin sees this page.') +
@@ -3406,6 +3484,92 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.toggleUserActive = toggleUserActive;
+
+  var editUserProfileId = null;
+  function openEditUserModal(profileId){
+    var p = allProfiles.find(function(x){ return x.id===profileId; });
+    if (!p) return;
+    editUserProfileId = profileId;
+    var phoneLogin = isPhoneLoginProfile(p);
+    document.getElementById('edit-user-first-name').value = p.firstName || '';
+    document.getElementById('edit-user-last-name').value = p.lastName || '';
+    document.getElementById('edit-user-email').value = phoneLogin ? '' : (p.email || '');
+    document.getElementById('edit-user-email-row').hidden = phoneLogin;
+    document.getElementById('edit-user-phone').value = p.phone || '';
+    document.getElementById('edit-user-phone-label').textContent = phoneLogin ? 'Phone number (this is how they log in)' : 'Phone (optional)';
+    document.getElementById('edit-user-phone-hint').hidden = !phoneLogin;
+    document.getElementById('edit-user-modal-error').hidden = true;
+    document.getElementById('edit-user-modal').hidden = false;
+  }
+  window.openEditUserModal = openEditUserModal;
+
+  function closeEditUserModal(){
+    document.getElementById('edit-user-modal').hidden = true;
+    editUserProfileId = null;
+  }
+  window.closeEditUserModal = closeEditUserModal;
+
+  async function saveEditUserForm(){
+    if (!editUserProfileId) return;
+    var p = allProfiles.find(function(x){ return x.id===editUserProfileId; });
+    if (!p) return;
+    var phoneLogin = isPhoneLoginProfile(p);
+    var firstName = document.getElementById('edit-user-first-name').value.trim();
+    var lastName = document.getElementById('edit-user-last-name').value.trim();
+    var email = document.getElementById('edit-user-email').value.trim();
+    var phone = document.getElementById('edit-user-phone').value.trim();
+    var errorEl = document.getElementById('edit-user-modal-error');
+    if (!firstName){
+      errorEl.textContent = 'Add a first name.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (phoneLogin){
+      if (phoneDigitsOnly(phone).length < 8){
+        errorEl.textContent = 'Add a valid phone number, with country code.';
+        errorEl.hidden = false;
+        return;
+      }
+    } else if (!email || !email.includes('@')){
+      errorEl.textContent = 'Add a valid email.';
+      errorEl.hidden = false;
+      return;
+    }
+    var saveBtn = document.querySelector('#edit-user-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    errorEl.hidden = true;
+    try {
+      var updated = await profileService.updateUser(editUserProfileId, { firstName:firstName, lastName:lastName, phone:phone, email: phoneLogin ? undefined : email });
+      if (updated) Object.assign(p, updated);
+      closeEditUserModal();
+      showToast('User updated.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveEditUserForm = saveEditUserForm;
+
+  async function confirmDeleteUser(profileId){
+    var p = allProfiles.find(function(x){ return x.id===profileId; });
+    if (!p) return;
+    var name = (p.firstName + ' ' + p.lastName).trim() || p.email || 'this user';
+    if (!window.confirm('Delete ' + name + '\'s login? This can\'t be undone. ' + (p.role==='tenant' ? 'Their tenant record and payment history stay — just the login is removed.' : ''))) return;
+    try {
+      var result = await profileService.deleteUser(profileId);
+      allProfiles = allProfiles.filter(function(x){ return x.id !== profileId; });
+      if (result && result.warning) showToast(result.warning, 'error');
+      else showToast('User deleted.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not delete this user. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.confirmDeleteUser = confirmDeleteUser;
 
   /** El Super Admin asigna, cambia o restablece la clave de CUALQUIER usuario (Administrator o
    *  Tenant) directamente — ya no se manda un link de reseteo por correo para nadie. En vez de
@@ -4387,6 +4551,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
     }
     try { await generateDueRecurringBills(); } catch(_e){ console.error('generateDueRecurringBills failed', _e); }
+    try { await checkMissingBillsNotifications(); } catch(_e){ console.error('checkMissingBillsNotifications failed', _e); }
     recomputeRentCharges();
     refreshStaticSelects();
   }
