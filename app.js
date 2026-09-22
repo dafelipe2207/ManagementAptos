@@ -17,7 +17,7 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=2';
 import * as migrationService from './services/migrationService.js';
-import * as profileService from './services/profileService.js';
+import * as profileService from './services/profileService.js?v=2';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as auditService from './services/auditService.js';
