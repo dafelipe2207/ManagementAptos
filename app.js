@@ -11,7 +11,7 @@ import * as tenantService from './services/tenantService.js';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
-import * as billService from './services/billService.js';
+import * as billService from './services/billService.js?v=2';
 import * as billAllocationService from './services/billAllocationService.js';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
@@ -3970,25 +3970,70 @@ import * as recurringBillService from './services/recurringBillService.js';
     return pageHeader('My Payments', 'Rent payments on file. You can view these — only staff can change them.') + body;
   }
 
+  var MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function monthYearLabel(ym){
+    var parts = (ym||'').split('-');
+    var name = MONTH_NAMES_FULL[parseInt(parts[1],10)-1] || '';
+    return name + ' ' + parts[0];
+  }
+
+  async function viewTenantBillReceipt(billId, btn){
+    var originalLabel = btn ? btn.textContent : '';
+    if (btn){ btn.disabled = true; btn.textContent = 'Opening…'; }
+    try {
+      var url = await billService.getTenantReceiptUrl(billId);
+      if (url) window.open(url, '_blank');
+      else showToast('No document is attached to this bill.', 'info');
+    } catch(err){
+      showToast('Could not open the invoice. ' + friendlyErrorMessage(err), 'error');
+    } finally {
+      if (btn){ btn.disabled = false; btn.textContent = originalLabel; }
+    }
+  }
+  window.viewTenantBillReceipt = viewTenantBillReceipt;
+
+  /** El tenant ve el desglose completo de CADA bill (proveedor, monto total, su parte, periodo,
+   *  vencimiento, si ya pagó y la factura original) agrupado por mes — del más reciente al más
+   *  antiguo — para que sea fácil ubicar "la de tal mes" en vez de una lista plana. Solo ve su
+   *  propia fila de asignación (bill_allocations RLS ya la limita a eso) — no lo que pagaron o
+   *  deben los demás inquilinos de la casa. */
   function renderTenantBills(){
     var t = myTenantRecord();
     var myAllocations = [];
     if (t){
       bills.forEach(function(b){ (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); }); });
     }
-    myAllocations.sort(function(a,b){ return (b.bill.billingPeriodEnd||'').localeCompare(a.bill.billingPeriodEnd||''); });
-    var body = myAllocations.length === 0
-      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No shared bills yet.</p></div>'
-      : myAllocations.map(function(x){
+    if (!myAllocations.length){
+      return pageHeader('My Bills', 'Your share of each shared bill — electricity, water, gas, internet and more.') +
+        '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No shared bills yet.</p></div>';
+    }
+    var byMonth = {};
+    myAllocations.forEach(function(x){
+      var ym = (x.bill.billingPeriodStart || x.bill.issueDate || x.bill.dueDate || '').slice(0,7) || 'unknown';
+      (byMonth[ym] = byMonth[ym] || []).push(x);
+    });
+    var months = Object.keys(byMonth).sort().reverse();
+    var body = months.map(function(ym){
+      var rowsHtml = byMonth[ym]
+        .sort(function(a,b){ return (b.bill.billingPeriodStart||'').localeCompare(a.bill.billingPeriodStart||''); })
+        .map(function(x){
+          var b = x.bill, a = x.alloc;
           return '<div class="card">'+
-            '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(x.bill.billType)+'</h2>'+
-            badge(x.alloc.paid?'paid':'due', x.alloc.paid?'Paid':'Pending')+'</div>'+
-            '<div class="field-row"><span class="k">Total bill</span><span class="v">'+money(x.bill.amount)+'</span></div>'+
-            '<div class="field-row"><span class="k">Your share</span><span class="v">'+money(x.alloc.amount)+'</span></div>'+
-            '<div class="field-row"><span class="k">Period</span><span class="v">'+shortDate(x.bill.billingPeriodStart)+' – '+shortDate(x.bill.billingPeriodEnd)+'</span></div>'+
+            '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(b.billType))+(b.provider?' — '+esc(b.provider):'')+'</h2>'+
+            badge(a.paid?'paid':'due', a.paid?'Paid':'Pending')+'</div>'+
+            '<div class="field-list">'+
+            '<div class="field-row"><span class="k">Total bill</span><span class="v">'+money(b.amount)+'</span></div>'+
+            '<div class="field-row"><span class="k">Your share</span><span class="v">'+money(a.amount)+'</span></div>'+
+            '<div class="field-row"><span class="k">Period</span><span class="v">'+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</span></div>'+
+            (b.dueDate ? '<div class="field-row"><span class="k">Due date</span><span class="v">'+shortDate(b.dueDate)+'</span></div>' : '')+
+            (a.paid && a.paidDate ? '<div class="field-row"><span class="k">Paid on</span><span class="v">'+shortDate(a.paidDate)+'</span></div>' : '')+
+            '</div>'+
+            (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>' : '')+
             '</div>';
         }).join('');
-    return pageHeader('My Bills', 'Just your share of each shared bill — not other tenants\' amounts.') + body;
+      return '<h3 style="font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:16px 0 8px;">'+(ym==='unknown'?'No date on file':esc(monthYearLabel(ym)))+'</h3>'+rowsHtml;
+    }).join('');
+    return pageHeader('My Bills', 'Your share of each shared bill — electricity, water, gas, internet and more.') + body;
   }
 
   function renderTenantDocuments(){
