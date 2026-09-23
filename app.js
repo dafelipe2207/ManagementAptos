@@ -713,7 +713,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     gallery:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 16.5l-5.2-5.2-4 4-2.8-2.8L3 17"/>',
     plus:'<path d="M12 5v14M5 12h14"/>',
     inbox:'<path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13l3 7v8a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-8z"/>',
-    edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'
+    edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'
   };
   function svg(name, extra){
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'+(extra?' '+extra:'')+'>'+ICONS[name]+'</svg>';
@@ -4861,6 +4862,13 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.signOutAndReload = signOutAndReload;
 
+  /** El botón de la topbar (visible en cualquier página, para cualquier rol) — confirma antes
+   *  de cerrar sesión para que un toque accidental no saque a alguien en medio de algo. */
+  function confirmSignOut(){
+    if (window.confirm('Sign out?')) signOutAndReload();
+  }
+  window.confirmSignOut = confirmSignOut;
+
   async function enterApp(){
     document.getElementById('auth-screen').hidden = true;
     document.getElementById('app-loading-screen').hidden = false;
@@ -4922,6 +4930,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   initAuthGate();
+
+  var signoutBtn = document.getElementById('signout-btn');
+  if (signoutBtn) signoutBtn.innerHTML = svg('logout');
 
   /* ============ Theme toggle (independiente del tema del host) ============ */
   var root = document.documentElement;
