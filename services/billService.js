@@ -83,3 +83,24 @@ export async function remove(id) {
   const { error } = await supabase.from('bills').delete().eq('id', id);
   if (error) throw error;
 }
+
+/** Signed URL for a bill's original document (photo/PDF), via the tenant-bill-receipt Edge
+ *  Function — needed for a TENANT because the file lives under the staff uploader's storage
+ *  folder, which plain storage RLS won't let a tenant read directly (see that function's own
+ *  comment). Staff can call this too; it just checks their role instead of an allocation. */
+export async function getTenantReceiptUrl(billId) {
+  const res = await supabase.functions.invoke('tenant-bill-receipt', { body: { billId } });
+  if (res.error) throw await describeFunctionError(res.error);
+  if (res.data && res.data.error) throw new Error(res.data.error);
+  return res.data && res.data.url;
+}
+
+async function describeFunctionError(err) {
+  try {
+    if (err && err.context && typeof err.context.json === 'function') {
+      var body = await err.context.clone().json();
+      if (body && body.error) return new Error(body.error);
+    }
+  } catch (_e) { /* fall through */ }
+  return err instanceof Error ? err : new Error((err && err.message) || 'Could not reach the server.');
+}
