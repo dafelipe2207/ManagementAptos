@@ -1,6 +1,6 @@
 // services/billService.js
 // Maps the camelCase `bill` shape (propertyId, billType, provider,
-// invoiceNumber, issueDate, dueDate, billingPeriodStart, billingPeriodEnd,
+// accountNumber, invoiceNumber, issueDate, dueDate, billingPeriodStart, billingPeriodEnd,
 // amount, status, allocationMethod, receiptPath, notes, adminPaid,
 // adminPaidDate, adminReceiptPath) to/from `bills`.
 // `receiptPath` is the original bill/invoice document. `adminPaid`/
@@ -20,6 +20,7 @@ function fromRow(row) {
     propertyId: row.property_id,
     billType: row.type,
     provider: row.provider || '',
+    accountNumber: row.account_number || '',
     invoiceNumber: row.invoice_number || '',
     issueDate: row.issue_date,
     dueDate: row.due_date,
@@ -42,6 +43,7 @@ function toRow(b) {
     property_id: b.propertyId,
     type: b.billType,
     provider: b.provider,
+    account_number: b.accountNumber || null,
     invoice_number: b.invoiceNumber || null,
     issue_date: b.issueDate,
     due_date: b.dueDate,
