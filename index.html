@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manager</title>
-<link rel="stylesheet" href="styles.css?v=9">
+<link rel="stylesheet" href="styles.css?v=10">
 </head>
 <body>
 <div id="app">
@@ -137,6 +137,11 @@
           <div id="import-preview-file" class="import-file-chip" hidden></div>
         </div>
         <div id="import-preview-name" style="font-size:12.5px;color:var(--text-dim);word-break:break-all;"></div>
+        <div class="form-row" style="margin-top:10px;">
+          <label for="import-account">Account number (optional)</label>
+          <input id="import-account" type="text" list="known-accounts-list" oninput="onImportAccountInput()" placeholder="Type it if you know it — recognized accounts skip the AI step" />
+          <p id="import-account-hint" class="form-hint" hidden></p>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeImportModal()">Cancel</button>
@@ -146,6 +151,7 @@
       <input type="file" id="import-input-gallery" accept="image/*" hidden onchange="handleImportFile(event)" />
       <input type="file" id="import-input-pdf" accept="application/pdf" hidden onchange="handleImportFile(event)" />
       <input type="file" id="receipt-input" accept="image/*,application/pdf" hidden onchange="handleReceiptFile(event)" />
+      <datalist id="known-accounts-list"></datalist>
     </div>
   </div>
 
@@ -171,6 +177,11 @@
       <div class="form-row">
         <label for="review-provider">Provider</label>
         <input id="review-provider" type="text" />
+      </div>
+      <div class="form-row">
+        <label for="review-account">Account number</label>
+        <input id="review-account" type="text" list="known-accounts-list" oninput="onReviewAccountInput()" placeholder="e.g. the customer/account no. on the bill" />
+        <p id="review-account-hint" class="form-hint" hidden></p>
       </div>
       <div class="form-row">
         <label for="review-invoice">Invoice number</label>
@@ -597,6 +608,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=34"></script>
+<script type="module" src="app.js?v=35"></script>
 </body>
 </html>
