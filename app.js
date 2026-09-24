@@ -1739,6 +1739,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-modal-sub').textContent = 'Check and correct what the automatic analysis detected before saving this bill.';
     document.getElementById('review-discard-btn').hidden = false;
     document.getElementById('review-recurring-row').hidden = false;
+    document.getElementById('review-recurring').disabled = false;
+    document.getElementById('review-recurring-existing-hint').textContent = 'This provider already repeats automatically every month for this property — that won\'t be duplicated.';
     document.getElementById('review-modal').hidden = true;
   }
   /** Reabre el mismo modal de "Review extracted data" pero precargado con un bill ya guardado,
@@ -1768,10 +1770,26 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-period-start').value = b.billingPeriodStart || '';
     document.getElementById('review-period-end').value = b.billingPeriodEnd || '';
     document.getElementById('review-amount').value = b.amount;
-    document.getElementById('review-recurring-row').hidden = true;
-    document.getElementById('review-recurring').checked = false;
-    document.getElementById('review-recurring-day-row').hidden = true;
-    document.getElementById('review-recurring-existing-hint').hidden = true;
+    document.getElementById('review-recurring-row').hidden = false;
+    var recurringCheckbox = document.getElementById('review-recurring');
+    var recurringHint = document.getElementById('review-recurring-existing-hint');
+    var dayRow = document.getElementById('review-recurring-day-row');
+    var dayField = document.getElementById('review-recurring-day');
+    var existingTpl = findActiveRecurringTemplate(b.propertyId, b.provider, b.billType);
+    recurringCheckbox.disabled = false;
+    dayField.value = '';
+    if (existingTpl){
+      recurringCheckbox.checked = true;
+      recurringCheckbox.disabled = true;
+      dayRow.hidden = true;
+      recurringHint.hidden = false;
+      recurringHint.textContent = 'This provider already repeats automatically every month for this property (next: '+shortDate(existingTpl.nextDueDate)+'). Manage it from "Recurring bills" instead.';
+    } else {
+      recurringCheckbox.checked = false;
+      dayRow.hidden = true;
+      recurringHint.hidden = true;
+      recurringHint.textContent = 'This provider already repeats automatically every month for this property — that won\'t be duplicated.';
+    }
     document.getElementById('review-modal-error').hidden = true;
     refreshKnownAccountsDatalist();
     document.getElementById('review-modal').hidden = false;
@@ -1816,6 +1834,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       amount: newAmount
     });
 
+    var recurringCheckbox = document.getElementById('review-recurring');
+    var makeRecurring = recurringCheckbox.checked && !recurringCheckbox.disabled;
+    var billingDay = parseInt(document.getElementById('review-recurring-day').value, 10);
+
     var saveBtn = document.querySelector('#review-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
@@ -1823,12 +1845,39 @@ import * as recurringBillService from './services/recurringBillService.js';
     try {
       var saved = await billService.update(editingBillId, updated);
       bills = bills.map(function(x){ return x.id===saved.id ? saved : x; });
+
+      var recurringMsg = '';
+      if (makeRecurring){
+        if (findActiveRecurringTemplate(saved.propertyId, saved.provider, saved.billType)){
+          recurringMsg = ' This provider already repeats automatically for this property, so a duplicate monthly repeat wasn\'t created.';
+        } else if (isFinite(billingDay) && billingDay >= 1 && billingDay <= 28){
+          try {
+            var tpl = await recurringBillService.create({
+              propertyId: saved.propertyId,
+              billType: saved.billType,
+              provider: saved.provider,
+              amount: saved.amount,
+              billingDay: billingDay,
+              nextDueDate: addMonthsIso(saved.dueDate, 1),
+              isActive: true,
+              notes: 'Auto-generated from an edited bill.'
+            });
+            recurringBills.push(tpl);
+            recurringMsg = ' It will now repeat automatically every month.';
+          } catch(tplErr){
+            recurringMsg = ' The bill was saved, but the recurring template failed to save: ' + friendlyErrorMessage(tplErr);
+          }
+        } else {
+          recurringMsg = ' Add a billing day (1–28) to make it repeat automatically.';
+        }
+      }
+
       closeReviewModal();
       render();
       showToast(
-        (amountChanged || periodChanged)
-          ? 'Bill updated. The amount or billing period changed — use "Re-allocate" below if the tenant shares need to be recalculated.'
-          : 'Bill updated.',
+        'Bill updated.' +
+        ((amountChanged || periodChanged) ? ' The amount or billing period changed — use "Re-allocate" below if the tenant shares need to be recalculated.' : '') +
+        recurringMsg,
         'success'
       );
     } catch(err){
