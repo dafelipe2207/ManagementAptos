@@ -2168,17 +2168,40 @@ import * as recurringBillService from './services/recurringBillService.js';
   var ALLOCATION_METHOD_NOTES = {
     equal: 'The amount is split equally between every tenant at the property.',
     days: "The amount is split based on how many days each tenant lived there during the bill's period.",
-    custom: "Set each tenant's amount by hand. The total must match the bill's amount exactly."
+    custom: "Set each amount by hand. The total must match the bill's amount exactly."
   };
+  /** Deja marcar que el administrador cubre (parte de) este bill él mismo — por ejemplo, si le
+   *  corresponde pagar una parte y solo hace falta repartir el resto entre los inquilinos. Es
+   *  manual e independiente del reparto automático por tenant.excludedBillTypes (ver
+   *  computeAllocationRows); agrega/quita una fila editable a nombre del administrador y pasa
+   *  el método a 'custom' para que el monto no se recalcule solo por encima. */
+  function toggleAllocationAdmin(){
+    if (!allocationDraft) return;
+    var idx = allocationDraft.rows.findIndex(function(r){ return r.isAdmin; });
+    if (idx > -1){
+      allocationDraft.rows.splice(idx, 1);
+    } else {
+      allocationDraft.method = 'custom';
+      allocationDraft.rows.push({ tenantId:null, isAdmin:true, name:'Administrator (you)', days:null, amount:0 });
+    }
+    renderAllocateModal();
+  }
+  window.toggleAllocationAdmin = toggleAllocationAdmin;
   function renderAllocateModal(){
     if (!allocationDraft) return;
     document.querySelectorAll('#allocate-method-chips .chip').forEach(function(btn, i){
       var methods = ['equal','days','custom'];
       btn.classList.toggle('active', methods[i] === allocationDraft.method);
     });
-    document.getElementById('allocate-method-note').textContent = ALLOCATION_METHOD_NOTES[allocationDraft.method] || '';
+    var hasAdminRow = allocationDraft.rows.some(function(r){ return r.isAdmin; });
+    var note = ALLOCATION_METHOD_NOTES[allocationDraft.method] || '';
+    if (hasAdminRow) note += ' The Administrator row is the part you cover yourself — the tenants only split what\'s left.';
+    document.getElementById('allocate-method-note').textContent = note;
+    document.getElementById('allocate-admin-toggle').innerHTML = hasAdminRow
+      ? '<button class="mini-btn" type="button" onclick="toggleAllocationAdmin()">− Remove yourself as a payer</button>'
+      : '<button class="mini-btn" type="button" onclick="toggleAllocationAdmin()">+ Add yourself (the admin) as a payer</button>';
     document.getElementById('allocate-rows').innerHTML = allocationDraft.rows.map(function(row, i){
-      var metaText = row.isAdmin ? 'Covers tenants excluded from this service' : (row.days+' / '+allocationDraft.periodDays+' days occupied');
+      var metaText = row.isAdmin ? "Paid by you, not the tenants" : (row.days+' / '+allocationDraft.periodDays+' days occupied');
       return '<div class="alloc-row"><div class="who"><div>'+esc(row.name)+'</div>'+
         '<div class="meta">'+metaText+'</div></div>'+
         '<input class="alloc-amount-input" type="number" min="0" step="0.01" value="'+row.amount.toFixed(2)+'" '+
@@ -2601,9 +2624,51 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (b.adminPaid) return badge('paid', 'Paid'+(b.adminPaidDate?(' '+shortDate(b.adminPaidDate)):''));
     return billReadyForAdminPayment(b) ? badge('due','Ready to pay') : badge('neutral','Waiting on tenants');
   }
+  /** Orden actual de la tabla de bills — el usuario puede tocar cualquier encabezado para
+   *  organizar por proveedor, propiedad, fechas o pagos; tocar la misma columna otra vez
+   *  invierte la dirección. Persiste mientras se navega entre pestañas/filtros de Bills. */
+  var billsSortColumn = 'dueDate';
+  var billsSortDir = 'desc'; // 'asc' | 'desc'
+  var BILLS_SORT_DEFAULT_DIR = { provider:'asc', property:'asc', issueDate:'desc', dueDate:'desc', tenantPayments:'desc', providerPayment:'desc', status:'asc' };
+  function setBillsSort(col){
+    if (billsSortColumn === col) billsSortDir = (billsSortDir === 'asc') ? 'desc' : 'asc';
+    else { billsSortColumn = col; billsSortDir = BILLS_SORT_DEFAULT_DIR[col] || 'asc'; }
+    render();
+  }
+  window.setBillsSort = setBillsSort;
+  function billsSortValue(b, col){
+    switch(col){
+      case 'provider': return (b.provider || '').toLowerCase();
+      case 'property': var p = propertyOf(b.propertyId); return (p ? p.name : '').toLowerCase();
+      case 'issueDate': return b.issueDate || '';
+      case 'dueDate': return b.dueDate || '';
+      case 'tenantPayments': return billPaidAmount(b);
+      case 'providerPayment': return b.adminPaid ? 1 : 0;
+      case 'status': return billEffectiveStatus(b);
+      default: return '';
+    }
+  }
+  /** Aplica el orden actual (billsSortColumn/billsSortDir) a una lista de bills ya filtrada. */
+  function sortBillsList(list){
+    var col = billsSortColumn, dir = billsSortDir === 'asc' ? 1 : -1;
+    return list.slice().sort(function(a, b){
+      var av = billsSortValue(a, col), bv = billsSortValue(b, col);
+      var cmp = (typeof av === 'number' && typeof bv === 'number') ? (av - bv) : String(av).localeCompare(String(bv));
+      if (cmp === 0) cmp = (b.dueDate || '').localeCompare(a.dueDate || ''); // desempate estable
+      return cmp * dir;
+    });
+  }
+  function billsSortArrow(col){
+    if (billsSortColumn !== col) return '';
+    return ' <span style="font-size:9px;">'+(billsSortDir==='asc'?'▲':'▼')+'</span>';
+  }
   function billsTableHtml(list, showPropertyCol){
-    var head = '<tr><th>Provider</th>'+(showPropertyCol?'<th>Property</th>':'')+
-      '<th>Issue date</th><th>Due date</th><th>Tenant payments</th><th>Payment to provider</th><th>Status</th></tr>';
+    var cols = [['provider','Provider']];
+    if (showPropertyCol) cols.push(['property','Property']);
+    cols.push(['issueDate','Issue date'], ['dueDate','Due date'], ['tenantPayments','Tenant payments'], ['providerPayment','Payment to provider'], ['status','Status']);
+    var head = '<tr>'+cols.map(function(c){
+      return '<th class="sortable-th" onclick="setBillsSort(\''+c[0]+'\')">'+c[1]+billsSortArrow(c[0])+'</th>';
+    }).join('')+'</tr>';
     var body = list.map(function(b){
       var p = propertyOf(b.propertyId);
       return '<tr class="report-row-link" onclick="location.hash=\'#/bills/'+b.id+'\'">'+
@@ -2667,9 +2732,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       return '<button class="chip'+(billsFilter===f[0]?' active':'')+'" onclick="setBillsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
     }).join('') + '</div>';
 
-    var filtered = propertyScoped
-      .filter(function(b){ return billMatchesFilter(b, billsFilter); })
-      .sort(function(a,b){ return (b.dueDate||'').localeCompare(a.dueDate||''); });
+    var filtered = sortBillsList(propertyScoped.filter(function(b){ return billMatchesFilter(b, billsFilter); }));
     var rows = filtered.length===0
       ? (propertyScoped.length===0
           ? emptyState('receipt', 'No bills yet',
@@ -2783,42 +2846,80 @@ import * as recurringBillService from './services/recurringBillService.js';
     return gaps;
   }
 
-  /** Cuadrícula de los últimos 6 meses por propiedad × tipo de bill: un cuadro relleno = ese mes
-   *  llegó un bill; un cuadro con borde punteado = no llegó ninguno — así un hueco se ve de un
-   *  vistazo sin tener que revisar bill por bill. Respeta el filtro de propiedad de la pestaña. */
+  /** A qué color de estado le corresponde a un bill, reusando el mismo criterio que
+   *  billStatusBadge (ver más abajo) — para que la barra del timeline y la insignia de la
+   *  tabla siempre coincidan en el mismo color para el mismo bill. */
+  var BILL_TIMELINE_STATUS_COLOR = { paid:'paid', pending:'due', overdue:'overdue', allocated:'upcoming', partially_allocated:'due', partially_paid:'due' };
+  var BILL_TIMELINE_STATUS_LABEL = { paid:'Paid', pending:'Pending', overdue:'Overdue', allocated:'Allocated', partially_allocated:'Partially allocated', partially_paid:'Partially paid' };
+  function billTimelineColorVar(b){
+    return 'var(--status-' + (BILL_TIMELINE_STATUS_COLOR[billEffectiveStatus(b)] || 'upcoming') + ')';
+  }
+
+  /** Línea de tiempo real (no una cuadrícula por mes) de los últimos 6 meses por propiedad ×
+   *  tipo de bill: cada bill se pinta como una barra en las fechas exactas de su periodo de
+   *  facturación (billingPeriodStart–billingPeriodEnd), coloreada según su estado (pagado,
+   *  pendiente, vencido). El fondo rayado que queda visible entre barras es un hueco — un
+   *  tramo de fechas sin ningún bill cargado. Respeta el filtro de propiedad de la pestaña. */
   function billsTimelineHtml(){
     var scopedProperties = billsPropertyFilter==='all' ? properties : properties.filter(function(p){ return p.id===billsPropertyFilter; });
     if (!scopedProperties.length) return '';
     var months = [];
     for (var i=5; i>=0; i--) months.push(addMonthsIso(TODAY.slice(0,7)+'-01', -i).slice(0,7));
+    var rangeStart = months[0] + '-01';
+    var rangeEnd = stepDateIso(addMonthsIso(months[5] + '-01', 1), -1); // último día del mes más reciente
+    var totalDays = daysBetween(rangeStart, rangeEnd) + 1;
+    function pct(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); }
     function monthLabel(ym){
       var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       return names[parseInt(ym.slice(5,7),10)-1];
     }
+
     var rows = [];
     scopedProperties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).forEach(function(p){
       var propBills = bills.filter(function(b){ return b.propertyId===p.id; });
       var typesPresent = BILL_RECURRING_TYPES.filter(function(t){ return propBills.some(function(b){ return b.billType===t; }); });
       if (!typesPresent.length) return;
       var typeRows = typesPresent.map(function(bt){
-        var cells = months.map(function(ym){
-          var has = propBills.some(function(b){ return b.billType===bt && (b.billingPeriodStart||b.issueDate||'').slice(0,7)===ym; });
-          return '<div title="'+ym+(has?'':' — missing')+'" style="width:18px;height:18px;border-radius:5px;flex-shrink:0;'+
-            (has ? 'background:var(--accent);' : 'background:transparent;border:1.5px dashed var(--status-overdue);') + '"></div>';
+        var segments = propBills.filter(function(b){
+          return b.billType === bt && b.billingPeriodStart && b.billingPeriodEnd &&
+            b.billingPeriodEnd >= rangeStart && b.billingPeriodStart <= rangeEnd;
+        }).map(function(b){
+          var segStart = b.billingPeriodStart < rangeStart ? rangeStart : b.billingPeriodStart;
+          var segEnd = b.billingPeriodEnd > rangeEnd ? rangeEnd : b.billingPeriodEnd;
+          var left = pct(segStart);
+          var width = Math.max(1.2, pct(stepDateIso(segEnd, 1)) - left);
+          var tip = esc(b.provider) + ': ' + shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) +
+            ' • ' + money(b.amount) + ' • ' + (BILL_TIMELINE_STATUS_LABEL[billEffectiveStatus(b)] || billEffectiveStatus(b));
+          return '<div title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
+            'style="position:absolute;top:1px;bottom:1px;left:'+left+'%;width:'+width+'%;border-radius:3px;cursor:pointer;background:'+billTimelineColorVar(b)+';"></div>';
         }).join('');
-        return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">'+
+        return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
           '<span style="font-size:11.5px;color:var(--text-dim);width:72px;flex-shrink:0;">'+esc(billTypeLabel(bt))+'</span>'+
-          '<div style="display:flex;gap:5px;">'+cells+'</div></div>';
+          '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+segments+'</div></div>';
       }).join('');
       rows.push('<div style="margin-bottom:12px;"><div style="font-size:12.5px;font-weight:650;margin-bottom:4px;">'+esc(p.name)+'</div>'+typeRows+'</div>');
     });
     if (!rows.length) return '';
-    var monthHeaderCells = months.map(function(ym){ return '<div style="width:18px;font-size:9.5px;color:var(--text-faint);text-align:center;flex-shrink:0;">'+monthLabel(ym)+'</div>'; }).join('');
+
+    var monthTicks = months.map(function(ym, i){
+      var left = pct(ym + '-01');
+      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);'+(i===0?'':'transform:translateX(-1px);')+'">'+monthLabel(ym)+'</span>';
+    }).join('');
+    var legendItem = function(colorVar, label){
+      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
+        '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
+    };
     return '<div class="card">'+
       '<h2 style="text-transform:none;letter-spacing:0;font-size:13.5px;margin:0 0 6px;">Invoice timeline</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">A filled square means a bill was loaded that month; a dashed square means one seems to be missing.</p>'+
-      '<div style="display:flex;gap:8px;margin-bottom:4px;overflow-x:auto;"><span style="width:72px;flex-shrink:0;"></span><div style="display:flex;gap:5px;">'+monthHeaderCells+'</div></div>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">Each bar is a bill, drawn across its actual billing period. The striped gaps are stretches with no bill loaded. Tap a bar to open that bill.</p>'+
+      '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+
       rows.join('')+
+      '<div style="margin-top:8px;">'+
+      legendItem('var(--status-paid)','Paid') + legendItem('var(--status-due)','Due') +
+      legendItem('var(--status-overdue)','Overdue') + legendItem('var(--status-upcoming)','Allocated') +
+      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
+      '<span class="timeline-track" style="width:9px;height:9px;border-radius:2px;display:inline-block;"></span>No bill loaded</span>'+
+      '</div>'+
       '</div>';
   }
 
