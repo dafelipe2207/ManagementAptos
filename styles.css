@@ -290,6 +290,8 @@
     resize:vertical;min-height:56px;
   }
   .form-error{color:var(--status-overdue);font-size:12px;margin:6px 0 0;}
+  .form-hint{font-size:12px;margin:6px 0 0;color:var(--text-dim);}
+  .form-hint.match{color:var(--status-paid);}
   .mini-btn.danger{background:var(--status-overdue);color:#fff;border-color:var(--status-overdue);}
   .mini-btn.danger:hover{opacity:.88;background:var(--status-overdue);}
   .actions-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
