@@ -1725,6 +1725,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-recurring').checked = false;
     document.getElementById('review-recurring-day').value = '';
     document.getElementById('review-recurring-day-row').hidden = true;
+    document.getElementById('review-recurring-existing-hint').hidden = true;
     document.getElementById('review-modal-error').hidden = true;
     refreshKnownAccountsDatalist();
     document.getElementById('review-modal').hidden = false;
@@ -1738,11 +1739,38 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (reviewItemId) removeImportQueueItem(reviewItemId);
     closeReviewModal();
   }
+  /** Busca una plantilla de recurring bill ACTIVA ya existente para esa propiedad + proveedor +
+   *  tipo de servicio — para no dejar crear una duplicada. Esto es lo que causó los bills
+   *  fantasma vistos en Dodo: dos plantillas activas generando el mismo bill cada mes, una de
+   *  ellas con la fecha mal calculada. La comparación de proveedor ignora mayúsculas/espacios. */
+  function findActiveRecurringTemplate(propertyId, provider, billType){
+    var normProvider = (provider || '').trim().toLowerCase();
+    return recurringBills.find(function(r){
+      return r.isActive && r.propertyId === propertyId && r.billType === billType &&
+        (r.provider || '').trim().toLowerCase() === normProvider;
+    });
+  }
   /** Muestra/oculta el campo "día del mes" cuando se marca "Repeats every month" — y si el
-   *  usuario ya cargó una fecha de vencimiento, la usa para adivinar el día por defecto. */
+   *  usuario ya cargó una fecha de vencimiento, la usa para adivinar el día por defecto. Si ya
+   *  hay una plantilla activa para este proveedor+propiedad+tipo, no deja marcar la casilla y
+   *  explica por qué en vez de dejar que se cree una duplicada. */
   function toggleReviewRecurringDay(){
-    var checked = document.getElementById('review-recurring').checked;
+    var checkboxEl = document.getElementById('review-recurring');
     var row = document.getElementById('review-recurring-day-row');
+    var hint = document.getElementById('review-recurring-existing-hint');
+    if (checkboxEl.checked){
+      var propertyId = document.getElementById('review-property').value;
+      var provider = document.getElementById('review-provider').value;
+      var billType = document.getElementById('review-billtype').value;
+      if (findActiveRecurringTemplate(propertyId, provider, billType)){
+        checkboxEl.checked = false;
+        row.hidden = true;
+        hint.hidden = false;
+        return;
+      }
+    }
+    hint.hidden = true;
+    var checked = checkboxEl.checked;
     row.hidden = !checked;
     if (checked){
       var dayField = document.getElementById('review-recurring-day');
@@ -1852,6 +1880,14 @@ import * as recurringBillService from './services/recurringBillService.js';
       // genera automáticamente el del próximo mes cuando llegue su fecha, sin tener que volver
       // a cargarlo a mano cada vez (gas, internet, etc.).
       var makeRecurring = document.getElementById('review-recurring').checked;
+      var skippedDuplicateRecurring = false;
+      if (makeRecurring && findActiveRecurringTemplate(newBill.propertyId, newBill.provider, newBill.billType)){
+        // Re-chequeo por si acaso (otra pestaña, u otro bill de la cola creó la plantilla justo
+        // ahora) — no crear una segunda plantilla activa para el mismo proveedor+propiedad+tipo.
+        makeRecurring = false;
+        skippedDuplicateRecurring = true;
+        showToast('Bill saved. This provider already repeats automatically for this property, so a duplicate monthly repeat wasn\'t created.', 'info');
+      }
       if (makeRecurring){
         var billingDay = parseInt(document.getElementById('review-recurring-day').value, 10);
         if (isFinite(billingDay) && billingDay >= 1 && billingDay <= 28){
@@ -1877,7 +1913,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       bills.push(newBill);
       removeImportQueueItem(reviewItemId);
       closeReviewModal();
-      if (!makeRecurring) showToast('Bill saved successfully.', 'success');
+      if (!makeRecurring && !skippedDuplicateRecurring) showToast('Bill saved successfully.', 'success');
       // Paso 7 del flujo (revisar y confirmar el reparto): en vez de aterrizar
       // en el listado de Bills, se abre directamente el detalle del bill recién
       // creado, donde la tarjeta de Allocation ya muestra el reparto por
@@ -1980,9 +2016,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (propTenantsForBill.length > 0){
       var autoRows = computeAllocationRows(newBill, 'days');
       var allocRows = autoRows.map(function(r){
-        return r.isAdmin
-          ? { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate:TODAY }
-          : { tenantId:r.tenantId, amount:round2(r.amount), paid:false, paidDate:null };
+        if (r.isAdmin) return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate:TODAY };
+        var amt = round2(r.amount);
+        var owesNothing = amt <= 0;
+        return { tenantId:r.tenantId, amount:amt, paid:owesNothing, paidDate: owesNothing ? TODAY : null };
       });
       var savedAllocations = await billAllocationService.replaceForBill(newBill.id, allocRows);
       newBill.allocationMethod = 'days';
@@ -2073,6 +2110,16 @@ import * as recurringBillService from './services/recurringBillService.js';
       errEl.textContent = 'Add a property, provider, a valid amount, and a billing day between 1 and 28.';
       errEl.hidden = false;
       return;
+    }
+    // No dejar crear una segunda plantilla activa para el mismo proveedor+propiedad+tipo — es lo
+    // que generó los bills fantasma de Dodo (dos plantillas generando el mismo bill cada mes).
+    if (!recurringModalId){
+      var dupTpl = findActiveRecurringTemplate(propertyId, provider, billType);
+      if (dupTpl){
+        errEl.textContent = 'There\'s already an active recurring bill for ' + provider + ' at this property (' + billTypeLabel(billType) + '). Edit that one instead of creating a duplicate.';
+        errEl.hidden = false;
+        return;
+      }
     }
     var saveBtn = document.querySelector('#recurring-bill-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
@@ -2251,8 +2298,15 @@ import * as recurringBillService from './services/recurringBillService.js';
         // La parte del administrador no la debe nadie más — se da por cubierta apenas se guarda.
         return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate: (prevAdmin && prevAdmin.paidDate) || TODAY };
       }
+      var amt = round2(r.amount);
+      if (amt <= 0){
+        // No le corresponde pagar nada (p.ej. está excluido de este servicio, o el admin le puso
+        // $0 a mano) — se da por saldado solo, sin pedirle al admin que lo marque como pagado.
+        var prevZero = oldPaidByTenant[r.tenantId];
+        return { tenantId:r.tenantId, amount:0, paid:true, paidDate: (prevZero && prevZero.paidDate) || TODAY };
+      }
       var prev = oldPaidByTenant[r.tenantId];
-      return { tenantId:r.tenantId, amount:round2(r.amount), paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null };
+      return { tenantId:r.tenantId, amount:amt, paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null };
     });
     var confirmBtn = document.querySelector('#allocate-modal .mini-btn.primary');
     var originalLabel = confirmBtn ? confirmBtn.textContent : '';
@@ -2747,7 +2801,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
       '</div></div>'+
-      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + statHtml + chipsHtml + rows;
+      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + recurringBillsCardHtml(billsPropertyFilter) + statHtml + chipsHtml + rows;
   }
 
   /* ============ "Missing invoices" tab — AI-based prediction (predict-bills Edge Function) ============ */
@@ -2874,28 +2928,56 @@ import * as recurringBillService from './services/recurringBillService.js';
       return names[parseInt(ym.slice(5,7),10)-1];
     }
 
+    /** Un bill de una fila a dibujar como barra: la posición/tamaño ya viene resuelta en %, con
+     *  un pequeño inset en px a cada lado — así dos bills consecutivos (el mismo día uno termina
+     *  y el otro empieza) se ven como dos barras separadas, no una sola pegada, y se nota el
+     *  corte de fecha entre ellos aunque no haya hueco real. */
+    function timelineSegmentHtml(b){
+      var segStart = b.billingPeriodStart < rangeStart ? rangeStart : b.billingPeriodStart;
+      var segEnd = b.billingPeriodEnd > rangeEnd ? rangeEnd : b.billingPeriodEnd;
+      var left = pct(segStart);
+      var width = Math.max(1.2, pct(stepDateIso(segEnd, 1)) - left);
+      var tip = esc(b.provider) + ': ' + shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) +
+        ' • ' + money(b.amount) + ' • ' + (BILL_TIMELINE_STATUS_LABEL[billEffectiveStatus(b)] || billEffectiveStatus(b));
+      return '<div title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
+        'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+billTimelineColorVar(b)+';"></div>';
+    }
+    /** Separa los bills de un mismo tipo en "el cobro habitual" (el importe que más se repite)
+     *  y "reajustes" (un importe distinto — p.ej. Kleenheat sube la tarifa cada 3 meses). Solo
+     *  separa cuando hay un importe claramente habitual (se repite 2+ veces); si no, no hay un
+     *  "normal" con el que comparar y todo queda en una sola línea. */
+    function splitByModalAmount(list){
+      if (list.length < 2) return { regular: list, adjustments: [] };
+      var counts = {};
+      list.forEach(function(b){ var key = b.amount.toFixed(2); counts[key] = (counts[key] || 0) + 1; });
+      var modeKey = null, modeCount = 0;
+      Object.keys(counts).forEach(function(k){ if (counts[k] > modeCount){ modeCount = counts[k]; modeKey = k; } });
+      if (modeCount < 2) return { regular: list, adjustments: [] };
+      return {
+        regular: list.filter(function(b){ return b.amount.toFixed(2) === modeKey; }),
+        adjustments: list.filter(function(b){ return b.amount.toFixed(2) !== modeKey; })
+      };
+    }
+    function timelineTrackRowHtml(label, faint, list){
+      return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
+        '<span style="font-size:'+(faint?'10px':'11.5px')+';color:'+(faint?'var(--text-faint)':'var(--text-dim)')+';width:72px;flex-shrink:0;'+(faint?'padding-left:8px;':'')+'">'+esc(label)+'</span>'+
+        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+list.map(timelineSegmentHtml).join('')+'</div></div>';
+    }
+
     var rows = [];
     scopedProperties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).forEach(function(p){
       var propBills = bills.filter(function(b){ return b.propertyId===p.id; });
       var typesPresent = BILL_RECURRING_TYPES.filter(function(t){ return propBills.some(function(b){ return b.billType===t; }); });
       if (!typesPresent.length) return;
       var typeRows = typesPresent.map(function(bt){
-        var segments = propBills.filter(function(b){
+        var typeBills = propBills.filter(function(b){
           return b.billType === bt && b.billingPeriodStart && b.billingPeriodEnd &&
             b.billingPeriodEnd >= rangeStart && b.billingPeriodStart <= rangeEnd;
-        }).map(function(b){
-          var segStart = b.billingPeriodStart < rangeStart ? rangeStart : b.billingPeriodStart;
-          var segEnd = b.billingPeriodEnd > rangeEnd ? rangeEnd : b.billingPeriodEnd;
-          var left = pct(segStart);
-          var width = Math.max(1.2, pct(stepDateIso(segEnd, 1)) - left);
-          var tip = esc(b.provider) + ': ' + shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) +
-            ' • ' + money(b.amount) + ' • ' + (BILL_TIMELINE_STATUS_LABEL[billEffectiveStatus(b)] || billEffectiveStatus(b));
-          return '<div title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
-            'style="position:absolute;top:1px;bottom:1px;left:'+left+'%;width:'+width+'%;border-radius:3px;cursor:pointer;background:'+billTimelineColorVar(b)+';"></div>';
-        }).join('');
-        return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
-          '<span style="font-size:11.5px;color:var(--text-dim);width:72px;flex-shrink:0;">'+esc(billTypeLabel(bt))+'</span>'+
-          '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+segments+'</div></div>';
+        });
+        var split = splitByModalAmount(typeBills);
+        var html = timelineTrackRowHtml(billTypeLabel(bt), false, split.regular);
+        if (split.adjustments.length) html += timelineTrackRowHtml('↳ rate change', true, split.adjustments);
+        return html;
       }).join('');
       rows.push('<div style="margin-bottom:12px;"><div style="font-size:12.5px;font-weight:650;margin-bottom:4px;">'+esc(p.name)+'</div>'+typeRows+'</div>');
     });
@@ -2911,7 +2993,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     };
     return '<div class="card">'+
       '<h2 style="text-transform:none;letter-spacing:0;font-size:13.5px;margin:0 0 6px;">Invoice timeline</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">Each bar is a bill, drawn across its actual billing period. The striped gaps are stretches with no bill loaded. Tap a bar to open that bill.</p>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">Each bar is a bill, drawn across its actual billing period, with a small gap so consecutive bills stay visually separate. A bill priced differently from the usual amount (e.g. a rate change) gets its own "rate change" line instead of blending into the regular one. Striped gaps are stretches with no bill loaded. Tap a bar to open that bill.</p>'+
       '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+
       rows.join('')+
       '<div style="margin-top:8px;">'+
@@ -2945,9 +3027,11 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
 
   /** "Recurring bills": templates para gas/internet/etc. que generan un bill nuevo cada mes solos
-   *  (ver generateDueRecurringBills) — así no hay que volver a cargar el mismo bill a mano cada vez. */
-  function recurringBillsCardHtml(){
-    var scoped = billsPropertyFilter==='all' ? recurringBills : recurringBills.filter(function(r){ return r.propertyId===billsPropertyFilter; });
+   *  (ver generateDueRecurringBills) — así no hay que volver a cargar el mismo bill a mano cada vez.
+   *  `scopePropertyId` filtra por propiedad (como en la pestaña Bills); pásalo como 'all' o
+   *  omítelo para ver/editar las de todo el portafolio (como en Settings). */
+  function recurringBillsCardHtml(scopePropertyId){
+    var scoped = (!scopePropertyId || scopePropertyId==='all') ? recurringBills : recurringBills.filter(function(r){ return r.propertyId===scopePropertyId; });
     var rows = scoped.slice().sort(function(a,b){ return a.provider.localeCompare(b.provider); }).map(function(r){
       var p = propertyOf(r.propertyId);
       return '<div class="field-row"><span class="k">'+esc(r.provider)+
@@ -3162,6 +3246,15 @@ import * as recurringBillService from './services/recurringBillService.js';
             '</div></div>';
         }
         var t = tenantOf(a.tenantId);
+        var owesNothing = round2(a.amount) <= 0;
+        // Un ex-inquilino que ya se fue y a quien las fechas de este bill ni le tocan (no vivía
+        // ahí durante el periodo) — dejado de una repartición vieja, no debería seguir apareciendo.
+        var notRelevant = t && b.billingPeriodStart && b.billingPeriodEnd &&
+          occupiedDaysInRange(t, b.billingPeriodStart, b.billingPeriodEnd) <= 0;
+        // No le corresponde pagar nada por esta cuota (p.ej. quedó en $0 al repartir a mano), o
+        // no es relevante — no se muestra en el reparto en vez de pedir un comprobante o marcar
+        // como pagado algo que no aplica.
+        if (owesNothing || notRelevant) return '';
         var paidBit = a.paid
           ? badge('paid', 'Paid'+(a.paidDate ? ' ' + shortDate(a.paidDate) : ''))
           : badge('due', 'Unpaid');
@@ -3186,7 +3279,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+
         (p && !p.whatsappGroupLink ? ' · <span style="color:var(--text-faint);">No WhatsApp group link set for this property yet.</span>' : '')+
         '</p>'+
-        rows+'</div>'+adminSectionHtml;
+        (rows || '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No tenant owes anything on this bill.</p>')+'</div>'+adminSectionHtml;
     }
     var propTenants = tenantsOfProperty(b.propertyId);
     if (propTenants.length === 0) return adminSectionHtml;
@@ -3553,9 +3646,11 @@ import * as recurringBillService from './services/recurringBillService.js';
         : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No old local data was found in this browser.</p>')+
       '<div id="migration-status" style="font-size:12px;color:var(--text-dim);margin-top:8px;white-space:pre-wrap;">'+esc(migrationStatusMessage)+'</div>'+
       '</div>';
+    var recurringSection = isStaff() ? recurringBillsCardHtml('all') : '';
     return pageHeader('Settings', 'App lock, backup and sync, and preferences.') +
       '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">About storage</h2>'+
       '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your data is stored in your own Supabase project, protected by row-level security, and loaded fresh from there every time you sign in. Use the backup below for an extra offline copy.</p></div>'+
+      recurringSection +
       migrationCard +
       '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">App lock (local)</h2>'+
       '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">A simple screen PIN for this app on this device. It is not encryption or real authentication — it only stops a casual glance; anyone using the browser\'s developer tools can bypass it.</p>'+
