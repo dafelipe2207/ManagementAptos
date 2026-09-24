@@ -1703,6 +1703,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   /* ---------- Review extracted data (revisar/editar antes de confirmar) ---------- */
   var reviewItemId = null;
   var reviewDuplicateOverride = false; // true una vez que el usuario confirma "Save anyway" sobre un posible duplicado
+  var editingBillId = null; // set while #review-modal is being reused to EDIT an existing bill instead of importing a new one
   function openReviewModal(itemId){
     var item = importQueue.find(function(i){ return i.id===itemId; });
     if (!item || !item.extracted) return;
@@ -1733,8 +1734,118 @@ import * as recurringBillService from './services/recurringBillService.js';
   function closeReviewModal(){
     reviewItemId = null;
     reviewDuplicateOverride = false;
+    editingBillId = null;
+    document.getElementById('review-modal-title').textContent = 'Review extracted data';
+    document.getElementById('review-modal-sub').textContent = 'Check and correct what the automatic analysis detected before saving this bill.';
+    document.getElementById('review-discard-btn').hidden = false;
+    document.getElementById('review-recurring-row').hidden = false;
     document.getElementById('review-modal').hidden = true;
   }
+  /** Reabre el mismo modal de "Review extracted data" pero precargado con un bill ya guardado,
+   *  para poder corregir un dato mal cargado (proveedor, fechas, monto, etc.) sin tener que
+   *  borrar el bill y crearlo de nuevo. No toca las allocations — si el monto o el periodo
+   *  cambian de forma relevante, el admin puede usar "Re-allocate" para recalcular los montos
+   *  de cada inquilino aparte. */
+  function openEditBillModal(billId){
+    var b = billOf(billId);
+    if (!b) return;
+    reviewItemId = null;
+    reviewDuplicateOverride = false;
+    editingBillId = billId;
+    var saveBtnEl = document.querySelector('#review-modal .mini-btn.primary');
+    if (saveBtnEl) saveBtnEl.textContent = 'Save changes';
+    document.getElementById('review-modal-title').textContent = 'Edit bill';
+    document.getElementById('review-modal-sub').textContent = 'Update the details for this bill.';
+    document.getElementById('review-discard-btn').hidden = true;
+    document.getElementById('review-property').value = b.propertyId;
+    document.getElementById('review-billtype').value = b.billType;
+    document.getElementById('review-provider').value = b.provider;
+    document.getElementById('review-account').value = b.accountNumber || '';
+    document.getElementById('review-account-hint').hidden = true;
+    document.getElementById('review-invoice').value = b.invoiceNumber || '';
+    document.getElementById('review-issue').value = b.issueDate || '';
+    document.getElementById('review-due').value = b.dueDate || '';
+    document.getElementById('review-period-start').value = b.billingPeriodStart || '';
+    document.getElementById('review-period-end').value = b.billingPeriodEnd || '';
+    document.getElementById('review-amount').value = b.amount;
+    document.getElementById('review-recurring-row').hidden = true;
+    document.getElementById('review-recurring').checked = false;
+    document.getElementById('review-recurring-day-row').hidden = true;
+    document.getElementById('review-recurring-existing-hint').hidden = true;
+    document.getElementById('review-modal-error').hidden = true;
+    refreshKnownAccountsDatalist();
+    document.getElementById('review-modal').hidden = false;
+  }
+  window.openEditBillModal = openEditBillModal;
+  /** Guarda los cambios de un bill existente editado desde openEditBillModal — a diferencia de
+   *  confirmReviewedBill (que crea un bill nuevo desde la cola de importación), esto solo
+   *  actualiza los campos del bill ya guardado; no toca sus allocations ni crea recurring bills. */
+  async function saveEditedBill(){
+    var provider = document.getElementById('review-provider').value.trim();
+    var accountNumber = document.getElementById('review-account').value.trim();
+    var invoiceNumber = document.getElementById('review-invoice').value.trim();
+    var issueDate = document.getElementById('review-issue').value;
+    var dueDate = document.getElementById('review-due').value;
+    var periodStart = document.getElementById('review-period-start').value;
+    var periodEnd = document.getElementById('review-period-end').value;
+    var amount = parseFloat(document.getElementById('review-amount').value);
+    var errorEl = document.getElementById('review-modal-error');
+
+    if (!provider || !issueDate || !dueDate || !periodStart || !periodEnd || !isFinite(amount) || amount <= 0){
+      errorEl.textContent = 'Add a provider, both dates and a valid amount before saving.';
+      errorEl.hidden = false;
+      return;
+    }
+
+    var b = billOf(editingBillId);
+    if (!b){ closeReviewModal(); return; }
+    var newAmount = Math.round(amount*100)/100;
+    var amountChanged = newAmount !== round2(b.amount);
+    var periodChanged = periodStart !== b.billingPeriodStart || periodEnd !== b.billingPeriodEnd;
+
+    var updated = Object.assign({}, b, {
+      propertyId: document.getElementById('review-property').value,
+      billType: document.getElementById('review-billtype').value,
+      provider: provider,
+      accountNumber: accountNumber,
+      invoiceNumber: invoiceNumber,
+      issueDate: issueDate,
+      dueDate: dueDate,
+      billingPeriodStart: periodStart,
+      billingPeriodEnd: periodEnd,
+      amount: newAmount
+    });
+
+    var saveBtn = document.querySelector('#review-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    errorEl.hidden = true;
+    try {
+      var saved = await billService.update(editingBillId, updated);
+      bills = bills.map(function(x){ return x.id===saved.id ? saved : x; });
+      closeReviewModal();
+      render();
+      showToast(
+        (amountChanged || periodChanged)
+          ? 'Bill updated. The amount or billing period changed — use "Re-allocate" below if the tenant shares need to be recalculated.'
+          : 'Bill updated.',
+        'success'
+      );
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveEditedBill = saveEditedBill;
+  /** El botón "Save" del modal se reusa para crear (import) y editar — dirige a una u otra
+   *  función según si editingBillId está seteado. */
+  function submitReviewModal(){
+    if (editingBillId) return saveEditedBill();
+    return confirmReviewedBill();
+  }
+  window.submitReviewModal = submitReviewModal;
   function discardReviewItem(){
     if (reviewItemId) removeImportQueueItem(reviewItemId);
     closeReviewModal();
@@ -3070,7 +3181,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="field-row"><span class="k">Status</span><span class="v">'+billStatusBadge(b)+'</span></div>'+
       (b.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(b.notes)+'</span></div>' : '')+
       '</div></div>'+
-      (isSuperAdmin() ? '<button class="mini-btn danger" style="margin-bottom:12px;" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
+      '<div style="display:flex;gap:8px;margin-bottom:12px;">'+
+      '<button class="mini-btn" onclick="openEditBillModal(\''+b.id+'\')">Edit bill</button>'+
+      (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
+      '</div>'+
       billAllocationCard(b);
   }
 
