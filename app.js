@@ -3157,10 +3157,16 @@ import * as recurringBillService from './services/recurringBillService.js';
         adjustments: list.filter(function(b){ return b.amount.toFixed(2) !== modeKey; })
       };
     }
+    // Línea vertical de "hoy" — se recalcula siempre contra TODAY, así que se corre sola cada
+    // día sin tener que tocar nada. Se dibuja DENTRO de cada track (misma % que las barras, mismo
+    // rangeStart/rangeEnd) en vez de un único overlay flotando sobre todo el diagrama, para que
+    // quede perfectamente alineada fila por fila sin depender de medir el layout con JS.
+    var todayLeft = pct(TODAY);
+    var todayLineHtml = '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
     function timelineTrackRowHtml(label, faint, list){
       return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
         '<span style="font-size:'+(faint?'10px':'11.5px')+';color:'+(faint?'var(--text-faint)':'var(--text-dim)')+';width:72px;flex-shrink:0;'+(faint?'padding-left:8px;':'')+'">'+esc(label)+'</span>'+
-        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+list.map(timelineSegmentHtml).join('')+'</div></div>';
+        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+list.map(timelineSegmentHtml).join('')+todayLineHtml+'</div></div>';
     }
 
     var rows = [];
@@ -3185,7 +3191,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     var monthTicks = months.map(function(ym, i){
       var left = pct(ym + '-01');
       return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);'+(i===0?'':'transform:translateX(-1px);')+'">'+monthLabel(ym)+'</span>';
-    }).join('');
+    }).join('') +
+      '<span style="position:absolute;left:'+todayLeft+'%;bottom:0;font-size:9.5px;font-weight:650;color:var(--text);transform:translateX(-50%);white-space:nowrap;">Today</span>';
     var legendItem = function(colorVar, label){
       return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
         '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
@@ -3198,8 +3205,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div style="margin-top:8px;">'+
       legendItem('var(--status-paid)','Paid') + legendItem('var(--status-due)','Due') +
       legendItem('var(--status-overdue)','Overdue') + legendItem('var(--status-upcoming)','Allocated') +
-      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
+      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
       '<span class="timeline-track" style="width:9px;height:9px;border-radius:2px;display:inline-block;"></span>No bill loaded</span>'+
+      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
+      '<span style="width:2px;height:11px;background:var(--text);opacity:0.55;display:inline-block;"></span>Today</span>'+
       '</div>'+
       '</div>';
   }
