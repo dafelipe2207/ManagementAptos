@@ -2,6 +2,9 @@
 // Per-tenant shares of a bill. Includes bulk-create (for auto-allocation on
 // confirm and re-allocation) and markPaid/unmarkPaid matching the reference
 // app's markAllocationPaid/unmarkAllocationPaid semantics.
+// A row can also represent the ADMIN absorbing a share on behalf of tenants
+// excluded from that bill type (see tenant.excludedBillTypes) — those rows
+// have isAdmin:true and tenantId:null instead of a real tenant.
 import { supabase } from '../lib/supabaseClient.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
@@ -10,6 +13,7 @@ function fromRow(row) {
     id: row.id,
     billId: row.bill_id,
     tenantId: row.tenant_id,
+    isAdmin: !!row.is_admin,
     amount: Number(row.amount) || 0,
     daysOccupied: row.days_occupied,
     paid: !!row.paid,
@@ -40,7 +44,8 @@ export async function replaceForBill(billId, rows) {
     return {
       user_id: userId,
       bill_id: billId,
-      tenant_id: r.tenantId,
+      tenant_id: r.isAdmin ? null : r.tenantId,
+      is_admin: !!r.isAdmin,
       amount: r.amount,
       days_occupied: typeof r.daysOccupied === 'number' ? r.daysOccupied : null,
       paid: !!r.paid,

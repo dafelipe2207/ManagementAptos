@@ -1,7 +1,10 @@
 // services/tenantService.js
 // Maps the app's camelCase tenant shape (fullName, propertyId, roomId,
 // moveInDate, expectedMoveOutDate, actualMoveOutDate, rentAmount,
-// rentFrequency, paymentDay, notes, phone, email) to/from `tenants`.
+// rentFrequency, paymentDay, notes, phone, email, excludedBillTypes) to/from
+// `tenants`. excludedBillTypes lists bill types (matching bills.type, e.g.
+// 'gas') this tenant does not pay a share of — see computeAllocationRows in
+// app.js, which redirects their share to the admin instead.
 import { supabase } from '../lib/supabaseClient.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
@@ -14,7 +17,8 @@ function fromRow(row) {
     moveInDate: row.move_in_date,
     rentAmount: Number(row.rent_amount) || 0,
     rentFrequency: row.rent_frequency,
-    paymentDay: row.payment_day
+    paymentDay: row.payment_day,
+    excludedBillTypes: Array.isArray(row.excluded_bill_types) ? row.excluded_bill_types : []
   };
   if (row.phone) t.phone = row.phone;
   if (row.email) t.email = row.email;
@@ -38,7 +42,8 @@ function toRow(t) {
     rent_amount: t.rentAmount,
     rent_frequency: t.rentFrequency,
     payment_day: t.paymentDay,
-    notes: t.notes || null
+    notes: t.notes || null,
+    excluded_bill_types: Array.isArray(t.excludedBillTypes) ? t.excludedBillTypes : []
   };
 }
 
