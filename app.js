@@ -7,7 +7,7 @@ import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
 import * as propertyService from './services/propertyService.js';
 import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js?v=2';
+import * as tenantService from './services/tenantService.js?v=3';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
@@ -117,13 +117,21 @@ import * as recurringBillService from './services/recurringBillService.js';
       var periods = [];
       var cutoff = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || null;
       var cursor = schedule.startDate;
+      var isFirstPeriod = true;
       while (true){
         if (cutoff && cursor > cutoff) break;
         var end = schedule.frequency === 'monthly'
           ? stepDate(addMonths(cursor, 1), -1)
           : stepDate(cursor, periodLengthDays(schedule.frequency) - 1);
-        var dueDate = stepDate(cursor, -ADVANCE_DAYS);
+        // El primer periodo de la tenencia es la excepción a la regla de "2 semanas de
+        // anticipación": antes de mudarse, el inquilino solo paga el bond para apartar la
+        // habitación — recién debe el arriendo desde que se muda, no 14 días antes (ese día
+        // ni siquiera era tenant todavía). Por eso el vencimiento del primer periodo es la
+        // propia fecha de move-in, y solo desde el segundo periodo en adelante se exige el
+        // colchón de 2 semanas.
+        var dueDate = isFirstPeriod ? cursor : stepDate(cursor, -ADVANCE_DAYS);
         periods.push({ periodStart: cursor, periodEnd: end, dueDate: dueDate });
+        isFirstPeriod = false;
         // Sigue generando periodos futuros mientras su vencimiento (2 semanas antes de que
         // empiecen) ya haya llegado o esté por llegar, más un periodo "upcoming" de margen.
         if (dueDate > asOfIso) break;
@@ -1038,12 +1046,23 @@ import * as recurringBillService from './services/recurringBillService.js';
       '</div>';
   }
 
+  var tenantsShowInactive = false; // toggle: por default solo se ven los tenants habilitados
+  function setTenantsShowInactive(v){ tenantsShowInactive = v; render(); }
+  window.setTenantsShowInactive = setTenantsShowInactive;
+
   function renderTenants(){
-    var paying = tenants.filter(function(t){ return t.rentAmount>0; });
+    var all = tenants.filter(function(t){ return t.rentAmount>0; });
+    var inactiveCount = all.filter(function(t){ return t.isActive===false; }).length;
+    var paying = all.filter(function(t){ return tenantsShowInactive ? t.isActive===false : t.isActive!==false; });
     var header = '<div class="detail-head" style="align-items:center;">'+
       pageHeader('Tenants', 'Everyone renting from you, and their lease details.')+
-      '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openTenantModal()">+ Add tenant</button></div>';
+      '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openTenantModal()">+ Add tenant</button></div>'+
+      (inactiveCount>0 ? '<button class="mini-btn" style="margin-bottom:12px;" onclick="setTenantsShowInactive('+(!tenantsShowInactive)+')">'+
+        (tenantsShowInactive ? 'Back to active tenants' : 'Show inactive tenants ('+inactiveCount+')')+'</button>' : '');
     if (paying.length === 0){
+      if (tenantsShowInactive){
+        return header + emptyState('tenants', 'No inactive tenants', 'Everyone here is active.', '');
+      }
       return header + emptyState('tenants', 'No tenants yet',
         properties.length === 0
           ? 'Add a property and a room first, then add your first tenant.'
@@ -1080,7 +1099,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     var currentCharge = pickCurrentCharge(rentCharges.filter(function(c){ return c.tenantId===t.id; }), TODAY);
 
     var tenancyBadge = '';
-    if (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY) tenancyBadge = badge('move', 'Moved out');
+    if (t.isActive === false) tenancyBadge = badge('neutral', 'Inactive');
+    else if (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY) tenancyBadge = badge('move', 'Moved out');
     else if (t.moveInDate > TODAY) tenancyBadge = badge('move', 'Upcoming move-in');
     else if (t.rentAmount > 0) tenancyBadge = badge('neutral', 'Current tenant');
 
@@ -1115,6 +1135,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="actions-row">'+
       '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
       '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
+      '<button class="mini-btn" onclick="toggleTenantActiveConfirm(\''+t.id+'\')">'+(t.isActive===false?'Reactivate tenant':'Deactivate tenant')+'</button>'+
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>' : '')+
       '</div>'+
       '<div class="card"><h2>Contact</h2><div class="field-list">'+contactRows+'</div></div>'+
@@ -1233,6 +1254,14 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (filter==='overdue') return c.status==='overdue';
     if (filter==='due') return c.status==='due' || c.status==='partially_paid';
     return true; // 'all' — incluye también 'upcoming', que no tiene chip propio
+  }
+
+  /** True si el inquilino no debe nada: ni arriendo pendiente/atrasado ni su parte de ningún
+   *  bill sin pagar — se usa para saber si es "seguro" desactivarlo sin dejar un saldo colgado. */
+  function tenantOwesNothing(t){
+    var owesRent = rentCharges.some(function(c){ return c.tenantId===t.id && c.remaining > 0.004; });
+    if (owesRent) return false;
+    return unpaidBillAllocationsFor(t.id).length === 0;
   }
 
   /** Cada obligación de bill pendiente de un inquilino (para mostrarla junto a su alquiler en Payments). */
@@ -5120,6 +5149,46 @@ import * as recurringBillService from './services/recurringBillService.js';
       render();
     }, { confirmLabel:'Delete', danger:true });
   }
+  /** Guarda el nuevo estado activo/inactivo de un tenant — no borra nada, solo lo saca (o lo
+   *  vuelve a meter) de la lista de tenants habilitados en la pestaña Tenants. */
+  async function setTenantActive(tenantId, isActiveValue){
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    try {
+      var saved = await tenantService.update(tenantId, Object.assign({}, t, { isActive: isActiveValue }));
+      tenants = tenants.map(function(x){ return x.id===saved.id ? saved : x; });
+      render();
+      showToast(isActiveValue ? 'Tenant reactivated.' : 'Tenant deactivated — hidden from the active tenants list.', 'success');
+    } catch(err){
+      showToast('Could not update the tenant. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  /** Botón "Deactivate tenant" / "Reactivate tenant" del detalle. Reactivar es inmediato. Para
+   *  desactivar: si el tenant YA se mudó (actual move-out registrado) y no debe nada de arriendo
+   *  ni de bills, es el caso normal — se confirma sin más. Si todavía no tiene fecha de salida
+   *  real, o SÍ debe algo, eso es una inconsistencia (se está por ocultar a alguien que sigue
+   *  vigente o que dejó un saldo pendiente) así que se explica antes de dejar confirmar igual. */
+  function toggleTenantActiveConfirm(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    if (t.isActive === false){
+      setTenantActive(tenantId, true);
+      return;
+    }
+    var movedOut = !!(t.actualMoveOutDate && t.actualMoveOutDate <= TODAY);
+    var owesNothing = tenantOwesNothing(t);
+    if (movedOut && owesNothing){
+      openConfirmModal('Deactivate tenant', 'Hide '+t.fullName+' from the active tenants list? Their data and rent/bill history stay saved — you can reactivate them anytime.',
+        function(){ return setTenantActive(tenantId, false); }, { confirmLabel:'Deactivate' });
+    } else {
+      var reasons = [];
+      if (!movedOut) reasons.push('doesn\'t have an actual move-out date recorded yet');
+      if (!owesNothing) reasons.push('still has rent or bills pending');
+      openConfirmModal('Deactivate tenant', t.fullName+' '+reasons.join(' and ')+'. Deactivating will still hide them from the active tenants list — are you sure?',
+        function(){ return setTenantActive(tenantId, false); }, { confirmLabel:'Deactivate anyway', danger:true });
+    }
+  }
+  window.toggleTenantActiveConfirm = toggleTenantActiveConfirm;
   window.onTenantPropertyChange = onTenantPropertyChange;
   window.onTenantFrequencyChange = onTenantFrequencyChange;
   window.openTenantModal = openTenantModal;
