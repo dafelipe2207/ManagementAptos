@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manager</title>
-<link rel="stylesheet" href="styles.css?v=10">
+<link rel="stylesheet" href="styles.css?v=11">
 </head>
 <body>
 <div id="app">
@@ -570,6 +570,11 @@
         </div>
       </div>
       <div class="form-row"><label for="tenant-payment-day">Payment day</label><select id="tenant-payment-day"></select></div>
+      <div class="form-row">
+        <label>Doesn't pay for</label>
+        <div id="tenant-excluded-billtypes" class="checkbox-group"></div>
+        <p class="form-hint">Tick any service this tenant is excluded from — their share of that bill goes to you (the admin) instead.</p>
+      </div>
       <div class="form-row"><label for="tenant-notes">Notes</label><textarea id="tenant-notes"></textarea></div>
       <p id="tenant-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -620,6 +625,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=36"></script>
+<script type="module" src="app.js?v=38"></script>
 </body>
 </html>

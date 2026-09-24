@@ -7,12 +7,12 @@ import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
 import * as propertyService from './services/propertyService.js';
 import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js';
+import * as tenantService from './services/tenantService.js?v=2';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
 import * as billService from './services/billService.js?v=3';
-import * as billAllocationService from './services/billAllocationService.js';
+import * as billAllocationService from './services/billAllocationService.js?v=2';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=3';
@@ -1054,10 +1054,15 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     var rows = paying.map(function(t){
       var p = propertyOf(t.propertyId);
+      var bond = bondOf(t.id);
+      var bondLine = bond
+        ? ('Bond: '+money(bond.amountPaid)+' / '+money(bond.amountRequired)+' • '+esc(BOND_STATUS_LABEL[bond.status]||bond.status))
+        : 'Bond: not recorded';
       return '<a class="card" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
         '<div class="row" style="border:none;padding:0;">'+
         '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
-        '<div class="meta">'+esc(p?p.name:'')+' • Since '+shortDate(t.moveInDate)+'</div></div>'+
+        '<div class="meta"><strong style="color:var(--text);">'+esc(p?p.name:'—')+'</strong> • Since '+shortDate(t.moveInDate)+'</div>'+
+        '<div class="meta">'+bondLine+'</div></div>'+
         '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
         '</div></a>';
     }).join('');
@@ -1093,7 +1098,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     var rentRows = t.rentAmount > 0 ? (
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+t.rentFrequency+'</span></div>'+
       '<div class="field-row"><span class="k">Payment day</span><span class="v">'+paymentDayLabel(t)+'</span></div>' +
-      (currentCharge ? '<div class="field-row"><span class="k">Current charge</span><span class="v">'+chargeStatusBadge(currentCharge)+'</span></div>' : '')
+      (currentCharge ? '<div class="field-row"><span class="k">Current charge</span><span class="v">'+chargeStatusBadge(currentCharge)+'</span></div>' : '') +
+      ((t.excludedBillTypes && t.excludedBillTypes.length) ? '<div class="field-row"><span class="k">Doesn\'t pay for</span><span class="v">'+esc(t.excludedBillTypes.map(billTypeLabel).join(', '))+'</span></div>' : '')
     ) : '';
 
     var bondRows = bond ? (
@@ -1928,6 +1934,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     return amounts;
   }
 
+  /** Un inquilino puede estar excluido de pagar uno o más tipos de servicio (tenant.excludedBillTypes,
+   *  editable desde el formulario de inquilino) — por ejemplo, si su renta ya incluye el gas. */
+  function isTenantExcludedFromBillType(tenant, billType){
+    return !!(tenant && Array.isArray(tenant.excludedBillTypes) && tenant.excludedBillTypes.indexOf(billType) >= 0);
+  }
+
   function computeAllocationRows(bill, method){
     // Solo entran quienes realmente se solaparon con el periodo del bill — alguien que se mudó
     // antes de que empezara, o después de que terminó (o que ya no vive ahí hoy), queda afuera
@@ -1942,9 +1954,22 @@ import * as recurringBillService from './services/recurringBillService.js';
     } else { // 'equal' y el punto de partida de 'custom'
       amounts = splitByWeights(bill.amount, propTenants.map(function(){ return 1; }));
     }
-    return propTenants.map(function(t, i){
-      return { tenantId: t.id, name: t.fullName, days: days[i], amount: amounts[i] };
+    // Si un inquilino está excluido de este tipo de servicio, su parte no se reparte entre el
+    // resto (eso les subiría el monto injustamente) — en vez de eso, se junta en una fila aparte
+    // a nombre del administrador, que la absorbe.
+    var rows = [];
+    var adminAmount = 0;
+    propTenants.forEach(function(t, i){
+      if (isTenantExcludedFromBillType(t, bill.billType)){
+        adminAmount = round2(adminAmount + amounts[i]);
+      } else {
+        rows.push({ tenantId: t.id, name: t.fullName, days: days[i], amount: amounts[i] });
+      }
     });
+    if (adminAmount > 0){
+      rows.push({ tenantId: null, isAdmin: true, name: 'Administrator (you)', days: null, amount: adminAmount });
+    }
+    return rows;
   }
 
   /** Reparte automáticamente un bill recién guardado entre los inquilinos que pagan renta en esa
@@ -1954,7 +1979,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
     if (propTenantsForBill.length > 0){
       var autoRows = computeAllocationRows(newBill, 'days');
-      var allocRows = autoRows.map(function(r){ return { tenantId:r.tenantId, amount:round2(r.amount), paid:false, paidDate:null }; });
+      var allocRows = autoRows.map(function(r){
+        return r.isAdmin
+          ? { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate:TODAY }
+          : { tenantId:r.tenantId, amount:round2(r.amount), paid:false, paidDate:null };
+      });
       var savedAllocations = await billAllocationService.replaceForBill(newBill.id, allocRows);
       newBill.allocationMethod = 'days';
       newBill.status = 'allocated';
@@ -2106,12 +2135,13 @@ import * as recurringBillService from './services/recurringBillService.js';
     var totalDays = daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1;
     var rows = bill.allocations
       ? bill.allocations.map(function(a){
+          if (a.isAdmin) return { tenantId:null, isAdmin:true, name:'Administrator (you)', days:null, amount:a.amount };
           var t = tenantOf(a.tenantId);
           return { tenantId:a.tenantId, name:t?t.fullName:a.tenantId,
             days: t?occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd):0, amount:a.amount };
         // Filtra allocations viejas de alguien que no se solapó con el periodo (o que ya no vive
         // ahí) — quedaron con $0 de una repartición anterior y no deberían seguir apareciendo.
-        }).filter(function(row){ return row.days > 0 || row.amount > 0; })
+        }).filter(function(row){ return row.isAdmin || row.days > 0 || row.amount > 0; })
       : computeAllocationRows(bill, 'days');
     allocationDraft = { billId: billId, method: bill.allocations ? 'custom' : 'days', periodDays: totalDays, rows: rows };
     document.getElementById('allocate-modal-sub').textContent =
@@ -2148,8 +2178,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     });
     document.getElementById('allocate-method-note').textContent = ALLOCATION_METHOD_NOTES[allocationDraft.method] || '';
     document.getElementById('allocate-rows').innerHTML = allocationDraft.rows.map(function(row, i){
+      var metaText = row.isAdmin ? 'Covers tenants excluded from this service' : (row.days+' / '+allocationDraft.periodDays+' days occupied');
       return '<div class="alloc-row"><div class="who"><div>'+esc(row.name)+'</div>'+
-        '<div class="meta">'+row.days+' / '+allocationDraft.periodDays+' days occupied</div></div>'+
+        '<div class="meta">'+metaText+'</div></div>'+
         '<input class="alloc-amount-input" type="number" min="0" step="0.01" value="'+row.amount.toFixed(2)+'" '+
         'oninput="updateAllocationRow('+i+', this.value)" /></div>';
     }).join('');
@@ -2190,8 +2221,13 @@ import * as recurringBillService from './services/recurringBillService.js';
     // método — reasignar no debería des-marcar como pagado a alguien que ya
     // pagó su parte.
     var oldPaidByTenant = {};
-    (bill.allocations || []).forEach(function(a){ oldPaidByTenant[a.tenantId] = { paid: !!a.paid, paidDate: a.paidDate || null }; });
+    (bill.allocations || []).forEach(function(a){ oldPaidByTenant[a.isAdmin ? 'admin' : a.tenantId] = { paid: !!a.paid, paidDate: a.paidDate || null }; });
     var newRows = allocationDraft.rows.map(function(r){
+      if (r.isAdmin){
+        var prevAdmin = oldPaidByTenant.admin;
+        // La parte del administrador no la debe nadie más — se da por cubierta apenas se guarda.
+        return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate: (prevAdmin && prevAdmin.paidDate) || TODAY };
+      }
       var prev = oldPaidByTenant[r.tenantId];
       return { tenantId:r.tenantId, amount:round2(r.amount), paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null };
     });
@@ -2552,8 +2588,9 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  pagaron su cuota y cuánto se ha cobrado del total. */
   function billTenantPaymentsSummary(b){
     if (b.allocations && b.allocations.length){
-      var paidCount = b.allocations.filter(function(a){ return a.paid; }).length;
-      return '<div>'+paidCount+'/'+b.allocations.length+' tenants</div>'+
+      var tenantAllocs = b.allocations.filter(function(a){ return !a.isAdmin; });
+      var paidCount = tenantAllocs.filter(function(a){ return a.paid; }).length;
+      return '<div>'+paidCount+'/'+tenantAllocs.length+' tenants</div>'+
         '<div style="font-size:11px;color:var(--text-faint);font-weight:400;">'+money(billPaidAmount(b))+' of '+money(b.amount)+'</div>';
     }
     return '<span style="color:var(--text-faint);">Not yet allocated</span>';
@@ -2947,7 +2984,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       showToast('Agrega primero el link del grupo de WhatsApp de esta propiedad (Edit property).', 'error');
       return;
     }
-    var tenantsForMsg = bill.allocations.map(function(a){
+    var tenantsForMsg = bill.allocations.filter(function(a){ return !a.isAdmin; }).map(function(a){
       var t = tenantOf(a.tenantId);
       return { name: t ? t.fullName : 'Inquilino', amount: a.amount, paid: !!a.paid };
     });
@@ -3015,6 +3052,14 @@ import * as recurringBillService from './services/recurringBillService.js';
 
     if (b.allocations && b.allocations.length){
       var rows = b.allocations.map(function(a){
+        if (a.isAdmin){
+          return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
+            '<div class="who"><div>Administrator (you)</div>'+
+            '<div style="font-size:11.5px;color:var(--text-faint);">Covers tenants excluded from this service</div></div>'+
+            '<div style="display:flex;align-items:center;gap:10px;">'+
+            '<div style="text-align:right;"><div style="font-weight:650;">'+money(a.amount)+'</div>'+badge('paid','Absorbed by you')+'</div>'+
+            '</div></div>';
+        }
         var t = tenantOf(a.tenantId);
         var paidBit = a.paid
           ? badge('paid', 'Paid'+(a.paidDate ? ' ' + shortDate(a.paidDate) : ''))
@@ -4584,6 +4629,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('tenant-rent-amount').value = t ? t.rentAmount : '';
     document.getElementById('tenant-rent-frequency').value = t ? t.rentFrequency : 'weekly';
     document.getElementById('tenant-payment-day').innerHTML = paymentDayOptionsHtml(t ? t.rentFrequency : 'weekly', t ? t.paymentDay : 1);
+    var excluded = (t && Array.isArray(t.excludedBillTypes)) ? t.excludedBillTypes : [];
+    document.getElementById('tenant-excluded-billtypes').innerHTML = BILL_TYPES.map(function(bt){
+      return '<label><input type="checkbox" value="'+bt+'"'+(excluded.indexOf(bt)>=0?' checked':'')+'/><span>'+esc(billTypeLabel(bt))+'</span></label>';
+    }).join('');
     document.getElementById('tenant-notes').value = t ? (t.notes||'') : '';
     document.getElementById('tenant-modal-error').hidden = true;
     document.getElementById('tenant-modal').hidden = false;
@@ -4605,6 +4654,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var rentFrequency = document.getElementById('tenant-rent-frequency').value;
     var paymentDay = parseInt(document.getElementById('tenant-payment-day').value, 10);
     var notes = document.getElementById('tenant-notes').value.trim();
+    var excludedBillTypes = Array.prototype.slice.call(document.querySelectorAll('#tenant-excluded-billtypes input:checked')).map(function(el){ return el.value; });
     var errorEl = document.getElementById('tenant-modal-error');
 
     if (!fullName || !propertyId || !roomId || !moveInDate || !isFinite(rentAmount) || rentAmount<0 || !isFinite(paymentDay)){
@@ -4639,7 +4689,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
 
     var draft = { fullName:fullName, propertyId:propertyId, roomId:roomId, moveInDate:moveInDate,
-      rentAmount:rentAmount, rentFrequency:rentFrequency, paymentDay:paymentDay };
+      rentAmount:rentAmount, rentFrequency:rentFrequency, paymentDay:paymentDay, excludedBillTypes:excludedBillTypes };
     if (phone) draft.phone = phone;
     if (email) draft.email = email;
     if (expectedMoveOutDate) draft.expectedMoveOutDate = expectedMoveOutDate;
