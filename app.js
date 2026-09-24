@@ -11,7 +11,7 @@ import * as tenantService from './services/tenantService.js';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
-import * as billService from './services/billService.js?v=2';
+import * as billService from './services/billService.js?v=3';
 import * as billAllocationService from './services/billAllocationService.js';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
@@ -1431,6 +1431,9 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   function openImportModal(){
     pendingImportFile = null;
+    document.getElementById('import-account').value = '';
+    document.getElementById('import-account-hint').hidden = true;
+    refreshKnownAccountsDatalist();
     renderImportPreview();
     document.getElementById('import-modal').hidden = false;
   }
@@ -1441,6 +1444,8 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   function confirmImportBill(){
     if (!pendingImportFile) return;
+    var accountNumber = document.getElementById('import-account').value.trim();
+    var knownAccount = findKnownAccount(accountNumber);
     var item = {
       id: 'import-' + Date.now() + '-' + Math.round(Math.random()*1000),
       fileName: pendingImportFile.fileName,
@@ -1448,17 +1453,108 @@ import * as recurringBillService from './services/recurringBillService.js';
       previewUrl: pendingImportFile.previewUrl,
       file: pendingImportFile.file,
       addedAt: TODAY,
+      accountNumberHint: accountNumber, // se usa si hace falta mandar la foto a analizar (ver analyzeImportedFile)
       status: 'processing', // 'processing' -> 'ready' (con los datos que devolvió la IA, o en blanco si el análisis falló)
       extracted: null,
       aiError: null
     };
+    if (knownAccount){
+      // Cuenta ya conocida — no hace falta gastar una llamada a la IA: se completan
+      // propiedad/tipo/proveedor solos y el usuario solo tiene que escribir el monto y las
+      // fechas de esta factura en particular (eso sí cambia cada vez).
+      item.status = 'ready';
+      item.skippedAi = true;
+      item.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, {
+        propertyId: knownAccount.propertyId,
+        billType: knownAccount.billType,
+        provider: knownAccount.provider,
+        accountNumber: knownAccount.accountNumber
+      });
+    }
     importQueue.push(item);
     pendingImportFile = null;
     document.getElementById('import-modal').hidden = true;
-    render();
-    analyzeImportedFile(item);
+    if (knownAccount){
+      render();
+      showToast('Recognized account — skipped the AI step. Just fill in the amount and dates.', 'success');
+      openReviewModal(item.id);
+    } else {
+      render();
+      analyzeImportedFile(item);
+    }
   }
-  var BLANK_EXTRACTED_BILL = { propertyId:'', billType:'other', provider:'', invoiceNumber:'', issueDate:'', dueDate:'', billingPeriodStart:'', billingPeriodEnd:'', amount:'' };
+  var BLANK_EXTRACTED_BILL = { propertyId:'', billType:'other', provider:'', accountNumber:'', invoiceNumber:'', issueDate:'', dueDate:'', billingPeriodStart:'', billingPeriodEnd:'', amount:'' };
+
+  /* ---------- Known accounts (FASE: identificar la factura a mano antes de gastar una llamada
+   *  a la IA) — cada bill guardado con un número de cuenta queda "recordado": la próxima vez
+   *  que llega una factura de esa misma cuenta, la propiedad/tipo/proveedor se completan solos
+   *  y no hace falta mandarle la foto a la IA. ---------- */
+  function normalizeAccountNumber(v){ return (v || '').trim().toLowerCase(); }
+  /** Un solo registro por número de cuenta — si hay más de un bill con el mismo número (lo
+   *  normal), se queda con el más reciente por fecha de emisión. */
+  function knownAccountsMap(){
+    var map = {};
+    bills.slice()
+      .sort(function(a, b){ return (a.issueDate || '').localeCompare(b.issueDate || ''); })
+      .forEach(function(b){
+        var key = normalizeAccountNumber(b.accountNumber);
+        if (!key) return;
+        map[key] = { accountNumber: b.accountNumber, propertyId: b.propertyId, billType: b.billType, provider: b.provider };
+      });
+    return map;
+  }
+  function findKnownAccount(raw){
+    var key = normalizeAccountNumber(raw);
+    if (!key) return null;
+    return knownAccountsMap()[key] || null;
+  }
+  function knownAccountLabel(entry){
+    var propName = (properties.find(function(p){ return p.id===entry.propertyId; }) || {}).name || 'unknown property';
+    return propName + ' · ' + billTypeLabel(entry.billType) + (entry.provider ? ' · ' + entry.provider : '');
+  }
+  function refreshKnownAccountsDatalist(){
+    var list = document.getElementById('known-accounts-list');
+    if (!list) return;
+    var map = knownAccountsMap();
+    list.innerHTML = Object.keys(map).map(function(k){
+      var e = map[k];
+      return '<option value="'+esc(e.accountNumber)+'">'+esc(knownAccountLabel(e))+'</option>';
+    }).join('');
+  }
+  /** En el modal de importar: si lo que se escribió coincide con una cuenta ya conocida, muestra
+   *  el aviso de que la IA no hará falta. */
+  function onImportAccountInput(){
+    var val = document.getElementById('import-account').value;
+    var hint = document.getElementById('import-account-hint');
+    var match = findKnownAccount(val);
+    if (match){
+      hint.textContent = '✓ Matches a bill you already saved (' + knownAccountLabel(match) + '). No need to analyze the photo with AI — you\'ll just confirm the amount and dates.';
+      hint.className = 'form-hint match';
+      hint.hidden = false;
+    } else {
+      hint.hidden = true;
+    }
+  }
+  window.onImportAccountInput = onImportAccountInput;
+  /** Lo mismo, pero dentro del modal de revisión (entrada manual, o para corregir el número de
+   *  cuenta después de que la IA ya analizó la foto). Si hay coincidencia, también rellena
+   *  propiedad/tipo/proveedor — la cuenta conocida manda sobre lo que haya ahí. */
+  function onReviewAccountInput(){
+    var val = document.getElementById('review-account').value;
+    var hint = document.getElementById('review-account-hint');
+    var match = findKnownAccount(val);
+    if (match){
+      hint.textContent = '✓ Matches a bill you already saved (' + knownAccountLabel(match) + ') — property, type and provider filled in below.';
+      hint.className = 'form-hint match';
+      hint.hidden = false;
+      document.getElementById('review-property').value = match.propertyId;
+      document.getElementById('review-billtype').value = match.billType;
+      document.getElementById('review-provider').value = match.provider;
+    } else {
+      hint.hidden = true;
+    }
+  }
+  window.onReviewAccountInput = onReviewAccountInput;
   var BILL_TYPES = ['electricity','water','hot_water','gas','internet','other'];
   var BILL_TYPE_LABELS = { electricity:'Electricity', water:'Water', hot_water:'Hot water', gas:'Gas', internet:'Internet', other:'Other' };
   function billTypeLabel(t){ return BILL_TYPE_LABELS[t] || (t ? t.charAt(0).toUpperCase()+t.slice(1) : ''); }
@@ -1486,6 +1582,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         propertyId: data.propertyId || '',
         billType: BILL_TYPES.indexOf(data.billType) >= 0 ? data.billType : 'other',
         provider: data.provider || '',
+        accountNumber: (item.accountNumberHint || data.accountNumber || '').trim(),
         invoiceNumber: data.invoiceNumber || '',
         issueDate: issueDate,
         dueDate: dueDate,
@@ -1505,7 +1602,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       if (!current2) return; // se eliminó de la cola mientras se analizaba
       current2.status = 'ready';
       current2.aiError = friendlyErrorMessage(err);
-      current2.extracted = Object.assign({}, BLANK_EXTRACTED_BILL);
+      current2.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, { accountNumber: item.accountNumberHint || '' });
       showToast('AI analysis failed — you can still fill in the details by hand. ' + current2.aiError, 'error');
       render();
     }
@@ -1520,7 +1617,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (importQueue.length === 0) return '';
     var rows = importQueue.map(function(item){
       var statusBit = item.status === 'ready'
-        ? (item.aiError ? badge('due', 'Needs manual entry') : badge('upcoming', 'Ready to review'))
+        ? (item.aiError ? badge('due', 'Needs manual entry') : item.skippedAi ? badge('paid', 'Recognized — no AI needed') : badge('upcoming', 'Ready to review'))
         : badge('neutral', 'Analyzing with AI…');
       var actionBtn = item.status === 'ready'
         ? '<button class="mini-btn primary" onclick="openReviewModal(\''+item.id+'\')">Review</button>'
@@ -1540,12 +1637,15 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  mismo número de factura (si ambos lo tienen), o mismo proveedor + propiedad + periodo
    *  de facturación. Sirve para avisar antes de guardar un bill repetido por error (ej. subir
    *  la misma foto dos veces, o re-escanear un recibo que ya se había cargado). */
-  function findDuplicateBill(propertyId, provider, invoiceNumber, periodStart, periodEnd){
+  function findDuplicateBill(propertyId, provider, invoiceNumber, periodStart, periodEnd, accountNumber){
     var providerNorm = (provider || '').trim().toLowerCase();
     var invoiceNorm = (invoiceNumber || '').trim().toLowerCase();
+    var accountNorm = normalizeAccountNumber(accountNumber);
     return bills.find(function(b){
       if (b.propertyId !== propertyId) return false;
       if (invoiceNorm && b.invoiceNumber && b.invoiceNumber.trim().toLowerCase() === invoiceNorm) return true;
+      if (accountNorm && normalizeAccountNumber(b.accountNumber) === accountNorm &&
+        b.billingPeriodStart === periodStart && b.billingPeriodEnd === periodEnd) return true;
       var bProviderNorm = (b.provider || '').trim().toLowerCase();
       return bProviderNorm === providerNorm && bProviderNorm !== '' &&
         b.billingPeriodStart === periodStart && b.billingPeriodEnd === periodEnd;
@@ -1566,6 +1666,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-property').value = d.propertyId;
     document.getElementById('review-billtype').value = d.billType;
     document.getElementById('review-provider').value = d.provider;
+    document.getElementById('review-account').value = d.accountNumber || '';
+    document.getElementById('review-account-hint').hidden = true;
     document.getElementById('review-invoice').value = d.invoiceNumber;
     document.getElementById('review-issue').value = d.issueDate;
     document.getElementById('review-due').value = d.dueDate;
@@ -1576,6 +1678,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-recurring-day').value = '';
     document.getElementById('review-recurring-day-row').hidden = true;
     document.getElementById('review-modal-error').hidden = true;
+    refreshKnownAccountsDatalist();
     document.getElementById('review-modal').hidden = false;
   }
   function closeReviewModal(){
@@ -1630,6 +1733,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.chooseManualBillEntry = chooseManualBillEntry;
   async function confirmReviewedBill(){
     var provider = document.getElementById('review-provider').value.trim();
+    var accountNumber = document.getElementById('review-account').value.trim();
     var invoiceNumber = document.getElementById('review-invoice').value.trim();
     var issueDate = document.getElementById('review-issue').value;
     var dueDate = document.getElementById('review-due').value;
@@ -1647,7 +1751,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var reviewPropertyId = document.getElementById('review-property').value;
     var saveBtnEl = document.querySelector('#review-modal .mini-btn.primary');
     if (!reviewDuplicateOverride){
-      var duplicate = findDuplicateBill(reviewPropertyId, provider, invoiceNumber, periodStart, periodEnd);
+      var duplicate = findDuplicateBill(reviewPropertyId, provider, invoiceNumber, periodStart, periodEnd, accountNumber);
       if (duplicate){
         errorEl.textContent = 'This looks like a bill you already saved — same provider ('+esc(provider)+') and period for this property'+(invoiceNumber && duplicate.invoiceNumber ? ' (or a matching invoice number)' : '')+'. Tap "Save anyway" if this is a different bill, or Cancel to check it first.';
         errorEl.hidden = false;
@@ -1662,6 +1766,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       propertyId: document.getElementById('review-property').value,
       provider: provider,
       billType: document.getElementById('review-billtype').value,
+      accountNumber: accountNumber,
       invoiceNumber: invoiceNumber,
       issueDate: issueDate,
       dueDate: dueDate,
@@ -1669,7 +1774,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       billingPeriodEnd: periodEnd,
       amount: Math.round(amount*100)/100,
       status: 'pending',
-      notes: 'Imported from ' + (queueItem.fileName || 'a photo/PDF') + ' (details extracted automatically and reviewed before saving).'
+      notes: queueItem.skippedAi
+        ? 'Imported — recognized account, entered by hand without using AI.'
+        : 'Imported from ' + (queueItem.fileName || 'a photo/PDF') + ' (details extracted automatically and reviewed before saving).'
     };
 
     var saveBtn = document.querySelector('#review-modal .mini-btn.primary');
@@ -2690,6 +2797,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="card"><div class="field-list">'+
       '<div class="field-row"><span class="k">Property</span><span class="v"><a href="#/properties/'+(p?p.id:'')+'">'+esc(p?p.name:'—')+'</a></span></div>'+
       '<div class="field-row"><span class="k">Provider</span><span class="v">'+esc(b.provider)+'</span></div>'+
+      '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(b.accountNumber||'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Invoice number</span><span class="v">'+esc(b.invoiceNumber||'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Issue date</span><span class="v">'+(b.issueDate?fullDate(b.issueDate):'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Due date</span><span class="v">'+(b.dueDate?fullDate(b.dueDate):'—')+'</span></div>'+
