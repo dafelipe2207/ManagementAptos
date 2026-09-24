@@ -113,13 +113,22 @@ import * as recurringBillService from './services/recurringBillService.js';
     // el vencimiento de la semana que arranca el 20/10, esa semana ya debía estar pagada desde
     // el 06/10 (14 días antes), y el tenant siempre debe llevar 2 semanas de colchón pagado.
     var ADVANCE_DAYS = 14;
+    // Cuántos periodos FUTUROS (que todavía no arrancaron) se generan de una — no hay que
+    // adelantar más de lo que realmente hace falta mostrar como "upcoming": 1 si el ciclo es
+    // quincenal o mensual, 2 si es semanal (así la ventana de aviso es siempre de ~2 semanas en
+    // ambos casos, en vez de ir generando cargos cada vez más lejos que todavía ni corresponden).
+    function futureLookahead(frequency){ return frequency === 'weekly' ? 2 : 1; }
     function generateAllPeriods(schedule, tenant, asOfIso){
       var periods = [];
       var cutoff = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || null;
       var cursor = schedule.startDate;
       var isFirstPeriod = true;
+      var lookahead = futureLookahead(schedule.frequency);
+      var futurePushed = 0;
       while (true){
         if (cutoff && cursor > cutoff) break;
+        var isFuture = cursor > asOfIso;
+        if (isFuture && futurePushed >= lookahead) break;
         var end = schedule.frequency === 'monthly'
           ? stepDate(addMonths(cursor, 1), -1)
           : stepDate(cursor, periodLengthDays(schedule.frequency) - 1);
@@ -132,9 +141,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         var dueDate = isFirstPeriod ? cursor : stepDate(cursor, -ADVANCE_DAYS);
         periods.push({ periodStart: cursor, periodEnd: end, dueDate: dueDate });
         isFirstPeriod = false;
-        // Sigue generando periodos futuros mientras su vencimiento (2 semanas antes de que
-        // empiecen) ya haya llegado o esté por llegar, más un periodo "upcoming" de margen.
-        if (dueDate > asOfIso) break;
+        if (isFuture) futurePushed++;
         cursor = schedule.frequency === 'monthly' ? addMonths(cursor, 1) : stepDate(cursor, periodLengthDays(schedule.frequency));
       }
       return periods;
@@ -2240,8 +2247,11 @@ import * as recurringBillService from './services/recurringBillService.js';
       var guard = 0;
       while (tpl.nextDueDate <= TODAY && guard < 24){
         guard++;
-        var periodEnd = stepDateIso(tpl.nextDueDate, -1);
-        var periodStart = addMonthsIso(tpl.nextDueDate, -1);
+        // Se cobra POR ADELANTADO: el ciclo que arranca es el que se factura, no el que ya
+        // terminó — el periodo de facturación empieza en la fecha de vencimiento (nextDueDate)
+        // y se extiende un mes hacia adelante, con vencimiento el mismo día que arranca.
+        var periodStart = tpl.nextDueDate;
+        var periodEnd = stepDateIso(addMonthsIso(tpl.nextDueDate, 1), -1);
         var draftBill = {
           propertyId: tpl.propertyId,
           provider: tpl.provider,
@@ -3257,10 +3267,14 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="toggleRecurringBillActive(\''+r.id+'\','+(!r.isActive)+')">'+(r.isActive?'Pause':'Resume')+'</button>'+
         '</span></div>';
     }).join('');
+    // No hay botón "+ New recurring" acá a propósito: una plantilla recurrente solo se puede
+    // ORIGINAR desde un bill real (la casilla "Repeats every month" al agregar o editar un
+    // bill), nunca desde cero. Así siempre queda un bill real como primer punto de referencia
+    // (fechas, importe) en vez de una plantilla flotando sin ningún bill que la respalde. Acá
+    // solo se edita/pausa/retoma lo que ya existe.
     return '<div class="card"><div class="detail-head" style="margin-top:0;">'+
-      '<h2 style="margin:0;font-size:14px;">Recurring bills</h2>'+
-      '<button class="mini-btn" onclick="openRecurringBillModal()">+ New recurring</button></div>'+
-      (rows ? '<div class="field-list">'+rows+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">None yet — set one up for a bill that arrives every month, like gas or internet.</p>')+
+      '<h2 style="margin:0;font-size:14px;">Recurring bills</h2></div>'+
+      (rows ? '<div class="field-list">'+rows+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">None yet — check "Repeats every month" when adding or editing a bill, like gas or internet, to set one up.</p>')+
       '</div>';
   }
 
