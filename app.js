@@ -140,12 +140,16 @@ import * as recurringBillService from './services/recurringBillService.js';
       return periods;
     }
 
+    // "Overdue" solo cuando el periodo YA empezó (llegó su primer día) y sigue sin pagarse — no
+    // basta con que se haya cruzado la fecha ideal de pago anticipado (dueDate, 14 días antes).
+    // Esa fecha de 2 semanas de colchón sigue guardada en dueDate por si se necesita para otra
+    // cosa, pero ya no decide el estado: mientras el periodo no haya arrancado, es "upcoming" —
+    // recién al llegar su fecha de inicio sin haberse registrado el pago pasa a "overdue".
     function computeStatus(period, amountPaid, remaining, asOfIso){
       if (remaining <= 0.004) return 'paid';
       if (amountPaid > 0) return 'partially_paid';
-      if (period.dueDate < asOfIso) return 'overdue';
-      if (period.periodStart > asOfIso) return 'upcoming';
-      return 'due';
+      if (period.periodStart <= asOfIso) return 'overdue';
+      return 'upcoming';
     }
 
     /** Reparte los pagos de un inquilino contra TODOS sus periodos desde el move-in (no solo
@@ -573,7 +577,7 @@ import * as recurringBillService from './services/recurringBillService.js';
           roomName: room ? room.name : '—',
           amountRemaining: c.remaining,
           status: c.status,
-          daysOverdue: c.status==='overdue' ? Math.max(0, daysBetween(c.dueDate, TODAY)) : 0
+          daysOverdue: c.status==='overdue' ? Math.max(0, daysBetween(c.periodStart, TODAY)) : 0
         };
       })
       .sort(function(a,b){
@@ -1163,9 +1167,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       return '<div class="field-row"><span class="k">'+label+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:8px;">'+money(c.amountDue)+chargeStatusBadge(c)+'</span></div>';
     }
-    var PENDING_CAP = 20, PAID_CAP = 12;
-    var pendingShown = pending.slice(0, PENDING_CAP);
-    var pendingExtra = pending.length - pendingShown.length;
+    var PAID_CAP = 12;
+    var pendingShown = pending; // lo pendiente siempre se muestra completo, nunca recortado
+    var pendingExtra = 0;
     var paidShown = paid.slice(0, PAID_CAP);
     var paidExtra = paid.length - paidShown.length;
     return '<div class="card"><h2>Rent history</h2>'+
@@ -1352,9 +1356,15 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+o.tenant.id+'\')">Mark as paid</button>'+
         '</div></div>';
     }
+    /** Todo lo que todavía está PENDIENTE (por pagar/deber) se muestra completo, sin recortar —
+     *  nunca se manda a "history" algo que el inquilino sigue debiendo. */
+    function fullSection(list, rowFn, emptyText){
+      if (!list.length) return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+emptyText+'</p>';
+      return '<div class="field-list">'+list.map(rowFn).join('')+'</div>';
+    }
     /** Recorta una lista a los primeros N y, si sobran más, agrega una nota + el link que ya
-     *  abre el historial completo — en vez de un botón "Bills"/"Rent" aparte, esa es la única
-     *  puerta a "ver más" de cualquiera de los tres bloques. */
+     *  abre el historial completo — se usa SOLO para lo ya pagado/resuelto (nunca para lo
+     *  pendiente, que siempre se muestra completo vía fullSection). */
     function limitedSection(list, rowFn, emptyText, moreLabel, tenantId){
       if (!list.length) return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+emptyText+'</p>';
       var shown = list.slice(0, PAYMENTS_ROW_LIMIT);
@@ -1396,11 +1406,11 @@ import * as recurringBillService from './services/recurringBillService.js';
             '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Por pagar ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
-            limitedSection(pending, pendingRow, 'Nothing due right now.', 'Por pagar', t.id)+
+            fullSection(pending, pendingRow, 'Nothing due right now.')+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Pagado ('+paid.length+') · '+money(paidTotal)+'</h3>'+
             limitedSection(paid, paidRow, 'No payments recorded yet.', 'Pagado', t.id)+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
-            limitedSection(owedBills, billOwedRow, 'Nothing owed on bills right now.', 'Bills', t.id)+
+            fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.')+
             '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
             '</div>';
         }).join('');
