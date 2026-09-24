@@ -216,6 +216,7 @@
           <input id="review-recurring" type="checkbox" style="width:auto;" onchange="toggleReviewRecurringDay()" />
           Repeats every month (gas, internet, etc.)
         </label>
+        <p id="review-recurring-existing-hint" class="form-hint" hidden>This provider already repeats automatically every month for this property — that won't be duplicated.</p>
       </div>
       <div class="form-row" id="review-recurring-day-row" hidden>
         <label for="review-recurring-day">Billing day of month</label>
@@ -626,6 +627,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=40"></script>
+<script type="module" src="app.js?v=44"></script>
 </body>
 </html>
