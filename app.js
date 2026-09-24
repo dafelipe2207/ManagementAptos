@@ -1431,6 +1431,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   function openImportModal(){
     pendingImportFile = null;
+    document.getElementById('import-billtype').value = '';
     document.getElementById('import-account').value = '';
     document.getElementById('import-account-hint').hidden = true;
     refreshKnownAccountsDatalist();
@@ -1444,8 +1445,9 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   function confirmImportBill(){
     if (!pendingImportFile) return;
+    var billTypeHint = document.getElementById('import-billtype').value;
     var accountNumber = document.getElementById('import-account').value.trim();
-    var knownAccount = findKnownAccount(accountNumber);
+    var knownAccount = findKnownAccount(accountNumber, billTypeHint);
     var item = {
       id: 'import-' + Date.now() + '-' + Math.round(Math.random()*1000),
       fileName: pendingImportFile.fileName,
@@ -1454,14 +1456,15 @@ import * as recurringBillService from './services/recurringBillService.js';
       file: pendingImportFile.file,
       addedAt: TODAY,
       accountNumberHint: accountNumber, // se usa si hace falta mandar la foto a analizar (ver analyzeImportedFile)
+      billTypeHint: billTypeHint,
       status: 'processing', // 'processing' -> 'ready' (con los datos que devolvió la IA, o en blanco si el análisis falló)
       extracted: null,
       aiError: null
     };
     if (knownAccount){
-      // Cuenta ya conocida — no hace falta gastar una llamada a la IA: se completan
-      // propiedad/tipo/proveedor solos y el usuario solo tiene que escribir el monto y las
-      // fechas de esta factura en particular (eso sí cambia cada vez).
+      // Cuenta (+ tipo de servicio) ya conocida — no hace falta gastar una llamada a la IA: se
+      // completan propiedad/tipo/proveedor solos y el usuario solo tiene que escribir el monto
+      // y las fechas de esta factura en particular (eso sí cambia cada vez).
       item.status = 'ready';
       item.skippedAi = true;
       item.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, {
@@ -1488,10 +1491,14 @@ import * as recurringBillService from './services/recurringBillService.js';
   /* ---------- Known accounts (FASE: identificar la factura a mano antes de gastar una llamada
    *  a la IA) — cada bill guardado con un número de cuenta queda "recordado": la próxima vez
    *  que llega una factura de esa misma cuenta, la propiedad/tipo/proveedor se completan solos
-   *  y no hace falta mandarle la foto a la IA. ---------- */
+   *  y no hace falta mandarle la foto a la IA.
+   *  Un mismo número de cuenta puede cubrir más de un servicio (ej. Neogrids factura
+   *  electricidad Y agua caliente bajo la misma cuenta) — por eso el registro se guarda por
+   *  (número de cuenta + tipo de servicio), no solo por número de cuenta. ---------- */
   function normalizeAccountNumber(v){ return (v || '').trim().toLowerCase(); }
-  /** Un solo registro por número de cuenta — si hay más de un bill con el mismo número (lo
-   *  normal), se queda con el más reciente por fecha de emisión. */
+  /** { "<cuenta>": { "<billType>": {accountNumber, propertyId, billType, provider}, ... }, ... }
+   *  Si hay más de un bill con la misma cuenta y tipo (lo normal), se queda con el más reciente
+   *  por fecha de emisión. */
   function knownAccountsMap(){
     var map = {};
     bills.slice()
@@ -1499,14 +1506,29 @@ import * as recurringBillService from './services/recurringBillService.js';
       .forEach(function(b){
         var key = normalizeAccountNumber(b.accountNumber);
         if (!key) return;
-        map[key] = { accountNumber: b.accountNumber, propertyId: b.propertyId, billType: b.billType, provider: b.provider };
+        if (!map[key]) map[key] = {};
+        map[key][b.billType] = { accountNumber: b.accountNumber, propertyId: b.propertyId, billType: b.billType, provider: b.provider };
       });
     return map;
   }
-  function findKnownAccount(raw){
+  /** Con billType: devuelve el registro solo si esa cuenta+tipo coincide exactamente. Sin
+   *  billType: si la cuenta solo tiene un tipo de servicio conocido, lo devuelve igual (caso
+   *  común); si tiene más de uno, no adivina — hace falta indicar el tipo. */
+  function findKnownAccount(raw, billType){
     var key = normalizeAccountNumber(raw);
     if (!key) return null;
-    return knownAccountsMap()[key] || null;
+    var entry = knownAccountsMap()[key];
+    if (!entry) return null;
+    if (billType) return entry[billType] || null;
+    var types = Object.keys(entry);
+    return types.length === 1 ? entry[types[0]] : null;
+  }
+  /** Qué tipos de servicio existen para una cuenta — se usa para avisar cuando la cuenta se
+   *  reconoce pero hace falta el tipo de servicio para saber cuál de ellos es. */
+  function findKnownAccountTypes(raw){
+    var key = normalizeAccountNumber(raw);
+    var entry = key && knownAccountsMap()[key];
+    return entry ? Object.keys(entry) : [];
   }
   function knownAccountLabel(entry){
     var propName = (properties.find(function(p){ return p.id===entry.propertyId; }) || {}).name || 'unknown property';
@@ -1516,20 +1538,33 @@ import * as recurringBillService from './services/recurringBillService.js';
     var list = document.getElementById('known-accounts-list');
     if (!list) return;
     var map = knownAccountsMap();
-    list.innerHTML = Object.keys(map).map(function(k){
-      var e = map[k];
-      return '<option value="'+esc(e.accountNumber)+'">'+esc(knownAccountLabel(e))+'</option>';
-    }).join('');
+    var options = [];
+    Object.keys(map).forEach(function(k){
+      Object.keys(map[k]).forEach(function(t){
+        var e = map[k][t];
+        options.push('<option value="'+esc(e.accountNumber)+'">'+esc(knownAccountLabel(e))+'</option>');
+      });
+    });
+    list.innerHTML = options.join('');
   }
-  /** En el modal de importar: si lo que se escribió coincide con una cuenta ya conocida, muestra
-   *  el aviso de que la IA no hará falta. */
+  /** En el modal de importar: si lo que se escribió (cuenta + tipo, si se indicó) coincide con
+   *  una cuenta ya conocida, muestra el aviso de que la IA no hará falta. Si la cuenta se
+   *  reconoce pero cubre más de un servicio, pide indicar el tipo en vez de adivinar. */
   function onImportAccountInput(){
     var val = document.getElementById('import-account').value;
+    var billType = document.getElementById('import-billtype').value;
     var hint = document.getElementById('import-account-hint');
-    var match = findKnownAccount(val);
+    var match = findKnownAccount(val, billType);
     if (match){
       hint.textContent = '✓ Matches a bill you already saved (' + knownAccountLabel(match) + '). No need to analyze the photo with AI — you\'ll just confirm the amount and dates.';
       hint.className = 'form-hint match';
+      hint.hidden = false;
+      return;
+    }
+    var knownTypes = findKnownAccountTypes(val);
+    if (knownTypes.length){
+      hint.textContent = 'This account is known for: ' + knownTypes.map(billTypeLabel).join(', ') + ' — pick the matching bill type above to skip the AI step.';
+      hint.className = 'form-hint';
       hint.hidden = false;
     } else {
       hint.hidden = true;
@@ -1537,19 +1572,26 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.onImportAccountInput = onImportAccountInput;
   /** Lo mismo, pero dentro del modal de revisión (entrada manual, o para corregir el número de
-   *  cuenta después de que la IA ya analizó la foto). Si hay coincidencia, también rellena
-   *  propiedad/tipo/proveedor — la cuenta conocida manda sobre lo que haya ahí. */
+   *  cuenta después de que la IA ya analizó la foto) — usa el tipo de servicio ya seleccionado
+   *  ahí para desambiguar, y solo rellena propiedad/proveedor (no pisa el tipo elegido). */
   function onReviewAccountInput(){
     var val = document.getElementById('review-account').value;
+    var billType = document.getElementById('review-billtype').value;
     var hint = document.getElementById('review-account-hint');
-    var match = findKnownAccount(val);
+    var match = findKnownAccount(val, billType);
     if (match){
-      hint.textContent = '✓ Matches a bill you already saved (' + knownAccountLabel(match) + ') — property, type and provider filled in below.';
+      hint.textContent = '✓ Matches a bill you already saved (' + knownAccountLabel(match) + ') — property and provider filled in below.';
       hint.className = 'form-hint match';
       hint.hidden = false;
       document.getElementById('review-property').value = match.propertyId;
-      document.getElementById('review-billtype').value = match.billType;
       document.getElementById('review-provider').value = match.provider;
+      return;
+    }
+    var knownTypes = findKnownAccountTypes(val);
+    if (knownTypes.length){
+      hint.textContent = 'This account is known for: ' + knownTypes.map(billTypeLabel).join(', ') + ' — set the bill type above to match it.';
+      hint.className = 'form-hint';
+      hint.hidden = false;
     } else {
       hint.hidden = true;
     }
@@ -1580,7 +1622,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       }
       current.extracted = {
         propertyId: data.propertyId || '',
-        billType: BILL_TYPES.indexOf(data.billType) >= 0 ? data.billType : 'other',
+        billType: item.billTypeHint || (BILL_TYPES.indexOf(data.billType) >= 0 ? data.billType : 'other'),
         provider: data.provider || '',
         accountNumber: (item.accountNumberHint || data.accountNumber || '').trim(),
         invoiceNumber: data.invoiceNumber || '',
@@ -1602,7 +1644,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       if (!current2) return; // se eliminó de la cola mientras se analizaba
       current2.status = 'ready';
       current2.aiError = friendlyErrorMessage(err);
-      current2.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, { accountNumber: item.accountNumberHint || '' });
+      current2.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, { accountNumber: item.accountNumberHint || '', billType: item.billTypeHint || 'other' });
       showToast('AI analysis failed — you can still fill in the details by hand. ' + current2.aiError, 'error');
       render();
     }
