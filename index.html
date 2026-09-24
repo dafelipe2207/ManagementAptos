@@ -169,8 +169,8 @@
 
   <div class="modal-overlay" id="review-modal" hidden>
     <div class="card modal-card" style="max-width:360px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Review extracted data</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Check and correct what the automatic analysis detected before saving this bill.</p>
+      <h2 id="review-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Review extracted data</h2>
+      <p id="review-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;">Check and correct what the automatic analysis detected before saving this bill.</p>
       <div class="form-row">
         <label for="review-property">Property</label>
         <select id="review-property"></select>
@@ -211,7 +211,7 @@
         <label for="review-amount">Amount</label>
         <input id="review-amount" type="number" min="0" step="0.01" />
       </div>
-      <div class="form-row">
+      <div class="form-row" id="review-recurring-row">
         <label style="display:flex;align-items:center;gap:8px;font-weight:500;">
           <input id="review-recurring" type="checkbox" style="width:auto;" onchange="toggleReviewRecurringDay()" />
           Repeats every month (gas, internet, etc.)
@@ -224,10 +224,10 @@
       </div>
       <p id="review-modal-error" class="form-error" hidden></p>
       <div class="modal-actions" style="justify-content:space-between;">
-        <button class="mini-btn" onclick="discardReviewItem()">Discard</button>
+        <button class="mini-btn" id="review-discard-btn" onclick="discardReviewItem()">Discard</button>
         <div style="display:flex;gap:8px;">
           <button class="mini-btn" onclick="closeReviewModal()">Cancel</button>
-          <button class="mini-btn primary" onclick="confirmReviewedBill()">Save bill</button>
+          <button class="mini-btn primary" onclick="submitReviewModal()">Save bill</button>
         </div>
       </div>
     </div>
@@ -627,6 +627,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=45"></script>
+<script type="module" src="app.js?v=46"></script>
 </body>
 </html>
