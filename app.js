@@ -3114,7 +3114,9 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  pendiente, vencido). El fondo rayado que queda visible entre barras es un hueco — un
    *  tramo de fechas sin ningún bill cargado. Respeta el filtro de propiedad de la pestaña. */
   function billsTimelineHtml(){
-    var scopedProperties = billsPropertyFilter==='all' ? properties : properties.filter(function(p){ return p.id===billsPropertyFilter; });
+    // El diagrama siempre muestra TODAS las propiedades — no se filtra por el chip de
+    // "All properties / Belmont / ..." de más abajo, que solo afecta a la tabla de bills.
+    var scopedProperties = properties;
     if (!scopedProperties.length) return '';
     var months = [];
     for (var i=5; i>=0; i--) months.push(addMonthsIso(TODAY.slice(0,7)+'-01', -i).slice(0,7));
@@ -3172,7 +3174,13 @@ import * as recurringBillService from './services/recurringBillService.js';
     var rows = [];
     scopedProperties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).forEach(function(p){
       var propBills = bills.filter(function(b){ return b.propertyId===p.id; });
-      var typesPresent = BILL_RECURRING_TYPES.filter(function(t){ return propBills.some(function(b){ return b.billType===t; }); });
+      // A diferencia de detectMissingBills (que solo mira los tipos "recurrentes" de verdad),
+      // el diagrama tiene que reflejar TODOS los pagos — incluido "Other", donde puede haber
+      // cargos sueltos o ajustes que el admin clasificó aparte del servicio recurrente principal
+      // (p.ej. un reajuste de tarifa del mismo proveedor de gas, guardado como "Other" para no
+      // mezclarlo con el cobro mensual habitual).
+      var typesPresent = BILL_RECURRING_TYPES.concat(['other']).filter(function(t){ return propBills.some(function(b){ return b.billType===t; }); });
+      propBills.forEach(function(b){ if (typesPresent.indexOf(b.billType) === -1) typesPresent.push(b.billType); });
       if (!typesPresent.length) return;
       var typeRows = typesPresent.map(function(bt){
         var typeBills = propBills.filter(function(b){
@@ -3191,8 +3199,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var monthTicks = months.map(function(ym, i){
       var left = pct(ym + '-01');
       return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);'+(i===0?'':'transform:translateX(-1px);')+'">'+monthLabel(ym)+'</span>';
-    }).join('') +
-      '<span style="position:absolute;left:'+todayLeft+'%;bottom:0;font-size:9.5px;font-weight:650;color:var(--text);transform:translateX(-50%);white-space:nowrap;">Today</span>';
+    }).join('');
     var legendItem = function(colorVar, label){
       return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
         '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
