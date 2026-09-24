@@ -138,6 +138,18 @@
         </div>
         <div id="import-preview-name" style="font-size:12.5px;color:var(--text-dim);word-break:break-all;"></div>
         <div class="form-row" style="margin-top:10px;">
+          <label for="import-billtype">Bill type (optional)</label>
+          <select id="import-billtype" onchange="onImportAccountInput()">
+            <option value="">Not sure yet</option>
+            <option value="electricity">Electricity</option>
+            <option value="water">Water</option>
+            <option value="hot_water">Hot water</option>
+            <option value="gas">Gas</option>
+            <option value="internet">Internet</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-row">
           <label for="import-account">Account number (optional)</label>
           <input id="import-account" type="text" list="known-accounts-list" oninput="onImportAccountInput()" placeholder="Type it if you know it — recognized accounts skip the AI step" />
           <p id="import-account-hint" class="form-hint" hidden></p>
@@ -165,7 +177,7 @@
       </div>
       <div class="form-row">
         <label for="review-billtype">Bill type</label>
-        <select id="review-billtype">
+        <select id="review-billtype" onchange="onReviewAccountInput()">
           <option value="electricity">Electricity</option>
           <option value="water">Water</option>
           <option value="hot_water">Hot water</option>
@@ -608,6 +620,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=35"></script>
+<script type="module" src="app.js?v=36"></script>
 </body>
 </html>
