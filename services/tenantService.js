@@ -18,7 +18,8 @@ function fromRow(row) {
     rentAmount: Number(row.rent_amount) || 0,
     rentFrequency: row.rent_frequency,
     paymentDay: row.payment_day,
-    excludedBillTypes: Array.isArray(row.excluded_bill_types) ? row.excluded_bill_types : []
+    excludedBillTypes: Array.isArray(row.excluded_bill_types) ? row.excluded_bill_types : [],
+    isActive: row.is_active !== false
   };
   if (row.phone) t.phone = row.phone;
   if (row.email) t.email = row.email;
@@ -43,7 +44,8 @@ function toRow(t) {
     rent_frequency: t.rentFrequency,
     payment_day: t.paymentDay,
     notes: t.notes || null,
-    excluded_bill_types: Array.isArray(t.excludedBillTypes) ? t.excludedBillTypes : []
+    excluded_bill_types: Array.isArray(t.excludedBillTypes) ? t.excludedBillTypes : [],
+    is_active: t.isActive !== false
   };
 }
 
