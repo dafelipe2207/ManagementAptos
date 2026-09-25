@@ -49,6 +49,11 @@ import * as recurringBillService from './services/recurringBillService.js';
   function isSuperAdmin(){ return !!currentProfile && currentProfile.role === 'super_admin'; }
   function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator'); }
   function isTenantRole(){ return !!currentProfile && currentProfile.role === 'tenant'; }
+  /** Bills de este proveedor NUNCA se muestran ni se envían a los inquilinos — ni en "My Bills",
+   *  ni en el saldo pendiente de su dashboard, ni con los botones de WhatsApp (individual o de
+   *  grupo) del lado del admin. Comparación sin mayúsculas/espacios para no depender de cómo
+   *  haya quedado tipeado el proveedor. */
+  function isTenantHiddenProvider(provider){ return (provider || '').trim().toUpperCase() === 'RS'; }
   /**
    * Convierte un objeto Date (construido en hora LOCAL, p.ej. con
    * `new Date(iso+'T00:00:00')`) de vuelta a 'YYYY-MM-DD' usando sus
@@ -3349,7 +3354,7 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  bill — solo aparece si el inquilino tiene teléfono guardado; si no, muestra un aviso corto
    *  en vez del botón, para que quede claro por qué no puede mandarlo desde ahí. */
   function whatsAppButtonHtml(bill, property, tenant, amount){
-    if (!tenant) return '';
+    if (!tenant || isTenantHiddenProvider(bill.provider)) return '';
     var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
     if (!link) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return '<a class="text-link" style="font-size:11.5px;" href="'+link+'" target="_blank" rel="noopener">Send WhatsApp</a>';
@@ -3396,6 +3401,10 @@ import * as recurringBillService from './services/recurringBillService.js';
   async function shareBillToWhatsAppGroup(billId){
     var bill = billOf(billId);
     if (!bill || !bill.allocations || !bill.allocations.length) return;
+    if (isTenantHiddenProvider(bill.provider)){
+      showToast('Bills from this provider are never sent to tenants.', 'error');
+      return;
+    }
     var property = propertyOf(bill.propertyId);
     if (!property || !property.whatsappGroupLink){
       showToast('Agrega primero el link del grupo de WhatsApp de esta propiedad (Edit property).', 'error');
@@ -3505,7 +3514,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;">Allocation</h2>'+
         '<div style="display:flex;gap:8px;">'+
-        '<button class="mini-btn" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share to WhatsApp group</button>'+
+        (isTenantHiddenProvider(b.provider) ? '' : '<button class="mini-btn" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share to WhatsApp group</button>')+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
         '</div></div>'+
         '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+
@@ -4570,7 +4579,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     var myPayments = paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.paymentDate||'').localeCompare(a.paymentDate||''); });
     var latestPayment = myPayments[0];
     var myAllocations = [];
-    bills.forEach(function(b){ (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); }); });
+    bills.forEach(function(b){
+      if (isTenantHiddenProvider(b.provider)) return;
+      (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); });
+    });
     var outstanding = myAllocations.filter(function(x){ return !x.alloc.paid; }).reduce(function(s,x){ return s+x.alloc.amount; }, 0);
     return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') +
       '<div class="card">'+
@@ -4625,7 +4637,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     var t = myTenantRecord();
     var myAllocations = [];
     if (t){
-      bills.forEach(function(b){ (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); }); });
+      bills.forEach(function(b){
+        if (isTenantHiddenProvider(b.provider)) return;
+        (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); });
+      });
     }
     if (!myAllocations.length){
       return pageHeader('My Bills', 'Your share of each shared bill — electricity, water, gas, internet and more.') +
