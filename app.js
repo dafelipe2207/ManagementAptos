@@ -1654,6 +1654,56 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.onReviewAccountInput = onReviewAccountInput;
+  /** Lista de proveedores que ya se usaron para la propiedad seleccionada en el modal de
+   *  revisión — para que al tipear el proveedor salgan sugerencias relevantes en vez de la
+   *  lista completa de todos los proveedores de todas las propiedades. Se refresca cada vez
+   *  que se abre el modal y cada vez que se cambia de propiedad ahí adentro. */
+  function refreshReviewProviderDatalist(){
+    var list = document.getElementById('review-provider-list');
+    if (!list) return;
+    var propertyId = document.getElementById('review-property').value;
+    var seen = {};
+    var options = [];
+    bills.slice()
+      .sort(function(a,b){ return (b.issueDate||'').localeCompare(a.issueDate||''); })
+      .forEach(function(b){
+        if (propertyId && b.propertyId !== propertyId) return;
+        var key = (b.provider||'').trim().toLowerCase();
+        if (!key || seen[key]) return;
+        seen[key] = true;
+        options.push('<option value="'+esc(b.provider)+'">'+esc(billTypeLabel(b.billType))+'</option>');
+      });
+    list.innerHTML = options.join('');
+  }
+  /** Al cambiar de propiedad en el modal de revisión, la lista de proveedores sugeridos se
+   *  limita a los que ya se usaron en ESA propiedad. */
+  function onReviewPropertyChange(){
+    refreshReviewProviderDatalist();
+  }
+  window.onReviewPropertyChange = onReviewPropertyChange;
+  /** Al escribir/elegir un proveedor ya conocido (para esta propiedad, o para cualquiera si acá
+   *  todavía no se cargó ninguno), rellena el tipo de servicio, el número de cuenta y el importe
+   *  con lo último que se cargó de ese proveedor — el usuario solo confirma o corrige, sin tener
+   *  que volver a escribir todo. Nunca pisa un campo que el usuario ya completó a mano. */
+  function onReviewProviderInput(){
+    var provider = document.getElementById('review-provider').value.trim();
+    if (!provider) return;
+    var propertyId = document.getElementById('review-property').value;
+    var normProvider = provider.toLowerCase();
+    var candidates = bills.filter(function(b){ return (b.provider||'').trim().toLowerCase() === normProvider; });
+    if (!candidates.length) return;
+    var sameProperty = candidates.filter(function(b){ return b.propertyId === propertyId; });
+    var pool = (sameProperty.length ? sameProperty : candidates)
+      .slice().sort(function(a,b){ return (b.issueDate||'').localeCompare(a.issueDate||''); });
+    var match = pool[0];
+    var billTypeEl = document.getElementById('review-billtype');
+    var accountEl = document.getElementById('review-account');
+    var amountEl = document.getElementById('review-amount');
+    if (billTypeEl && (!billTypeEl.value || billTypeEl.value === 'other')) billTypeEl.value = match.billType;
+    if (accountEl && !accountEl.value && match.accountNumber) accountEl.value = match.accountNumber;
+    if (amountEl && !amountEl.value && match.amount) amountEl.value = match.amount;
+  }
+  window.onReviewProviderInput = onReviewProviderInput;
   var BILL_TYPES = ['electricity','water','hot_water','gas','internet','other'];
   var BILL_TYPE_LABELS = { electricity:'Electricity', water:'Water', hot_water:'Hot water', gas:'Gas', internet:'Internet', other:'Other' };
   function billTypeLabel(t){ return BILL_TYPE_LABELS[t] || (t ? t.charAt(0).toUpperCase()+t.slice(1) : ''); }
@@ -1780,6 +1830,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-recurring-existing-hint').hidden = true;
     document.getElementById('review-modal-error').hidden = true;
     refreshKnownAccountsDatalist();
+    refreshReviewProviderDatalist();
     document.getElementById('review-modal').hidden = false;
   }
   function closeReviewModal(){
@@ -1843,6 +1894,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     document.getElementById('review-modal-error').hidden = true;
     refreshKnownAccountsDatalist();
+    refreshReviewProviderDatalist();
     document.getElementById('review-modal').hidden = false;
   }
   window.openEditBillModal = openEditBillModal;
@@ -2956,7 +3008,6 @@ import * as recurringBillService from './services/recurringBillService.js';
   var billsViewTab = 'list'; // 'list' | 'missing'
   function setBillsViewTab(tab){
     billsViewTab = tab;
-    if (tab === 'missing' && missingBillsAiState === 'idle') runMissingBillsAnalysis();
     render();
   }
   window.setBillsViewTab = setBillsViewTab;
@@ -3018,69 +3069,71 @@ import * as recurringBillService from './services/recurringBillService.js';
       importQueueCard() + propertyTabsHtml + billsTimelineHtml() + recurringBillsCardHtml(billsPropertyFilter) + statHtml + chipsHtml + rows;
   }
 
-  /* ============ "Missing invoices" tab — AI-based prediction (predict-bills Edge Function) ============ */
-  var missingBillsAiState = 'idle'; // 'idle' | 'loading' | 'done' | 'error'
-  var missingBillsAiResult = null;  // array of predictions once done
-  var missingBillsAiError = '';
-
-  async function runMissingBillsAnalysis(){
-    if (!bills.length){ missingBillsAiState = 'done'; missingBillsAiResult = []; render(); return; }
-    missingBillsAiState = 'loading';
-    render();
-    try {
-      var payload = bills.map(function(b){
-        var p = properties.find(function(x){ return x.id===b.propertyId; });
-        return {
-          propertyId: b.propertyId, propertyName: p ? p.name : '—',
-          billType: b.billType, provider: b.provider,
-          issueDate: b.issueDate, dueDate: b.dueDate,
-          billingPeriodStart: b.billingPeriodStart, billingPeriodEnd: b.billingPeriodEnd,
-          amount: b.amount
-        };
+  /* ============ "Missing invoices" tab — cálculo local por promedio de facturas pasadas ============
+   * Ya no depende de la IA (Edge Function predict-bills) — esa dependencia fallaba seguido
+   * ("AI service is overloaded"). En su lugar, para cada propiedad + tipo de servicio con al
+   * menos 2 bills cargados, calcula el intervalo PROMEDIO real entre facturas consecutivas
+   * (en vez de un umbral fijo de 45 días para todos) y proyecta la próxima fecha esperada a
+   * partir de la última factura — así se ajusta solo a cada proveedor (mensual, trimestral,
+   * etc.) y mejora a medida que se van cargando más bills. También estima el importe esperado
+   * como el promedio de los importes ya vistos. Es puro cálculo local, sin red — se recalcula
+   * solo en cada render(), siempre con los datos más recientes. */
+  function computeMissingInvoicePredictions(){
+    function dateOf(b){ return b.billingPeriodStart || b.issueDate || b.dueDate || null; }
+    var groups = {};
+    bills.forEach(function(b){
+      if (BILL_RECURRING_TYPES.indexOf(b.billType) === -1 || !dateOf(b)) return;
+      var key = b.propertyId + '|' + b.billType;
+      (groups[key] = groups[key] || []).push(b);
+    });
+    var predictions = [];
+    Object.keys(groups).forEach(function(key){
+      var list = groups[key].slice().sort(function(a,b){ return dateOf(a).localeCompare(dateOf(b)); });
+      if (list.length < 2) return; // hace falta al menos 2 para saber el ritmo habitual
+      var intervals = [];
+      for (var i=1;i<list.length;i++) intervals.push(daysBetween(dateOf(list[i-1]), dateOf(list[i])));
+      var avgInterval = Math.round(intervals.reduce(function(s,n){ return s+n; }, 0) / intervals.length);
+      if (avgInterval <= 0) return;
+      var last = list[list.length-1];
+      var lastDate = dateOf(last);
+      var predictedNextDate = stepDateIso(lastDate, avgInterval);
+      var daysOverdue = daysBetween(predictedNextDate, TODAY);
+      if (daysOverdue <= 0) return; // todavía no le toca, según su propio ritmo histórico
+      var estimatedAmount = round2(list.reduce(function(s,b){ return s + (b.amount||0); }, 0) / list.length);
+      var p = properties.find(function(x){ return x.id===last.propertyId; });
+      predictions.push({
+        propertyId: last.propertyId, propertyName: p ? p.name : '—',
+        billType: last.billType, provider: last.provider,
+        lastBillDate: lastDate, predictedNextDate: predictedNextDate, daysOverdue: daysOverdue,
+        estimatedAmount: estimatedAmount, sampleCount: list.length, avgInterval: avgInterval
       });
-      var result = await aiService.predictMissingBills(payload, TODAY);
-      missingBillsAiResult = (result && result.predictions) || [];
-      missingBillsAiState = 'done';
-    } catch(err){
-      missingBillsAiError = friendlyErrorMessage(err);
-      missingBillsAiState = 'error';
-    }
-    render();
+    });
+    return predictions.sort(function(a,b){ return b.daysOverdue - a.daysOverdue; });
   }
-  window.runMissingBillsAnalysis = runMissingBillsAnalysis;
 
   function missingInvoiceRowHtml(pred){
-    var overdueTxt = pred.daysOverdue!=null ? (pred.daysOverdue+' day'+(pred.daysOverdue===1?'':'s')+' overdue') : '';
+    var overdueTxt = pred.daysOverdue+' day'+(pred.daysOverdue===1?'':'s')+' overdue';
     return '<div class="card">'+
       '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(pred.billType))+' — '+esc(pred.provider)+'</h2>'+
-      badge('overdue', overdueTxt || 'Missing')+'</div>'+
+      badge('overdue', overdueTxt)+'</div>'+
       '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+esc(pred.propertyName)+'</p>'+
       '<div class="field-list">'+
-      '<div class="field-row"><span class="k">Last bill</span><span class="v">'+(pred.lastBillDate?shortDate(pred.lastBillDate):'—')+'</span></div>'+
-      '<div class="field-row"><span class="k">Expected around</span><span class="v">'+(pred.predictedNextDate?shortDate(pred.predictedNextDate):'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Last bill</span><span class="v">'+shortDate(pred.lastBillDate)+'</span></div>'+
+      '<div class="field-row"><span class="k">Expected around</span><span class="v">'+shortDate(pred.predictedNextDate)+'</span></div>'+
+      '<div class="field-row"><span class="k">Estimated amount</span><span class="v">'+money(pred.estimatedAmount)+'</span></div>'+
       '</div>'+
-      (pred.note ? '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">'+esc(pred.note)+'</p>' : '')+
+      '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">Based on '+pred.sampleCount+' past bills for this provider, about every '+pred.avgInterval+' days on average.</p>'+
       '<button class="mini-btn primary" style="margin-top:10px;" onclick="setBillsViewTab(\'list\');openImportModal();">+ Add this bill</button>'+
       '</div>';
   }
 
   function renderMissingInvoicesTab(){
-    var header = pageHeader('Missing invoices', "AI looks at each property's billing history to guess when the next invoice should arrive, and flags the ones that seem overdue.") +
-      '<button class="mini-btn" style="margin-bottom:12px;" onclick="runMissingBillsAnalysis()" '+(missingBillsAiState==='loading'?'disabled':'')+'>'+
-      (missingBillsAiState==='loading' ? 'Analyzing…' : 'Re-analyze with AI') + '</button>';
-
-    if (missingBillsAiState === 'idle' || missingBillsAiState === 'loading'){
-      return header + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">'+
-        (missingBillsAiState==='loading' ? 'Reviewing your bill history for gaps…' : 'Not analyzed yet.')+'</p></div>';
-    }
-    if (missingBillsAiState === 'error'){
-      return header + '<div class="card"><p style="font-size:13.5px;color:var(--status-overdue);margin:0;">Could not run the AI analysis. '+esc(missingBillsAiError)+'</p></div>';
-    }
-    if (!missingBillsAiResult || !missingBillsAiResult.length){
+    var header = pageHeader('Missing invoices', "Looks at each property's own billing history — the average time between its past invoices — to guess when the next one should arrive, and flags the ones that seem overdue. Improves automatically as more bills are loaded.");
+    var predictions = computeMissingInvoicePredictions();
+    if (!predictions.length){
       return header + emptyState('receipt', 'Nothing missing', "Every recurring bill on file looks up to date — nothing seems overdue based on each property's usual pattern.", '');
     }
-    var sorted = missingBillsAiResult.slice().sort(function(a,b){ return (b.daysOverdue||0)-(a.daysOverdue||0); });
-    return header + sorted.map(missingInvoiceRowHtml).join('');
+    return header + predictions.map(missingInvoiceRowHtml).join('');
   }
 
   /** Detecta bills "recurrentes" (electricidad, agua, hot water, gas, internet — no "other") que
