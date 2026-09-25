@@ -1176,25 +1176,42 @@ import * as recurringBillService from './services/recurringBillService.js';
     var bond = bondOf(t.id);
     var bondPaid = bond ? bond.amountPaid : 0;
 
-    var totalBilledDays = 0, totalBilledAmount = 0, unpaidBilled = 0, lastCovered = t.moveInDate;
+    // Agrupado por TIPO de servicio (electricidad, gas, internet, etc.) — cada uno tiene su
+    // propio ciclo de facturación, así que el "hueco sin facturar" y la tarifa promedio se
+    // calculan por separado para cada uno, no mezclados en un solo número.
+    var byType = {};
     bills.forEach(function(b){
       (b.allocations || []).forEach(function(a){
         if (a.tenantId !== t.id) return;
+        var bt = b.billType || 'other';
+        var g = byType[bt] || (byType[bt] = { billedDays:0, billedAmount:0, unpaid:0, lastCovered:t.moveInDate });
         var days = (b.billingPeriodStart && b.billingPeriodEnd) ? occupiedDaysInRange(t, b.billingPeriodStart, b.billingPeriodEnd) : 0;
-        if (days > 0){
-          totalBilledDays += days;
-          totalBilledAmount += a.amount;
-        }
-        if (!a.paid) unpaidBilled += a.amount;
-        if (b.billingPeriodEnd && b.billingPeriodEnd > lastCovered) lastCovered = b.billingPeriodEnd;
+        if (days > 0){ g.billedDays += days; g.billedAmount += a.amount; }
+        if (!a.paid) g.unpaid += a.amount;
+        if (b.billingPeriodEnd && b.billingPeriodEnd > g.lastCovered) g.lastCovered = b.billingPeriodEnd;
       });
     });
-    var hasHistory = totalBilledDays > 0;
-    var dailyRate = hasHistory ? (totalBilledAmount / totalBilledDays) : 0;
-    var gapStart = stepDateIso(lastCovered, 1);
-    var gapDays = gapStart <= moveOutDate ? (daysBetween(gapStart, moveOutDate) + 1) : 0;
-    var estimatedGapAmount = round2(dailyRate * gapDays);
-    var totalEstimatedOwed = round2(unpaidBilled + estimatedGapAmount);
+
+    var lines = [];
+    var totalUnpaid = 0, totalEstimatedGap = 0;
+    Object.keys(byType).sort(function(a,b){ return billTypeLabel(a).localeCompare(billTypeLabel(b)); }).forEach(function(bt){
+      var g = byType[bt];
+      var hasHistory = g.billedDays > 0;
+      var dailyRate = hasHistory ? (g.billedAmount / g.billedDays) : 0;
+      var gapStart = stepDateIso(g.lastCovered, 1);
+      var gapDays = gapStart <= moveOutDate ? (daysBetween(gapStart, moveOutDate) + 1) : 0;
+      var estimatedGapAmount = round2(dailyRate * gapDays);
+      var unpaid = round2(g.unpaid);
+      if (unpaid <= 0 && estimatedGapAmount <= 0) return; // nada que mostrar para este tipo
+      totalUnpaid += unpaid;
+      totalEstimatedGap += estimatedGapAmount;
+      lines.push({
+        billType: bt, unpaid: unpaid, hasHistory: hasHistory,
+        dailyRate: round2(dailyRate), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount
+      });
+    });
+
+    var totalEstimatedOwed = round2(totalUnpaid + totalEstimatedGap);
     var estimatedReturn = round2(bondPaid - totalEstimatedOwed);
     var outstandingRent = rentCharges
       .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004; })
@@ -1202,8 +1219,8 @@ import * as recurringBillService from './services/recurringBillService.js';
 
     return {
       moveOutDate: moveOutDate, isActual: !!t.actualMoveOutDate, hasBond: !!bond,
-      bondPaid: bondPaid, hasHistory: hasHistory, dailyRate: round2(dailyRate),
-      unpaidBilled: round2(unpaidBilled), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount,
+      bondPaid: bondPaid, lines: lines,
+      totalUnpaid: round2(totalUnpaid), totalEstimatedGap: round2(totalEstimatedGap),
       totalEstimatedOwed: totalEstimatedOwed, estimatedReturn: estimatedReturn,
       outstandingRent: round2(outstandingRent)
     };
@@ -1212,18 +1229,29 @@ import * as recurringBillService from './services/recurringBillService.js';
   function moveOutSettlementHtml(t){
     var est = computeMoveOutEstimate(t);
     if (!est) return '';
+    /** Una fila por tipo de servicio, mostrando la parte FIJA (ya facturada, sin pagar — un
+     *  monto real) separada de la parte ESTIMADA (proyectada con el promedio, para los días
+     *  que todavía no tienen factura) — así queda claro qué es seguro y qué es una proyección. */
+    function typeLineHtml(line){
+      var parts = [];
+      if (line.unpaid > 0) parts.push('<b>'+money(line.unpaid)+'</b> already charged (unpaid)');
+      if (line.estimatedGapAmount > 0) parts.push('<b>'+money(line.estimatedGapAmount)+'</b> estimated ('+line.gapDays+' day'+(line.gapDays===1?'':'s')+' not billed yet'+(line.hasHistory?(', at '+money(line.dailyRate)+'/day'):'')+')');
+      return '<div class="field-row" style="align-items:flex-start;">'+
+        '<span class="k">'+esc(billTypeLabel(line.billType))+'</span>'+
+        '<span class="v" style="text-align:right;font-weight:400;">'+money(round2(line.unpaid+line.estimatedGapAmount))+
+        '<br/><span style="font-size:10.5px;color:var(--text-faint);font-weight:400;">'+parts.join(' + ')+'</span></span></div>';
+    }
     var rows =
       '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(est.moveOutDate)+(est.isActual?'':' (expected)')+'</span></div>'+
-      '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(est.bondPaid)+'</span></div>'+
-      (est.unpaidBilled > 0 ? '<div class="field-row"><span class="k">Bills already charged, unpaid</span><span class="v">'+money(est.unpaidBilled)+'</span></div>' : '')+
-      (est.hasHistory
-        ? '<div class="field-row"><span class="k">Avg. bill rate (from history)</span><span class="v">'+money(est.dailyRate)+' / day</span></div>'+
-          '<div class="field-row"><span class="k">Estimated bills ('+est.gapDays+' day'+(est.gapDays===1?'':'s')+' not billed yet)</span><span class="v">'+money(est.estimatedGapAmount)+'</span></div>'
-        : '<div class="field-row"><span class="k">Estimated bills</span><span class="v">Not enough bill history yet</span></div>')+
+      '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(est.bondPaid)+'</span></div>';
+    rows += est.lines.length
+      ? est.lines.map(typeLineHtml).join('')
+      : '<div class="field-row"><span class="k">Bills</span><span class="v">Nothing charged or estimated</span></div>';
+    rows +=
       '<div class="field-row"><span class="k">Estimated total owed on bills</span><span class="v">'+money(est.totalEstimatedOwed)+'</span></div>'+
       '<div class="field-row"><span class="k" style="font-weight:650;">Estimated bond to return</span><span class="v" style="font-weight:650;">'+money(est.estimatedReturn)+'</span></div>';
     return '<div class="card"><h2>Move-out settlement</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Estimate only — projected from the average of past bills, not the real invoices for the final days. Update it once those bills actually arrive.'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Below, each service shows what\'s already charged and unpaid (a real amount) separately from what\'s estimated from the average for days not billed yet. Update it once the real bills for the final days arrive.'+
       (est.outstandingRent > 0 ? ' Doesn\'t include the '+money(est.outstandingRent)+' still owed on rent — that\'s separate from this bond/bills estimate.' : '')+
       '</p>'+
       '<div class="field-list">'+rows+'</div></div>';
