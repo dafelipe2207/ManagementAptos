@@ -1066,6 +1066,10 @@ import * as recurringBillService from './services/recurringBillService.js';
   function setTenantsShowInactive(v){ tenantsShowInactive = v; render(); }
   window.setTenantsShowInactive = setTenantsShowInactive;
 
+  var tenantsPropertyFilter = 'all';
+  function setTenantsPropertyFilter(propertyId){ tenantsPropertyFilter = propertyId; renderPreservingScroll(); }
+  window.setTenantsPropertyFilter = setTenantsPropertyFilter;
+
   function renderTenants(){
     var all = tenants.filter(function(t){ return t.rentAmount>0; });
     var inactiveCount = all.filter(function(t){ return t.isActive===false; }).length;
@@ -1075,11 +1079,26 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openTenantModal()">+ Add tenant</button></div>'+
       (inactiveCount>0 ? '<button class="mini-btn" style="margin-bottom:12px;" onclick="setTenantsShowInactive('+(!tenantsShowInactive)+')">'+
         (tenantsShowInactive ? 'Back to active tenants' : 'Show inactive tenants ('+inactiveCount+')')+'</button>' : '');
+    // Chips de propiedad — mismo patrón que en Bills: filtra la lista y además agrupa/organiza
+    // las tarjetas por propiedad (ordenadas alfabéticamente) en vez de por orden de alta.
+    var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
+      '<button class="chip'+(tenantsPropertyFilter==='all'?' active':'')+'" onclick="setTenantsPropertyFilter(\'all\')">All properties</button>'+
+      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
+        return '<button class="chip'+(tenantsPropertyFilter===p.id?' active':'')+'" onclick="setTenantsPropertyFilter(\''+p.id+'\')">'+esc(p.name)+'</button>';
+      }).join('') + '</div>';
+    if (tenantsPropertyFilter !== 'all'){
+      paying = paying.filter(function(t){ return t.propertyId === tenantsPropertyFilter; });
+    }
+    // El diagrama de estadías se calcula sobre TODOS los tenants del alcance (activos e
+    // inactivos), sin importar el toggle "Show inactive tenants" — es un historial de fechas,
+    // no la lista operativa de abajo.
+    var timelineScope = tenantsPropertyFilter==='all' ? all : all.filter(function(t){ return t.propertyId===tenantsPropertyFilter; });
+    var timelineHtml = tenantsTimelineHtml(timelineScope);
     if (paying.length === 0){
       if (tenantsShowInactive){
-        return header + emptyState('tenants', 'No inactive tenants', 'Everyone here is active.', '');
+        return header + propertyTabsHtml + timelineHtml + emptyState('tenants', 'No inactive tenants', 'Everyone here is active.', '');
       }
-      return header + emptyState('tenants', 'No tenants yet',
+      return header + propertyTabsHtml + timelineHtml + emptyState('tenants', 'No tenants yet',
         properties.length === 0
           ? 'Add a property and a room first, then add your first tenant.'
           : 'Add a tenant to start tracking rent, bonds and move-in dates.',
@@ -1087,13 +1106,27 @@ import * as recurringBillService from './services/recurringBillService.js';
           ? '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>'
           : '<button class="mini-btn primary" onclick="openTenantModal()">+ Add tenant</button>');
     }
-    var rows = paying.map(function(t){
+    // Agrupado y ordenado por propiedad (alfabético) y, dentro de cada una, por nombre del
+    // tenant — así quedan organizados por propiedad aunque el filtro esté en "All properties".
+    var sorted = paying.slice().sort(function(a,b){
+      var pa = propertyOf(a.propertyId), pb = propertyOf(b.propertyId);
+      var cmp = (pa?pa.name:'').localeCompare(pb?pb.name:'');
+      if (cmp === 0) cmp = a.fullName.localeCompare(b.fullName);
+      return cmp;
+    });
+    var lastPropertyId = null;
+    var rows = sorted.map(function(t){
       var p = propertyOf(t.propertyId);
       var bond = bondOf(t.id);
       var bondLine = bond
         ? ('Bond: '+money(bond.amountPaid)+' / '+money(bond.amountRequired)+' • '+esc(BOND_STATUS_LABEL[bond.status]||bond.status))
         : 'Bond: not recorded';
-      return '<a class="card" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
+      var groupHeading = '';
+      if (tenantsPropertyFilter === 'all' && t.propertyId !== lastPropertyId){
+        lastPropertyId = t.propertyId;
+        groupHeading = '<div style="font-size:12px;font-weight:650;color:var(--text-faint);margin:14px 0 4px;">'+esc(p?p.name:'—')+'</div>';
+      }
+      return groupHeading + '<a class="card" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
         '<div class="row" style="border:none;padding:0;">'+
         '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
         '<div class="meta"><strong style="color:var(--text);">'+esc(p?p.name:'—')+'</strong> • Since '+shortDate(t.moveInDate)+'</div>'+
@@ -1101,7 +1134,76 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
         '</div></a>';
     }).join('');
-    return header + rows;
+    return header + propertyTabsHtml + timelineHtml + rows;
+  }
+
+  /** Línea de tiempo de estadías (parecida a billsTimelineHtml, pero de tenants): una barra por
+   *  tenant desde su fecha de mudanza hasta su fecha de salida (real, esperada, o hasta hoy si
+   *  todavía vive ahí), agrupadas por propiedad. Rango dinámico: desde la mudanza más antigua del
+   *  alcance hasta la salida más reciente (o un mes después de hoy, lo que sea mayor). */
+  function tenantsTimelineHtml(list){
+    if (!list.length) return '';
+    var endOf = function(t){ return t.actualMoveOutDate || t.expectedMoveOutDate || TODAY; };
+    var rangeStart = list.reduce(function(min, t){ return t.moveInDate < min ? t.moveInDate : min; }, list[0].moveInDate);
+    var rangeEnd = list.reduce(function(max, t){ var e = endOf(t); return e > max ? e : max; }, addMonthsIso(TODAY, 1));
+    var totalDays = daysBetween(rangeStart, rangeEnd) + 1;
+    if (totalDays <= 0) return '';
+    function pct(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); }
+    function monthLabel(ym){
+      var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return names[parseInt(ym.slice(5,7),10)-1] + ' \'' + ym.slice(2,4);
+    }
+    var months = [];
+    var cursor = rangeStart.slice(0,7) + '-01';
+    while (cursor <= rangeEnd){ months.push(cursor); cursor = addMonthsIso(cursor, 1); }
+    var tickStep = Math.max(1, Math.ceil(months.length / 6));
+
+    function tenantStatus(t){
+      if (t.isActive === false || (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY)) return { color:'var(--status-move)', label:'Moved out' };
+      if (t.moveInDate > TODAY) return { color:'var(--status-upcoming)', label:'Upcoming move-in' };
+      return { color:'var(--status-paid)', label:'Current tenant' };
+    }
+    function barHtml(t){
+      var end = endOf(t);
+      var left = pct(t.moveInDate);
+      var width = Math.max(1.2, pct(stepDateIso(end, 1)) - left);
+      var st = tenantStatus(t);
+      var tip = esc(t.fullName) + ': ' + shortDate(t.moveInDate) + ' – ' + (t.actualMoveOutDate||t.expectedMoveOutDate ? shortDate(end) : 'now') + ' • ' + st.label;
+      return '<div title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/tenants/'+t.id+'\';" '+
+        'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+st.color+';"></div>';
+    }
+    var todayLeft = pct(TODAY);
+    var todayLineHtml = '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
+    function rowHtml(t){
+      return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
+        '<span style="font-size:11.5px;color:var(--text-dim);width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(t.fullName)+'</span>'+
+        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+barHtml(t)+todayLineHtml+'</div></div>';
+    }
+
+    var byProperty = {};
+    list.forEach(function(t){ (byProperty[t.propertyId] = byProperty[t.propertyId] || []).push(t); });
+    var propRows = Object.keys(byProperty).map(function(propId){
+      var p = propertyOf(propId);
+      var tenantsSorted = byProperty[propId].slice().sort(function(a,b){ return a.moveInDate.localeCompare(b.moveInDate); });
+      return '<div style="margin-bottom:12px;"><div style="font-size:12.5px;font-weight:650;margin-bottom:4px;">'+esc(p?p.name:'—')+'</div>'+
+        tenantsSorted.map(rowHtml).join('') + '</div>';
+    }).join('');
+
+    var monthTicks = months.filter(function(ym, i){ return i % tickStep === 0; }).map(function(ym){
+      var left = pct(ym);
+      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);">'+monthLabel(ym)+'</span>';
+    }).join('');
+    var legendItem = function(colorVar, label){
+      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
+        '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
+    };
+    return '<div class="card">'+
+      '<h2 style="margin-bottom:2px;">Tenancy timeline</h2>'+
+      '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">Each bar is one tenant\'s stay, from move-in to move-out (or today, if still living there).</p>'+
+      propRows+
+      '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
+      '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') + legendItem('var(--status-move)','Moved out')+'</div>'+
+      '</div>';
   }
 
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
@@ -3048,7 +3150,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   function setBillsSort(col){
     if (billsSortColumn === col) billsSortDir = (billsSortDir === 'asc') ? 'desc' : 'asc';
     else { billsSortColumn = col; billsSortDir = BILLS_SORT_DEFAULT_DIR[col] || 'asc'; }
-    render();
+    renderPreservingScroll();
   }
   window.setBillsSort = setBillsSort;
   function billsSortValue(b, col){
@@ -3277,9 +3379,8 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  pendiente, vencido). El fondo rayado que queda visible entre barras es un hueco — un
    *  tramo de fechas sin ningún bill cargado. Respeta el filtro de propiedad de la pestaña. */
   function billsTimelineHtml(){
-    // El diagrama siempre muestra TODAS las propiedades — no se filtra por el chip de
-    // "All properties / Belmont / ..." de más abajo, que solo afecta a la tabla de bills.
-    var scopedProperties = properties;
+    // Respeta el mismo chip de propiedad ("All properties / Belmont / ...") que filtra la tabla.
+    var scopedProperties = billsPropertyFilter==='all' ? properties : properties.filter(function(p){ return p.id===billsPropertyFilter; });
     if (!scopedProperties.length) return '';
     var months = [];
     for (var i=5; i>=0; i--) months.push(addMonthsIso(TODAY.slice(0,7)+'-01', -i).slice(0,7));
@@ -5529,7 +5630,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   var ROUTES = STAFF_ROUTES;
 
   var content = document.getElementById('content');
-  function render(){
+  function render(preserveScroll){
     var hash = location.hash || '#/';
     var propertyMatch = hash.match(/^#\/properties\/(.+)$/);
     var tenantMatch = hash.match(/^#\/tenants\/(.+)$/);
@@ -5547,7 +5648,14 @@ import * as recurringBillService from './services/recurringBillService.js';
     else html = (ROUTES[hash] || ROUTES['#/'])();
     content.innerHTML = html;
     setActiveNav(hash);
-    window.scrollTo(0,0);
+    if (!preserveScroll) window.scrollTo(0,0);
+  }
+  /** Igual que render(), pero sin volver arriba — para acciones como cambiar el orden de una
+   *  tabla o un filtro, donde el usuario quiere seguir viendo lo mismo que estaba mirando. */
+  function renderPreservingScroll(){
+    var y = window.scrollY;
+    render(true);
+    window.scrollTo(0, y);
   }
   /* ============ Async bootstrap: load everything from Supabase in parallel, then render ============ */
   async function bootstrapData(){
