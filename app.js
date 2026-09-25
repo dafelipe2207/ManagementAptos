@@ -2708,7 +2708,13 @@ import * as recurringBillService from './services/recurringBillService.js';
     var bill = billOf(billId);
     if (!bill) return;
     var totalDays = daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1;
-    var rows = bill.allocations
+    // bill.allocations puede venir como un array VACÍO (no null/undefined) — por ejemplo, si este
+    // bill se guardó antes de que existieran los registros de los tenants de esa propiedad, o si
+    // ninguno de los tenants guardados se solapó con su periodo. Un array vacío sigue siendo
+    // "truthy" en JS, así que sin este chequeo el modal quedaba en modo Custom con $0 de $X — como
+    // si el admin tuviera que cubrir el 100% a mano — en vez de proponer un reparto real entre
+    // tenants y admin (según tenant.excludedBillTypes) como haría un bill recién creado.
+    var existingRows = (bill.allocations && bill.allocations.length)
       ? bill.allocations.map(function(a){
           if (a.isAdmin) return { tenantId:null, isAdmin:true, name:'Administrator (you)', days:null, amount:a.amount };
           var t = tenantOf(a.tenantId);
@@ -2717,8 +2723,9 @@ import * as recurringBillService from './services/recurringBillService.js';
         // Filtra allocations viejas de alguien que no se solapó con el periodo (o que ya no vive
         // ahí) — quedaron con $0 de una repartición anterior y no deberían seguir apareciendo.
         }).filter(function(row){ return row.isAdmin || row.days > 0 || row.amount > 0; })
-      : computeAllocationRows(bill, 'days');
-    allocationDraft = { billId: billId, method: bill.allocations ? 'custom' : 'days', periodDays: totalDays, rows: rows };
+      : [];
+    var rows = existingRows.length ? existingRows : computeAllocationRows(bill, 'days');
+    allocationDraft = { billId: billId, method: existingRows.length ? 'custom' : 'days', periodDays: totalDays, rows: rows };
     document.getElementById('allocate-modal-sub').textContent =
       esc(bill.provider) + ' • ' + money(bill.amount) + ' • ' + shortDate(bill.billingPeriodStart) + ' – ' + shortDate(bill.billingPeriodEnd);
     renderAllocateModal();
