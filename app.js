@@ -1159,7 +1159,74 @@ import * as recurringBillService from './services/recurringBillService.js';
       tenantRentHistoryHtml(t.id) +
       (bondRows ? '<div class="card"><h2>Bond</h2><div class="field-list">'+bondRows+'</div></div>' : '') +
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
+      moveOutSettlementHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
+  }
+
+  /** Cuando un inquilino se va (o va a irse), calcula un ESTIMADO de cuánto bond le corresponde
+   *  devolver: toma su tarifa diaria promedio de bills ya facturados (importe repartido / días
+   *  ocupados en esos mismos bills) y la proyecta sobre los días entre el último periodo ya
+   *  facturado y la fecha de salida — que todavía no tienen una factura real. Se suma lo que ya
+   *  está facturado y sin pagar (eso sí es un monto real, no estimado) y se resta todo del bond
+   *  pagado. Nunca reemplaza al bill real cuando llegue: es solo una proyección para orientar al
+   *  administrador mientras tanto. */
+  function computeMoveOutEstimate(t){
+    var moveOutDate = t.actualMoveOutDate || t.expectedMoveOutDate;
+    if (!moveOutDate) return null;
+    var bond = bondOf(t.id);
+    var bondPaid = bond ? bond.amountPaid : 0;
+
+    var totalBilledDays = 0, totalBilledAmount = 0, unpaidBilled = 0, lastCovered = t.moveInDate;
+    bills.forEach(function(b){
+      (b.allocations || []).forEach(function(a){
+        if (a.tenantId !== t.id) return;
+        var days = (b.billingPeriodStart && b.billingPeriodEnd) ? occupiedDaysInRange(t, b.billingPeriodStart, b.billingPeriodEnd) : 0;
+        if (days > 0){
+          totalBilledDays += days;
+          totalBilledAmount += a.amount;
+        }
+        if (!a.paid) unpaidBilled += a.amount;
+        if (b.billingPeriodEnd && b.billingPeriodEnd > lastCovered) lastCovered = b.billingPeriodEnd;
+      });
+    });
+    var hasHistory = totalBilledDays > 0;
+    var dailyRate = hasHistory ? (totalBilledAmount / totalBilledDays) : 0;
+    var gapStart = stepDateIso(lastCovered, 1);
+    var gapDays = gapStart <= moveOutDate ? (daysBetween(gapStart, moveOutDate) + 1) : 0;
+    var estimatedGapAmount = round2(dailyRate * gapDays);
+    var totalEstimatedOwed = round2(unpaidBilled + estimatedGapAmount);
+    var estimatedReturn = round2(bondPaid - totalEstimatedOwed);
+    var outstandingRent = rentCharges
+      .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004; })
+      .reduce(function(s,c){ return s + c.remaining; }, 0);
+
+    return {
+      moveOutDate: moveOutDate, isActual: !!t.actualMoveOutDate, hasBond: !!bond,
+      bondPaid: bondPaid, hasHistory: hasHistory, dailyRate: round2(dailyRate),
+      unpaidBilled: round2(unpaidBilled), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount,
+      totalEstimatedOwed: totalEstimatedOwed, estimatedReturn: estimatedReturn,
+      outstandingRent: round2(outstandingRent)
+    };
+  }
+
+  function moveOutSettlementHtml(t){
+    var est = computeMoveOutEstimate(t);
+    if (!est) return '';
+    var rows =
+      '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(est.moveOutDate)+(est.isActual?'':' (expected)')+'</span></div>'+
+      '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(est.bondPaid)+'</span></div>'+
+      (est.unpaidBilled > 0 ? '<div class="field-row"><span class="k">Bills already charged, unpaid</span><span class="v">'+money(est.unpaidBilled)+'</span></div>' : '')+
+      (est.hasHistory
+        ? '<div class="field-row"><span class="k">Avg. bill rate (from history)</span><span class="v">'+money(est.dailyRate)+' / day</span></div>'+
+          '<div class="field-row"><span class="k">Estimated bills ('+est.gapDays+' day'+(est.gapDays===1?'':'s')+' not billed yet)</span><span class="v">'+money(est.estimatedGapAmount)+'</span></div>'
+        : '<div class="field-row"><span class="k">Estimated bills</span><span class="v">Not enough bill history yet</span></div>')+
+      '<div class="field-row"><span class="k">Estimated total owed on bills</span><span class="v">'+money(est.totalEstimatedOwed)+'</span></div>'+
+      '<div class="field-row"><span class="k" style="font-weight:650;">Estimated bond to return</span><span class="v" style="font-weight:650;">'+money(est.estimatedReturn)+'</span></div>';
+    return '<div class="card"><h2>Move-out settlement</h2>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Estimate only — projected from the average of past bills, not the real invoices for the final days. Update it once those bills actually arrive.'+
+      (est.outstandingRent > 0 ? ' Doesn\'t include the '+money(est.outstandingRent)+' still owed on rent — that\'s separate from this bond/bills estimate.' : '')+
+      '</p>'+
+      '<div class="field-list">'+rows+'</div></div>';
   }
 
   /** "Rent history" card for a tenant's profile: which weeks/periods are already paid, and
