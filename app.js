@@ -1008,9 +1008,12 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
 
   /** Próxima fecha en que el admin debe pagarle al real estate, según la frecuencia configurada.
-   *  Mensual: si ya se usó "Mark as paid" alguna vez, se calcula desde esa fecha + 1 mes; si no,
-   *  cae al comportamiento anterior (día fijo del mes). Quincenal: siempre desde la última fecha
-   *  de pago + 14 días — por eso requiere haber marcado un primer pago para empezar a rastrear. */
+   *  `lastLeasePaymentDate` guarda el INICIO del periodo ya pagado (no el día en que se hizo clic
+   *  en "pagado") — así, si el periodo pagado fue 06/07–05/08, el próximo vencimiento sale
+   *  correctamente el 06/08, sin importar qué día se registró el pago. Mensual: si ya se usó
+   *  "Mark as paid" alguna vez, se calcula desde ese inicio de periodo + 1 mes; si no, cae al
+   *  comportamiento anterior (día fijo del mes). Quincenal: siempre inicio de periodo + 14 días —
+   *  por eso requiere haber marcado un primer pago para empezar a rastrear. */
   function nextLeaseDueDate(p, asOfIso){
     asOfIso = asOfIso || TODAY;
     if (p.leasePaymentFrequency === 'fortnightly'){
@@ -1019,19 +1022,63 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (p.lastLeasePaymentDate) return addMonthsIso(p.lastLeasePaymentDate, 1);
     return p.leasePaymentDay ? nextMonthlyDueDate(p.leasePaymentDay, asOfIso) : null;
   }
-  async function markLeasePaymentPaid(propertyId){
+  /** Fin del periodo cubierto por el pago cuyo inicio es `startIso`, según la frecuencia. */
+  function leasePeriodEnd(p, startIso){
+    if (!startIso) return null;
+    return p.leasePaymentFrequency === 'fortnightly' ? stepDateIso(startIso, 13) : stepDateIso(addMonthsIso(startIso, 1), -1);
+  }
+
+  var leasePaymentModalPropertyId = null;
+  /** Abre un cuadro para confirmar el pago al real estate, con las fechas del periodo que cubre
+   *  PRECARGADAS con lo que el sistema ya calcula como próximo vencimiento — pero totalmente
+   *  editables, porque esa fecha por defecto puede no coincidir con el periodo real de la
+   *  factura (p.ej. si el pago llegó atrasado o el ciclo real no coincide exactamente). */
+  function openLeasePaymentModal(propertyId){
     var p = propertyOf(propertyId);
     if (!p) return;
+    leasePaymentModalPropertyId = propertyId;
+    var defaultStart = nextLeaseDueDate(p, TODAY) || TODAY;
+    document.getElementById('lease-payment-modal-sub').textContent =
+      p.name + (p.leasePaymentAmount!=null ? ' • ' + money(p.leasePaymentAmount) : '') + ' • ' + (p.leasePaymentFrequency==='fortnightly'?'Fortnightly':'Monthly');
+    document.getElementById('lease-payment-start').value = defaultStart;
+    updateLeasePaymentEndPreview();
+    document.getElementById('lease-payment-modal-error').hidden = true;
+    document.getElementById('lease-payment-modal').hidden = false;
+  }
+  window.openLeasePaymentModal = openLeasePaymentModal;
+  function updateLeasePaymentEndPreview(){
+    var p = propertyOf(leasePaymentModalPropertyId);
+    var start = document.getElementById('lease-payment-start').value;
+    var end = p && start ? leasePeriodEnd(p, start) : null;
+    document.getElementById('lease-payment-end-preview').textContent = end ? shortDate(end) : '—';
+  }
+  window.updateLeasePaymentEndPreview = updateLeasePaymentEndPreview;
+  function closeLeasePaymentModal(){
+    document.getElementById('lease-payment-modal').hidden = true;
+    leasePaymentModalPropertyId = null;
+  }
+  window.closeLeasePaymentModal = closeLeasePaymentModal;
+  async function confirmLeasePaymentModal(){
+    var p = propertyOf(leasePaymentModalPropertyId);
+    var start = document.getElementById('lease-payment-start').value;
+    var errorEl = document.getElementById('lease-payment-modal-error');
+    if (!p || !start){
+      errorEl.textContent = 'Pick the date this payment\'s period starts.';
+      errorEl.hidden = false;
+      return;
+    }
     try {
-      var saved = await propertyService.update(propertyId, Object.assign({}, p, { lastLeasePaymentDate: TODAY }));
+      var saved = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: start }));
       Object.assign(p, saved);
+      closeLeasePaymentModal();
       showToast('Lease payment marked as paid.', 'success');
       render();
     } catch(err){
-      showToast('Could not save this. ' + friendlyErrorMessage(err), 'error');
+      errorEl.textContent = 'Could not save this. ' + friendlyErrorMessage(err);
+      errorEl.hidden = false;
     }
   }
-  window.markLeasePaymentPaid = markLeasePaymentPaid;
+  window.confirmLeasePaymentModal = confirmLeasePaymentModal;
 
   /** Tarjeta de detalle del lease propio del admin con el real estate (día/frecuencia de pago,
    *  monto, próxima inspección, vencimiento del contrato y método de pago) — solo se muestra si
@@ -1047,7 +1094,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       rows += '<div class="field-row"><span class="k">Rent payment day</span><span class="v">Day '+p.leasePaymentDay+' of each month</span></div>';
     }
     if (p.lastLeasePaymentDate){
-      rows += '<div class="field-row"><span class="k">Last paid</span><span class="v">'+shortDate(p.lastLeasePaymentDate)+'</span></div>';
+      rows += '<div class="field-row"><span class="k">Last period paid</span><span class="v">'+shortDate(p.lastLeasePaymentDate)+' – '+shortDate(leasePeriodEnd(p, p.lastLeasePaymentDate))+'</span></div>';
     }
     if (nextDue){
       var isOverdue = nextDue < TODAY;
@@ -1074,7 +1121,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(p.bankAccountNumber)+'</span></div>';
     }
     return '<div class="card"><h2>Landlord\'s lease (payment to the real estate)</h2><div class="field-list">'+rows+'</div>'+
-      '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="markLeasePaymentPaid(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
+      '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="openLeasePaymentModal(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
   }
 
   function renderPropertyDetail(id){
@@ -5888,6 +5935,53 @@ import * as recurringBillService from './services/recurringBillService.js';
     render();
   }
 
+  /** True si algún modal de formulario está abierto — no queremos que un refresco automático de
+   *  datos en segundo plano le borre a alguien lo que está escribiendo a mitad de un formulario. */
+  function anyModalOpen(){
+    return Array.prototype.some.call(document.querySelectorAll('.modal-overlay'), function(el){ return !el.hidden; });
+  }
+
+  var isRefreshingData = false;
+  /** Vuelve a traer TODOS los datos desde Supabase y re-renderiza — para que dos administradores
+   *  trabajando al mismo tiempo (p.ej. el Super Admin y Geraldine) siempre vean lo mismo, sin
+   *  depender de que alguien cierre la pestaña por completo. Se salta el refresco si hay un modal
+   *  abierto (formulario a medio llenar) o si ya hay uno en curso. */
+  async function refreshAllData(){
+    if (isRefreshingData || anyModalOpen()) return;
+    isRefreshingData = true;
+    try {
+      await bootstrapData();
+      render(true); // preserva el scroll — es un refresco silencioso, no una navegación
+    } catch(err){
+      console.error('refreshAllData failed', err);
+    } finally {
+      isRefreshingData = false;
+    }
+  }
+  window.refreshAllData = refreshAllData;
+
+  var autoRefreshSetupDone = false;
+  /** Tres disparadores para mantener todo sincronizado "de inmediato" entre usuarios, sin que
+   *  nadie tenga que cerrar y volver a abrir la pestaña:
+   *  1) Al volver a esta pestaña (cambiar de app y regresar, o destrabar el celular).
+   *  2) Al restaurarse desde el back-forward cache de Safari (navegar "atrás" no vuelve a cargar
+   *     el JS por defecto — así se fuerza a traer datos frescos igual).
+   *  3) Un sondeo cada 60s mientras la pestaña esté visible, por si alguien más hizo un cambio y
+   *     esta pestaña se quedó abierta y visible todo ese tiempo sin cambiar de foco. */
+  function setupAutoRefresh(){
+    if (autoRefreshSetupDone) return;
+    autoRefreshSetupDone = true;
+    document.addEventListener('visibilitychange', function(){
+      if (document.visibilityState === 'visible') refreshAllData();
+    });
+    window.addEventListener('pageshow', function(e){
+      if (e.persisted) refreshAllData();
+    });
+    setInterval(function(){
+      if (document.visibilityState === 'visible') refreshAllData();
+    }, 60000);
+  }
+
   /* ============ Auth gate: sign in before loading/rendering any app data ============ */
   // Self-signup is gone — accounts are created by a Super Admin (Users page), who hands the
   // person their email + initial password directly. This form is sign-in only now.
@@ -5988,6 +6082,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('app-loading-screen').hidden = true;
     document.querySelector('.shell').hidden = false;
     startRouter();
+    setupAutoRefresh();
     if (getAppPin()){
       document.getElementById('lock-screen').hidden = false;
       document.getElementById('lock-pin-input').focus();
