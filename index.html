@@ -173,7 +173,7 @@
       <p id="review-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;">Check and correct what the automatic analysis detected before saving this bill.</p>
       <div class="form-row">
         <label for="review-property">Property</label>
-        <select id="review-property"></select>
+        <select id="review-property" onchange="onReviewPropertyChange()"></select>
       </div>
       <div class="form-row">
         <label for="review-billtype">Bill type</label>
@@ -188,7 +188,8 @@
       </div>
       <div class="form-row">
         <label for="review-provider">Provider</label>
-        <input id="review-provider" type="text" />
+        <input id="review-provider" type="text" list="review-provider-list" oninput="onReviewProviderInput()" placeholder="e.g. Kleenheat, Dodo…" />
+        <datalist id="review-provider-list"></datalist>
       </div>
       <div class="form-row">
         <label for="review-account">Account number</label>
@@ -627,6 +628,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=55"></script>
+<script type="module" src="app.js?v=57"></script>
 </body>
 </html>
