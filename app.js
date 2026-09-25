@@ -2548,20 +2548,90 @@ import * as recurringBillService from './services/recurringBillService.js';
     return !!(tenant && Array.isArray(tenant.excludedBillTypes) && tenant.excludedBillTypes.indexOf(billType) >= 0);
   }
 
+  /** ¿El tenant ocupaba su habitación ESE día concreto? Fecha de entrada incluida, fecha de
+   *  salida NO incluida (medio-abierto) — así el mismo día no se cuenta doble cuando alguien se
+   *  va y otra persona entra a la misma habitación. Esto es aparte de occupiedDaysInRange (que
+   *  sigue siendo inclusive en ambos extremos y se usa para las métricas informativas de "días
+   *  ocupados" en la UI) — solo se usa para decidir cuántas HABITACIONES estaban ocupadas cada
+   *  día del bill. */
+  function tenantOccupiesDay(t, dayIso){
+    if (dayIso < t.moveInDate) return false;
+    var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
+    if (moveOut && dayIso >= moveOut) return false;
+    return true;
+  }
+
+  /** Reparto día por día, por HABITACIÓN — no por tenant. Cada día, el costo diario del bill se
+   *  divide entre las habitaciones que estuvieron ocupadas ESE día (no entre el total de
+   *  habitaciones de la propiedad, ni entre el total de personas). Si dos tenants comparten una
+   *  misma habitación ese día, dividen entre ellos la parte de esa habitación. Un día sin ninguna
+   *  habitación ocupada no se pierde ni se reparte a la fuerza entre otros días: se junta en la
+   *  fila del administrador, igual que la parte de un tenant excluido de este tipo de servicio. */
+  function computeDailyRoomAllocationRows(bill){
+    var totalDays = daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1;
+    var propTenants = tenantsOfProperty(bill.propertyId);
+    var totals = {}; // tenantId -> acumulado (sin redondear todavía)
+    var adminTotal = 0;
+    var dailyCost = bill.amount / totalDays;
+    for (var i=0; i<totalDays; i++){
+      var dayIso = stepDateIso(bill.billingPeriodStart, i);
+      var byRoom = {};
+      propTenants.forEach(function(t){
+        if (!tenantOccupiesDay(t, dayIso)) return;
+        var key = t.roomId || ('__no_room_'+t.id); // sin habitación asignada = su propia "habitación"
+        (byRoom[key] = byRoom[key] || []).push(t);
+      });
+      var roomKeys = Object.keys(byRoom);
+      if (roomKeys.length === 0){
+        adminTotal += dailyCost; // ningún tenant registrado ese día — el admin absorbe ese día
+        continue;
+      }
+      var costPerRoom = dailyCost / roomKeys.length;
+      roomKeys.forEach(function(key){
+        var occupants = byRoom[key];
+        var costPerPerson = costPerRoom / occupants.length; // se reparte entre quienes comparten la habitación ESE día
+        occupants.forEach(function(t){
+          if (isTenantExcludedFromBillType(t, bill.billType)){
+            adminTotal += costPerPerson;
+          } else {
+            totals[t.id] = (totals[t.id] || 0) + costPerPerson;
+          }
+        });
+      });
+    }
+    var rows = Object.keys(totals).map(function(tenantId){
+      var t = tenantOf(tenantId);
+      return { tenantId: tenantId, name: t ? t.fullName : tenantId,
+        days: t ? occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd) : 0,
+        amount: round2(totals[tenantId]) };
+    });
+    if (adminTotal > 0.004){
+      rows.push({ tenantId: null, isAdmin: true, name: 'Administrator (you)', days: null, amount: round2(adminTotal) });
+    }
+    // Ajusta el redondeo (61 días repartidos en fracciones de centavo pueden desviar el total por
+    // unos pocos centavos) en la fila más grande, para que la suma cuadre exacto con el bill.
+    var sum = round2(rows.reduce(function(s,r){ return s + r.amount; }, 0));
+    var diff = round2(bill.amount - sum);
+    if (diff !== 0 && rows.length){
+      var maxIdx = 0;
+      for (var j=1; j<rows.length; j++){ if (rows[j].amount > rows[maxIdx].amount) maxIdx = j; }
+      rows[maxIdx].amount = round2(rows[maxIdx].amount + diff);
+    }
+    return rows;
+  }
+
   function computeAllocationRows(bill, method){
+    if (method === 'days') return computeDailyRoomAllocationRows(bill);
+    // 'equal' y el punto de partida de 'custom' — split parejo entre tenants (no por habitación,
+    // ya que "equal" es intencionalmente "todos pagan lo mismo", sin importar cuántos comparten
+    // habitación ni cuántos días estuvieron).
     // Solo entran quienes realmente se solaparon con el periodo del bill — alguien que se mudó
     // antes de que empezara, o después de que terminó (o que ya no vive ahí hoy), queda afuera
     // en vez de aparecer con $0 para repartir a mano.
     var propTenants = tenantsOfProperty(bill.propertyId).filter(function(t){
       return occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd) > 0;
     });
-    var days = propTenants.map(function(t){ return occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd); });
-    var amounts;
-    if (method === 'days'){
-      amounts = splitByWeights(bill.amount, days);
-    } else { // 'equal' y el punto de partida de 'custom'
-      amounts = splitByWeights(bill.amount, propTenants.map(function(){ return 1; }));
-    }
+    var amounts = splitByWeights(bill.amount, propTenants.map(function(){ return 1; }));
     // Si un inquilino está excluido de este tipo de servicio, su parte no se reparte entre el
     // resto (eso les subiría el monto injustamente) — en vez de eso, se junta en una fila aparte
     // a nombre del administrador, que la absorbe.
@@ -2571,7 +2641,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       if (isTenantExcludedFromBillType(t, bill.billType)){
         adminAmount = round2(adminAmount + amounts[i]);
       } else {
-        rows.push({ tenantId: t.id, name: t.fullName, days: days[i], amount: amounts[i] });
+        rows.push({ tenantId: t.id, name: t.fullName, days: occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd), amount: amounts[i] });
       }
     });
     if (adminAmount > 0){
@@ -2796,7 +2866,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   var ALLOCATION_METHOD_NOTES = {
     equal: 'The amount is split equally between every tenant at the property.',
-    days: "The amount is split based on how many days each tenant lived there during the bill's period.",
+    days: "The amount is split day by day between the rooms that were occupied each day (not a fixed number of rooms) — tenants sharing a room split that room's share between them.",
     custom: "Set each amount by hand. The total must match the bill's amount exactly."
   };
   /** Deja marcar que el administrador cubre (parte de) este bill él mismo — por ejemplo, si le
