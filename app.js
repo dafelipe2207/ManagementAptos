@@ -5,7 +5,7 @@
 // services/* modules instead of synchronous localStorage.
 import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
-import * as propertyService from './services/propertyService.js';
+import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
 import * as tenantService from './services/tenantService.js?v=3';
 import * as bondService from './services/bondService.js';
@@ -606,16 +606,17 @@ import * as recurringBillService from './services/recurringBillService.js';
     return rentItems.concat(billItems).concat(leaseItems);
   }
   /** Propiedades cuyo pago de arriendo del ADMIN al real estate vence hoy, mañana, o pasado
-   *  mañana (avisa 2 días antes, según se pidió) — para que no se le pase la fecha. */
+   *  mañana (avisa 2 días antes, según se pidió) — o que YA venció y no se marcó como pagado
+   *  ("generar alerta en caso de que no se realice el pago"), para que no se le pase la fecha. */
   function getUpcomingLeasePayments(){
     return properties
-      .filter(function(p){ return !!p.leasePaymentDay; })
       .map(function(p){
-        var nextDue = nextMonthlyDueDate(p.leasePaymentDay, TODAY);
+        var nextDue = nextLeaseDueDate(p, TODAY);
+        if (!nextDue) return null;
         return { type:'lease', propertyId:p.id, propertyName:p.name, amount:p.leasePaymentAmount,
           dueDate:nextDue, daysUntil: daysBetween(TODAY, nextDue) };
       })
-      .filter(function(item){ return item.daysUntil >= 0 && item.daysUntil <= 2; })
+      .filter(function(item){ return item && item.daysUntil <= 2; })
       .sort(function(a,b){ return a.daysUntil - b.daysUntil; });
   }
   function getUpcomingEvents(withinDays){
@@ -680,14 +681,18 @@ import * as recurringBillService from './services/recurringBillService.js';
       if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: '#/tenants/' + t.id });
     });
     properties.forEach(function(p){
-      if (!p.leasePaymentDay) return;
-      var nextDue = nextMonthlyDueDate(p.leasePaymentDay, TODAY);
-      events.push({
-        date: nextDue,
-        kind: daysBetween(TODAY, nextDue) <= 2 ? 'overdue' : 'due',
-        title: p.name + ' — Rent due to real estate' + (p.leasePaymentAmount!=null ? ' (' + money(p.leasePaymentAmount) + ')' : ''),
-        href: '#/properties/' + p.id
-      });
+      var nextDue = nextLeaseDueDate(p, TODAY);
+      if (nextDue){
+        events.push({
+          date: nextDue,
+          kind: daysBetween(TODAY, nextDue) <= 2 ? 'overdue' : 'due',
+          title: p.name + ' — Rent due to real estate' + (p.leasePaymentAmount!=null ? ' (' + money(p.leasePaymentAmount) + ')' : ''),
+          href: '#/properties/' + p.id
+        });
+      }
+      if (p.nextInspectionDate){
+        events.push({ date: p.nextInspectionDate, kind: 'move', title: p.name + ' — Real estate inspection', href: '#/properties/' + p.id });
+      }
     });
     return events;
   }
@@ -756,6 +761,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
     { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:true },
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
+    { hash:'#/profits', label:'Profits', icon:'chart', primary:false },
     { hash:'#/properties', label:'Properties', icon:'building', primary:false },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
     { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
@@ -1001,17 +1007,61 @@ import * as recurringBillService from './services/recurringBillService.js';
     return toIsoLocal(candidate);
   }
 
-  /** Tarjeta de detalle del lease propio del admin con el real estate (día de pago, monto,
-   *  vencimiento del contrato y método de pago) — solo se muestra si algo quedó configurado. */
+  /** Próxima fecha en que el admin debe pagarle al real estate, según la frecuencia configurada.
+   *  Mensual: si ya se usó "Mark as paid" alguna vez, se calcula desde esa fecha + 1 mes; si no,
+   *  cae al comportamiento anterior (día fijo del mes). Quincenal: siempre desde la última fecha
+   *  de pago + 14 días — por eso requiere haber marcado un primer pago para empezar a rastrear. */
+  function nextLeaseDueDate(p, asOfIso){
+    asOfIso = asOfIso || TODAY;
+    if (p.leasePaymentFrequency === 'fortnightly'){
+      return p.lastLeasePaymentDate ? stepDateIso(p.lastLeasePaymentDate, 14) : null;
+    }
+    if (p.lastLeasePaymentDate) return addMonthsIso(p.lastLeasePaymentDate, 1);
+    return p.leasePaymentDay ? nextMonthlyDueDate(p.leasePaymentDay, asOfIso) : null;
+  }
+  async function markLeasePaymentPaid(propertyId){
+    var p = propertyOf(propertyId);
+    if (!p) return;
+    try {
+      var saved = await propertyService.update(propertyId, Object.assign({}, p, { lastLeasePaymentDate: TODAY }));
+      Object.assign(p, saved);
+      showToast('Lease payment marked as paid.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not save this. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.markLeasePaymentPaid = markLeasePaymentPaid;
+
+  /** Tarjeta de detalle del lease propio del admin con el real estate (día/frecuencia de pago,
+   *  monto, próxima inspección, vencimiento del contrato y método de pago) — solo se muestra si
+   *  algo quedó configurado. */
   function leasePaymentCardHtml(p){
-    var hasAny = p.leasePaymentDay || p.leasePaymentAmount != null || p.leaseEndDate || p.leasePaymentMethod;
+    var hasAny = p.leasePaymentDay || p.leasePaymentAmount != null || p.leaseEndDate || p.leasePaymentMethod || p.nextInspectionDate || p.lastLeasePaymentDate;
     if (!hasAny) return '';
     var rows = '';
-    if (p.leasePaymentDay){
-      var nextDue = nextMonthlyDueDate(p.leasePaymentDay, TODAY);
-      rows += '<div class="field-row"><span class="k">Rent payment day</span><span class="v">Day '+p.leasePaymentDay+' of each month (next: '+shortDate(nextDue)+')</span></div>';
+    var nextDue = nextLeaseDueDate(p, TODAY);
+    var freqLabel = p.leasePaymentFrequency === 'fortnightly' ? 'Fortnightly' : 'Monthly';
+    rows += '<div class="field-row"><span class="k">Payment frequency</span><span class="v">'+freqLabel+'</span></div>';
+    if (p.leasePaymentFrequency !== 'fortnightly' && p.leasePaymentDay && !p.lastLeasePaymentDate){
+      rows += '<div class="field-row"><span class="k">Rent payment day</span><span class="v">Day '+p.leasePaymentDay+' of each month</span></div>';
+    }
+    if (p.lastLeasePaymentDate){
+      rows += '<div class="field-row"><span class="k">Last paid</span><span class="v">'+shortDate(p.lastLeasePaymentDate)+'</span></div>';
+    }
+    if (nextDue){
+      var isOverdue = nextDue < TODAY;
+      rows += '<div class="field-row"><span class="k">Next payment due</span><span class="v">'+
+        (isOverdue ? badge('overdue','Overdue since '+shortDate(nextDue)) : shortDate(nextDue))+'</span></div>';
+    } else if (p.leasePaymentFrequency === 'fortnightly'){
+      rows += '<div class="field-row"><span class="k">Next payment due</span><span class="v" style="font-weight:400;color:var(--text-faint);">Mark a payment below to start tracking</span></div>';
     }
     if (p.leasePaymentAmount != null) rows += '<div class="field-row"><span class="k">Amount to pay</span><span class="v">'+money(p.leasePaymentAmount)+'</span></div>';
+    if (p.nextInspectionDate){
+      var daysToInspection = daysBetween(TODAY, p.nextInspectionDate);
+      rows += '<div class="field-row"><span class="k">Next inspection</span><span class="v">'+fullDate(p.nextInspectionDate)+
+        (daysToInspection >= 0 && daysToInspection <= 7 ? ' ' + badge('due','Coming up') : (daysToInspection < 0 ? ' ' + badge('overdue','Past date') : ''))+'</span></div>';
+    }
     if (p.leaseEndDate) rows += '<div class="field-row"><span class="k">Lease contract ends</span><span class="v">'+fullDate(p.leaseEndDate)+'</span></div>';
     if (p.leasePaymentMethod === 'bpay'){
       rows += '<div class="field-row"><span class="k">Payment method</span><span class="v">BPay</span></div>'+
@@ -1023,7 +1073,8 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<div class="field-row"><span class="k">BSB</span><span class="v">'+esc(p.bankBsb)+'</span></div>'+
         '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(p.bankAccountNumber)+'</span></div>';
     }
-    return '<div class="card"><h2>Landlord\'s lease (payment to the real estate)</h2><div class="field-list">'+rows+'</div></div>';
+    return '<div class="card"><h2>Landlord\'s lease (payment to the real estate)</h2><div class="field-list">'+rows+'</div>'+
+      '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="markLeasePaymentPaid(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
   }
 
   function renderPropertyDetail(id){
@@ -1063,7 +1114,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
 
   var tenantsShowInactive = false; // toggle: por default solo se ven los tenants habilitados
-  function setTenantsShowInactive(v){ tenantsShowInactive = v; render(); }
+  function setTenantsShowInactive(v){ tenantsShowInactive = v; renderPreservingScroll(); }
   window.setTenantsShowInactive = setTenantsShowInactive;
 
   var tenantsPropertyFilter = 'all';
@@ -1461,8 +1512,8 @@ import * as recurringBillService from './services/recurringBillService.js';
   var paymentsPropertyFilter = 'all';
   var paymentsDateSort = 'desc'; // 'desc' = más actual primero, 'asc' = más antiguo primero
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
-  function setPaymentsFilter(f){ paymentsFilter = f; render(); }
-  function setPaymentsTenantFilter(tenantId){ paymentsTenantFilter = tenantId; render(); }
+  function setPaymentsFilter(f){ paymentsFilter = f; renderPreservingScroll(); }
+  function setPaymentsTenantFilter(tenantId){ paymentsTenantFilter = tenantId; renderPreservingScroll(); }
   /** Elegir una propiedad ya no deja el filtro de tenant apuntando a alguien de OTRA
    *  propiedad — si el tenant seleccionado no vive en la propiedad elegida, vuelve a "All". */
   function setPaymentsPropertyFilter(propertyId){
@@ -1471,9 +1522,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       var t = tenantOf(paymentsTenantFilter);
       if (!t || t.propertyId !== propertyId) paymentsTenantFilter = 'all';
     }
-    render();
+    renderPreservingScroll();
   }
-  function togglePaymentsDateSort(){ paymentsDateSort = paymentsDateSort==='desc' ? 'asc' : 'desc'; render(); }
+  function togglePaymentsDateSort(){ paymentsDateSort = paymentsDateSort==='desc' ? 'asc' : 'desc'; renderPreservingScroll(); }
   window.setPaymentsPropertyFilter = setPaymentsPropertyFilter;
   window.togglePaymentsDateSort = togglePaymentsDateSort;
   function chargeMatchesFilter(c, filter){
@@ -1648,8 +1699,8 @@ import * as recurringBillService from './services/recurringBillService.js';
   var billsFilter = 'all';
   var billsPropertyFilter = 'all';
   var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['partially_paid','Partially Paid'], ['paid','Paid']];
-  function setBillsFilter(f){ billsFilter = f; render(); }
-  function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; render(); }
+  function setBillsFilter(f){ billsFilter = f; renderPreservingScroll(); }
+  function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; renderPreservingScroll(); }
   function billMatchesFilter(b, filter){
     if (filter==='all') return true;
     return billEffectiveStatus(b) === filter;
@@ -3915,6 +3966,69 @@ import * as recurringBillService from './services/recurringBillService.js';
       statHtml + occupancyHtml + billsBreakdownHtml + tenantTableHtml;
   }
 
+  /** "Ganancias" por propiedad: lo que pagan los tenants (payments reales, no solo lo
+   *  facturado) menos lo que el admin le paga al real estate por esa propiedad, según su
+   *  frecuencia. En "All time" el gasto de lease se prorratea por los meses transcurridos desde
+   *  la mudanza más antigua de esa propiedad (o desde hoy, si no hay tenants), ya que no
+   *  guardamos una fecha de inicio del lease en sí — se deja claro que es un estimado. */
+  var profitsPeriod = 'month'; // 'month' | 'all'
+  function setProfitsPeriod(p){ profitsPeriod = p; renderPreservingScroll(); }
+  window.setProfitsPeriod = setProfitsPeriod;
+
+  function monthlyLeaseCost(p){
+    if (p.leasePaymentAmount == null) return 0;
+    // Quincenal ≈ 26.09 ciclos al año (365.25/14) → dividido entre 12 meses.
+    return p.leasePaymentFrequency === 'fortnightly' ? p.leasePaymentAmount * (365.25/14) / 12 : p.leasePaymentAmount;
+  }
+
+  function renderProfits(){
+    if (properties.length === 0){
+      return pageHeader('Profits', "What tenants pay you vs what you pay the real estate, per property.") +
+        emptyState('chart', 'Nothing to show yet', 'Once you add properties and tenants, profits will show up here.',
+          '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>');
+    }
+    var periodChipsHtml = '<div class="filter-chips" style="margin-bottom:10px;">'+
+      '<button class="chip'+(profitsPeriod==='month'?' active':'')+'" onclick="setProfitsPeriod(\'month\')">This month</button>'+
+      '<button class="chip'+(profitsPeriod==='all'?' active':'')+'" onclick="setProfitsPeriod(\'all\')">All time</button>'+
+      '</div>';
+    var monthStart = TODAY.slice(0,7)+'-01';
+
+    var rows = properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
+      var propTenants = tenants.filter(function(t){ return t.propertyId===p.id; });
+      var tenantIds = propTenants.map(function(t){ return t.id; });
+      var propPayments = paymentRecords.filter(function(pay){ return tenantIds.indexOf(pay.tenantId) > -1; });
+      var monthlyCost = monthlyLeaseCost(p);
+      var income, expense, periodLabel;
+      if (profitsPeriod === 'month'){
+        income = propPayments.filter(function(pay){ return pay.date >= monthStart; }).reduce(function(s,pay){ return s+pay.amount; }, 0);
+        expense = monthlyCost;
+        periodLabel = 'this month';
+      } else {
+        income = propPayments.reduce(function(s,pay){ return s+pay.amount; }, 0);
+        var earliestMoveIn = propTenants.reduce(function(min,t){ return (!min || t.moveInDate < min) ? t.moveInDate : min; }, null);
+        var months = earliestMoveIn ? Math.max(1, daysBetween(earliestMoveIn, TODAY) / 30.44) : 0;
+        expense = monthlyCost * months;
+        periodLabel = 'all time (estimated)';
+      }
+      var profit = round2(income - expense);
+      var hasLeaseCost = p.leasePaymentAmount != null;
+      return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
+        '<h2 style="margin:0;"><a href="#/properties/'+p.id+'" style="color:inherit;text-decoration:none;">'+esc(p.name)+'</a></h2>'+
+        '<div style="font-weight:700;font-size:15px;color:'+(profit<0?'var(--status-overdue)':'var(--status-paid)')+';">'+money(profit)+'</div>'+
+        '</div>'+
+        '<div class="field-list">'+
+        '<div class="field-row"><span class="k">Rent collected</span><span class="v">'+money(income)+'</span></div>'+
+        '<div class="field-row"><span class="k">Paid to real estate</span><span class="v">'+(hasLeaseCost ? money(expense) : '—')+'</span></div>'+
+        '</div>'+
+        '<p style="font-size:11px;color:var(--text-faint);margin:8px 0 0;">'+
+        (hasLeaseCost ? 'Profit '+periodLabel+' = rent collected − lease cost.' : 'No lease amount set for this property, so this only shows rent collected.')+
+        '</p></div>';
+    }).join('');
+
+    return pageHeader('Profits', "What tenants pay you vs what you pay the real estate, per property.") +
+      periodChipsHtml + rows;
+  }
+
   /* ---------- FASE 13: Notifications ---------- */
   function notifId(e){ return e.kind + '|' + e.date + '|' + e.title; }
   function isNotifRead(e){ return notifReadIds.indexOf(notifId(e)) > -1; }
@@ -5039,6 +5153,14 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.onPropertyPaymentMethodChange = onPropertyPaymentMethodChange;
 
+  // El día del mes (1-31) solo tiene sentido cuando el pago al real estate es mensual —
+  // si es quincenal, el próximo vencimiento se calcula desde last_lease_payment_date + 14.
+  function onPropertyLeaseFrequencyChange(){
+    var freq = document.getElementById('property-lease-frequency').value;
+    document.getElementById('property-lease-day-row').hidden = freq === 'fortnightly';
+  }
+  window.onPropertyLeaseFrequencyChange = onPropertyLeaseFrequencyChange;
+
   function openPropertyModal(propertyId){
     propertyModalEditId = propertyId || null;
     var p = propertyId ? propertyOf(propertyId) : null;
@@ -5049,9 +5171,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
     document.getElementById('property-notes').value = p ? (p.notes||'') : '';
     document.getElementById('property-whatsapp-group').value = p ? (p.whatsappGroupLink||'') : '';
+    document.getElementById('property-lease-frequency').value = (p && p.leasePaymentFrequency==='fortnightly') ? 'fortnightly' : 'monthly';
     document.getElementById('property-lease-day').value = (p && p.leasePaymentDay) ? p.leasePaymentDay : '';
     document.getElementById('property-lease-amount').value = (p && p.leasePaymentAmount != null) ? p.leasePaymentAmount : '';
     document.getElementById('property-lease-end').value = (p && p.leaseEndDate) ? p.leaseEndDate : '';
+    document.getElementById('property-inspection-date').value = (p && p.nextInspectionDate) ? p.nextInspectionDate : '';
     document.getElementById('property-payment-method').value = (p && p.leasePaymentMethod) ? p.leasePaymentMethod : '';
     document.getElementById('property-bpay-biller').value = p ? (p.bpayBillerCode||'') : '';
     document.getElementById('property-bpay-reference').value = p ? (p.bpayReference||'') : '';
@@ -5059,6 +5183,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('property-bank-bsb').value = p ? (p.bankBsb||'') : '';
     document.getElementById('property-bank-account').value = p ? (p.bankAccountNumber||'') : '';
     onPropertyPaymentMethodChange();
+    onPropertyLeaseFrequencyChange();
     document.getElementById('property-modal-error').hidden = true;
     document.getElementById('property-modal').hidden = false;
   }
@@ -5087,11 +5212,13 @@ import * as recurringBillService from './services/recurringBillService.js';
 
     // Todos estos campos son opcionales (una propiedad puede no tener un lease propio del
     // admin con un real estate) — solo se validan si el admin empezó a llenarlos.
+    var leasePaymentFrequency = document.getElementById('property-lease-frequency').value === 'fortnightly' ? 'fortnightly' : 'monthly';
     var leaseDayRaw = document.getElementById('property-lease-day').value;
-    var leasePaymentDay = leaseDayRaw ? parseInt(leaseDayRaw, 10) : null;
+    var leasePaymentDay = (leaseDayRaw && leasePaymentFrequency==='monthly') ? parseInt(leaseDayRaw, 10) : null;
     var leaseAmountRaw = document.getElementById('property-lease-amount').value;
     var leasePaymentAmount = leaseAmountRaw ? parseFloat(leaseAmountRaw) : null;
     var leaseEndDate = document.getElementById('property-lease-end').value || null;
+    var nextInspectionDate = document.getElementById('property-inspection-date').value || null;
     var leasePaymentMethod = document.getElementById('property-payment-method').value || null;
     var bpayBillerCode = document.getElementById('property-bpay-biller').value.trim();
     var bpayReference = document.getElementById('property-bpay-reference').value.trim();
@@ -5099,7 +5226,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var bankBsb = document.getElementById('property-bank-bsb').value.trim();
     var bankAccountNumber = document.getElementById('property-bank-account').value.trim();
 
-    if (leasePaymentDay !== null && (!isFinite(leasePaymentDay) || leasePaymentDay < 1 || leasePaymentDay > 31)){
+    if (leasePaymentFrequency === 'monthly' && leaseDayRaw && (!isFinite(leasePaymentDay) || leasePaymentDay < 1 || leasePaymentDay > 31)){
       errorEl.textContent = 'The rent payment day must be a number from 1 to 31.';
       errorEl.hidden = false;
       return;
@@ -5125,9 +5252,14 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
     errorEl.hidden = true;
     try {
+      var existingForEdit = propertyModalEditId ? propertyOf(propertyModalEditId) : null;
       var draft = { name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes,
         whatsappGroupLink:whatsappGroupLink,
         leasePaymentDay:leasePaymentDay, leasePaymentAmount:leasePaymentAmount, leaseEndDate:leaseEndDate,
+        leasePaymentFrequency:leasePaymentFrequency, nextInspectionDate:nextInspectionDate,
+        // last_lease_payment_date solo se cambia con el botón "Mark lease payment as paid" —
+        // no lo toca este formulario, así que se preserva el valor que ya tenía.
+        lastLeasePaymentDate: existingForEdit ? existingForEdit.lastLeasePaymentDate : null,
         leasePaymentMethod:leasePaymentMethod,
         bpayBillerCode: leasePaymentMethod==='bpay' ? bpayBillerCode : '',
         bpayReference: leasePaymentMethod==='bpay' ? bpayReference : '',
@@ -5624,6 +5756,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     '#/maintenance': renderMaintenance,
     '#/calendar': renderCalendar,
     '#/reports': renderReports,
+    '#/profits': renderProfits,
     '#/documents': renderDocuments,
     '#/notifications': renderNotifications,
     '#/users': renderUsers,
