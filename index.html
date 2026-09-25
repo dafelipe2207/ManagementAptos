@@ -420,6 +420,24 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="lease-payment-modal" hidden>
+    <div class="card modal-card" style="max-width:360px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Mark lease payment as paid</h2>
+      <p id="lease-payment-modal-sub" style="font-size:12px;color:var(--text-faint);margin:0 0 10px;"></p>
+      <div class="form-row">
+        <label for="lease-payment-start">This payment covers the period starting</label>
+        <input id="lease-payment-start" type="date" oninput="updateLeasePaymentEndPreview()" />
+      </div>
+      <div class="field-row"><span class="k">Period ends</span><span class="v" id="lease-payment-end-preview">—</span></div>
+      <p style="font-size:11px;color:var(--text-faint);margin:8px 0 0;">Defaulted to what the system currently expects — change it if the real invoice covers a different period.</p>
+      <p id="lease-payment-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeLeasePaymentModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="confirmLeasePaymentModal()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="user-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
       <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Create user</h2>
@@ -635,6 +653,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="app.js?v=64"></script>
+<script type="module" src="app.js?v=65"></script>
 </body>
 </html>
