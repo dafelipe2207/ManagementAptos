@@ -1137,10 +1137,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     return header + propertyTabsHtml + timelineHtml + rows;
   }
 
-  /** Línea de tiempo de estadías (parecida a billsTimelineHtml, pero de tenants): una barra por
-   *  tenant desde su fecha de mudanza hasta su fecha de salida (real, esperada, o hasta hoy si
-   *  todavía vive ahí), agrupadas por propiedad. Rango dinámico: desde la mudanza más antigua del
-   *  alcance hasta la salida más reciente (o un mes después de hoy, lo que sea mayor). */
+  /** Línea de tiempo de estadías (parecida a billsTimelineHtml, pero de tenants): una FILA por
+   *  habitación (no por tenant, ya que distintos tenants pueden haber pasado por la misma
+   *  habitación en momentos distintos), con una barra por cada estadía dentro de esa fila, desde
+   *  su fecha de mudanza hasta su fecha de salida (real, esperada, o hasta hoy si todavía vive
+   *  ahí). Agrupado por propiedad. Rango dinámico: desde la mudanza más antigua del alcance hasta
+   *  la salida más reciente (o un mes después de hoy, lo que sea mayor). */
   function tenantsTimelineHtml(list){
     if (!list.length) return '';
     var endOf = function(t){ return t.actualMoveOutDate || t.expectedMoveOutDate || TODAY; };
@@ -1174,19 +1176,31 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     var todayLeft = pct(TODAY);
     var todayLineHtml = '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
-    function rowHtml(t){
+    // Una fila por habitación — todas las estadías que pasaron por esa habitación se dibujan
+    // como barras dentro de la MISMA fila (no una fila nueva por tenant).
+    function roomRowHtml(roomLabel, tenantsInRoom){
       return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
-        '<span style="font-size:11.5px;color:var(--text-dim);width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(t.fullName)+'</span>'+
-        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+barHtml(t)+todayLineHtml+'</div></div>';
+        '<span style="font-size:11.5px;color:var(--text-dim);width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(roomLabel)+'</span>'+
+        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+tenantsInRoom.map(barHtml).join('')+todayLineHtml+'</div></div>';
     }
 
     var byProperty = {};
     list.forEach(function(t){ (byProperty[t.propertyId] = byProperty[t.propertyId] || []).push(t); });
     var propRows = Object.keys(byProperty).map(function(propId){
       var p = propertyOf(propId);
-      var tenantsSorted = byProperty[propId].slice().sort(function(a,b){ return a.moveInDate.localeCompare(b.moveInDate); });
+      var byRoom = {};
+      byProperty[propId].forEach(function(t){ (byRoom[t.roomId || '—'] = byRoom[t.roomId || '—'] || []).push(t); });
+      var roomIds = Object.keys(byRoom).sort(function(a,b){
+        var ra = rooms.find(function(r){ return r.id===a; }), rb = rooms.find(function(r){ return r.id===b; });
+        return (ra?ra.name:'').localeCompare(rb?rb.name:'');
+      });
+      var roomRows = roomIds.map(function(roomId){
+        var room = rooms.find(function(r){ return r.id===roomId; });
+        var tenantsInRoom = byRoom[roomId].slice().sort(function(a,b){ return a.moveInDate.localeCompare(b.moveInDate); });
+        return roomRowHtml(room ? room.name : 'No room', tenantsInRoom);
+      }).join('');
       return '<div style="margin-bottom:12px;"><div style="font-size:12.5px;font-weight:650;margin-bottom:4px;">'+esc(p?p.name:'—')+'</div>'+
-        tenantsSorted.map(rowHtml).join('') + '</div>';
+        roomRows + '</div>';
     }).join('');
 
     var monthTicks = months.filter(function(ym, i){ return i % tickStep === 0; }).map(function(ym){
@@ -1199,7 +1213,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     };
     return '<div class="card">'+
       '<h2 style="margin-bottom:2px;">Tenancy timeline</h2>'+
-      '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">Each bar is one tenant\'s stay, from move-in to move-out (or today, if still living there).</p>'+
+      '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">Grouped by room. Each bar is one tenant\'s stay, from move-in to move-out (or today, if still living there).</p>'+
       propRows+
       '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
       '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') + legendItem('var(--status-move)','Moved out')+'</div>'+
