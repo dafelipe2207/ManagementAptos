@@ -49,20 +49,24 @@ import * as recurringBillService from './services/recurringBillService.js';
   function isSuperAdmin(){ return !!currentProfile && currentProfile.role === 'super_admin'; }
   function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator'); }
   function isTenantRole(){ return !!currentProfile && currentProfile.role === 'tenant'; }
-  /** Bills de este proveedor NUNCA se muestran ni se envían a los inquilinos — ni en "My Bills",
-   *  ni en el saldo pendiente de su dashboard, ni con los botones de WhatsApp (individual o de
-   *  grupo) del lado del admin. Comparación sin mayúsculas/espacios para no depender de cómo
-   *  haya quedado tipeado el proveedor. */
+  /** Bills from this provider are NEVER shown to or sent to tenants — not in "My Bills",
+   *  not in the outstanding balance on their dashboard, and not with the WhatsApp buttons
+   *  (individual or group) on the admin side. Comparison is case/whitespace-insensitive so it
+   *  doesn't depend on exactly how the provider name was typed in. */
   function isTenantHiddenProvider(provider){ return (provider || '').trim().toUpperCase() === 'RS'; }
+  /** Same "no longer lives here" test used for the tenancy badge elsewhere (deactivated, or
+   *  their actual move-out date has arrived) — pulled out so Payments can reuse it to decide
+   *  which tenants still belong in the list. */
+  function tenantHasMovedOut(t){ return t.isActive === false || !!(t.actualMoveOutDate && t.actualMoveOutDate <= TODAY); }
   /**
-   * Convierte un objeto Date (construido en hora LOCAL, p.ej. con
-   * `new Date(iso+'T00:00:00')`) de vuelta a 'YYYY-MM-DD' usando sus
-   * componentes locales. `toISOString()` NO sirve para esto: convierte a
-   * UTC primero, así que en cualquier zona horaria con offset positivo
-   * (Perth, UTC+8, por ejemplo) una fecha calculada como "30 de septiembre
-   * medianoche local" se convierte a "29 de septiembre, 16:00 UTC" y el
-   * slice(0,10) devuelve el día equivocado. Todo el cálculo de fechas de la
-   * app (rent periods, dueDates, extracción de bills) pasa por aquí.
+   * Converts a Date object (built in LOCAL time, e.g. with
+   * `new Date(iso+'T00:00:00')`) back to 'YYYY-MM-DD' using its
+   * local components. `toISOString()` does NOT work for this: it converts to
+   * UTC first, so in any timezone with a positive offset
+   * (Perth, UTC+8, for example) a date computed as "September 30th
+   * at local midnight" becomes "September 29th, 16:00 UTC", and
+   * slice(0,10) returns the wrong day. All date calculations in the
+   * app (rent periods, dueDates, bill extraction) go through this function.
    */
   function toIsoLocal(d){
     var y = d.getFullYear();
@@ -71,25 +75,25 @@ import * as recurringBillService from './services/recurringBillService.js';
     return y+'-'+m+'-'+day;
   }
 
-  /** Suma `days` días HÁBILES (de lunes a viernes, sin contar feriados) a una fecha 'YYYY-MM-DD'.
-   *  Se usa para calcular una fecha límite de pago por defecto cuando un bill importado con IA
-   *  no trae due date impresa/legible — 10 días hábiles después de la fecha de emisión, en vez
-   *  de dejar el campo vacío y bloquear el guardado. */
+  /** Adds `days` BUSINESS days (Monday to Friday, not counting holidays) to a 'YYYY-MM-DD' date.
+   *  Used to compute a default payment due date when a bill imported via AI doesn't have a
+   *  printed/legible due date — 10 business days after the issue date, instead of
+   *  leaving the field empty and blocking saving. */
   function addBusinessDays(isoDate, days){
     var d = new Date(isoDate+'T00:00:00');
     var added = 0;
     while (added < days){
       d.setDate(d.getDate()+1);
-      var dow = d.getDay(); // 0=domingo, 6=sábado
+      var dow = d.getDay(); // 0=Sunday, 6=Saturday
       if (dow !== 0 && dow !== 6) added++;
     }
     return toIsoLocal(d);
   }
 
   /**
-   * rentService — genera rent charges a partir de un RentSchedule.
-   * Aislado del resto de la lógica (sección 35 del brief: servicios propios
-   * para "Rent calculations").
+   * rentService — generates rent charges from a RentSchedule.
+   * Isolated from the rest of the logic (brief section 35: dedicated
+   * services for "Rent calculations").
    */
   var rentService = (function(){
     function stepDate(iso, days){
@@ -108,20 +112,20 @@ import * as recurringBillService from './services/recurringBillService.js';
     function round2(n){ return Math.round(n*100)/100; }
 
     /**
-     * Genera TODOS los periodos desde `schedule.startDate` hasta el primer
-     * periodo que empieza después de `asOfIso` (un único periodo "futuro"),
-     * respetando la fecha de salida del inquilino si existe (sección 32:
-     * nunca generar cargos para cuando el inquilino ya no vive ahí).
+     * Generates ALL periods from `schedule.startDate` up to the first
+     * period that starts after `asOfIso` (a single "future" period),
+     * respecting the tenant's move-out date if it exists (section 32:
+     * never generate charges for after the tenant no longer lives there).
      */
-    // Regla de negocio: el tenant debe pagar con 2 semanas de anticipación — el vencimiento de
-    // cada periodo cae 14 días ANTES de que ese periodo empiece, no el mismo día. Así, si hoy es
-    // el vencimiento de la semana que arranca el 20/10, esa semana ya debía estar pagada desde
-    // el 06/10 (14 días antes), y el tenant siempre debe llevar 2 semanas de colchón pagado.
+    // Business rule: the tenant must pay 2 weeks in advance — the due date for
+    // each period falls 14 days BEFORE that period starts, not on the same day. So if today is
+    // the due date of the week starting 20/10, that week should already have been paid since
+    // 06/10 (14 days before), and the tenant must always keep a 2-week buffer paid.
     var ADVANCE_DAYS = 14;
-    // Cuántos periodos FUTUROS (que todavía no arrancaron) se generan de una — no hay que
-    // adelantar más de lo que realmente hace falta mostrar como "upcoming": 1 si el ciclo es
-    // quincenal o mensual, 2 si es semanal (así la ventana de aviso es siempre de ~2 semanas en
-    // ambos casos, en vez de ir generando cargos cada vez más lejos que todavía ni corresponden).
+    // How many FUTURE periods (that haven't started yet) are generated at once — there's no need
+    // to look further ahead than what's actually needed to show as "upcoming": 1 if the cycle is
+    // fortnightly or monthly, 2 if it's weekly (so the notice window is always ~2 weeks in
+    // both cases, instead of generating charges further and further ahead that aren't due yet).
     function futureLookahead(frequency){ return frequency === 'weekly' ? 2 : 1; }
     function generateAllPeriods(schedule, tenant, asOfIso){
       var periods = [];
@@ -137,12 +141,12 @@ import * as recurringBillService from './services/recurringBillService.js';
         var end = schedule.frequency === 'monthly'
           ? stepDate(addMonths(cursor, 1), -1)
           : stepDate(cursor, periodLengthDays(schedule.frequency) - 1);
-        // El primer periodo de la tenencia es la excepción a la regla de "2 semanas de
-        // anticipación": antes de mudarse, el inquilino solo paga el bond para apartar la
-        // habitación — recién debe el arriendo desde que se muda, no 14 días antes (ese día
-        // ni siquiera era tenant todavía). Por eso el vencimiento del primer periodo es la
-        // propia fecha de move-in, y solo desde el segundo periodo en adelante se exige el
-        // colchón de 2 semanas.
+        // The first period of the tenancy is the exception to the "2 weeks in
+        // advance" rule: before moving in, the tenant only pays the bond to reserve the
+        // room — rent is only owed from when they move in, not 14 days before (that day
+        // they weren't even a tenant yet). That's why the first period's due date is
+        // the move-in date itself, and only from the second period onward is the
+        // 2-week buffer required.
         var dueDate = isFirstPeriod ? cursor : stepDate(cursor, -ADVANCE_DAYS);
         periods.push({ periodStart: cursor, periodEnd: end, dueDate: dueDate });
         isFirstPeriod = false;
@@ -152,11 +156,12 @@ import * as recurringBillService from './services/recurringBillService.js';
       return periods;
     }
 
-    // "Overdue" solo cuando el periodo YA empezó (llegó su primer día) y sigue sin pagarse — no
-    // basta con que se haya cruzado la fecha ideal de pago anticipado (dueDate, 14 días antes).
-    // Esa fecha de 2 semanas de colchón sigue guardada en dueDate por si se necesita para otra
-    // cosa, pero ya no decide el estado: mientras el periodo no haya arrancado, es "upcoming" —
-    // recién al llegar su fecha de inicio sin haberse registrado el pago pasa a "overdue".
+    // "Overdue" only when the period has ALREADY started (reached its first day) and is still
+    // unpaid — it's not enough to have passed the ideal advance-payment date (dueDate, 14 days
+    // before). That 2-week buffer date is still stored in dueDate in case it's needed for
+    // something else, but it no longer determines the status: while the period hasn't started
+    // it's "upcoming" — only once its start date arrives without a payment recorded does it
+    // become "overdue".
     function computeStatus(period, amountPaid, remaining, asOfIso){
       if (remaining <= 0.004) return 'paid';
       if (amountPaid > 0) return 'partially_paid';
@@ -164,9 +169,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       return 'upcoming';
     }
 
-    /** Reparte los pagos de un inquilino contra TODOS sus periodos desde el move-in (no solo
-     *  una ventana reciente), en orden cronológico (FIFO), para que cada semana/quincena
-     *  atrasada aparezca como su propia fila en Payments. */
+    /** Allocates a tenant's payments against ALL of their periods since move-in (not just
+     *  a recent window), in chronological order (FIFO), so that each overdue
+     *  week/fortnight appears as its own row in Payments. */
     function generateChargesForTenant(tenant, schedule, asOfIso, allPayments){
       if (!schedule || tenant.rentAmount <= 0) return [];
       var periods = generateAllPeriods(schedule, tenant, asOfIso);
@@ -182,9 +187,9 @@ import * as recurringBillService from './services/recurringBillService.js';
         while (need > 0.004 && payIdx < pays.length){
           var take = Math.min(need, payLeft);
           amountPaid += take; need -= take; payLeft -= take;
-          // La fecha del pago que efectivamente cubrió (parte de) este periodo — si el periodo
-          // queda totalmente pagado, esta es "cuándo se pagó"; si queda con saldo, es la fecha
-          // del último abono parcial recibido.
+          // The date of the payment that actually covered (part of) this period — if the period
+          // ends up fully paid, this is "when it was paid"; if it's left with a balance, it's the
+          // date of the last partial payment received.
           lastPaidDate = pays[payIdx].date;
           if (payLeft <= 0.004){ payIdx++; payLeft = payIdx < pays.length ? pays[payIdx].amount : 0; }
         }
@@ -209,39 +214,39 @@ import * as recurringBillService from './services/recurringBillService.js';
   })();
 
   /**
-   * FASE 8 — OCR/AI bill extraction (sección de "Import Bill" del brief):
-   * la foto/PDF de la factura se envía a la Edge Function `analyze-bill`
-   * (services/aiService.js), que llama a Gemini (Google) del lado del
-   * servidor para leer el documento de verdad — proveedor, tipo, fechas,
-   * importe, y una propiedad sugerida por coincidencia de dirección/nombre
-   * contra las propiedades existentes. La clave de la API vive como secret
-   * de la Edge Function, nunca en el frontend. El resultado sigue pasando
-   * por la misma pantalla de revisión de siempre (cola -> "analizando" ->
-   * revisar/editar -> confirmar), así que un error o un dato mal leído
-   * siempre se corrige a mano antes de guardar.
+   * PHASE 8 — OCR/AI bill extraction (the "Import Bill" section of the brief):
+   * the invoice photo/PDF is sent to the `analyze-bill` Edge Function
+   * (services/aiService.js), which calls Gemini (Google) server-side
+   * to actually read the document — provider, type, dates,
+   * amount, and a suggested property based on matching the address/name
+   * against existing properties. The API key lives as an Edge Function
+   * secret, never in the frontend. The result still goes through the
+   * same review screen as always (queue -> "analyzing" ->
+   * review/edit -> confirm), so an error or a misread value
+   * is always corrected by hand before saving.
    */
 
   /**
-   * FASE 4 — Rent system (sección 9 del brief): los rent charges ya NO se
-   * escriben a mano. `rentService` (más abajo) los genera automáticamente a
-   * partir de un `RentSchedule` por inquilino (frecuencia, importe, fecha de
-   * inicio), aplicando los pagos registrados en orden cronológico (FIFO) para
-   * derivar amountPaid/remaining/status. Se genera UN periodo por cada
-   * semana/quincena/mes desde el move-in hasta hoy (más uno futuro) — no solo
-   * los últimos 3 — para que un inquilino atrasado varios meses muestre cada
-   * semana pendiente por separado en Payments, y el administrador sepa
-   * exactamente cuál semana está cancelando en cada pago.
+   * PHASE 4 — Rent system (brief section 9): rent charges are NO LONGER
+   * entered by hand. `rentService` (below) generates them automatically
+   * from a per-tenant `RentSchedule` (frequency, amount, start
+   * date), applying recorded payments in chronological order (FIFO) to
+   * derive amountPaid/remaining/status. ONE period is generated per
+   * week/fortnight/month from move-in to today (plus one future one) — not just
+   * the last 3 — so that a tenant who is several months behind shows each
+   * outstanding week as its own separate row in Payments, and the administrator knows
+   * exactly which week each payment is settling.
    */
   var rentSchedules = [];
   var paymentRecords = [];
 
-  /* ---------- FASE 13: Notifications (estado leído/no-leído persistido; solo estado de UI local, no datos de negocio) ---------- */
+  /* ---------- PHASE 13: Notifications (read/unread state persisted; local UI state only, not business data) ---------- */
   var NOTIF_READ_KEY = 'belmont-manager-notif-read-v1';
   function loadNotifRead(){
-    try { var raw = localStorage.getItem(NOTIF_READ_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignorar */ }
+    try { var raw = localStorage.getItem(NOTIF_READ_KEY); if (raw) return JSON.parse(raw); } catch(e){ /* ignore */ }
     return [];
   }
-  function saveNotifRead(list){ try { localStorage.setItem(NOTIF_READ_KEY, JSON.stringify(list)); } catch(e){ /* ignorar */ } }
+  function saveNotifRead(list){ try { localStorage.setItem(NOTIF_READ_KEY, JSON.stringify(list)); } catch(e){ /* ignore */ } }
   var notifReadIds = loadNotifRead();
 
   var rentCharges = [];
@@ -252,7 +257,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         var schedule = rentSchedules.find(function(s){ return s.tenantId===t.id; });
         return acc.concat(rentService.generateChargesForTenant(t, schedule, TODAY, paymentRecords));
       }, [])
-      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // más actual primero, más antiguo al final
+      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // most recent first, oldest last
   }
   recomputeRentCharges();
 
@@ -274,9 +279,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       return null;
     }
   }
-  /** Deshace un pago recién registrado (atajo desde el "Undo" del toast) — para cuando el
-   *  administrador se equivocó de fecha, o confirmó un pago que en realidad no se hizo. La
-   *  misma corrección también está disponible más tarde desde "View history" (✕ o ✎). */
+  /** Undoes a payment that was just recorded (shortcut from the toast's "Undo") — for when the
+   *  administrator picked the wrong date, or confirmed a payment that hadn't actually happened. The
+   *  same correction is also available later from "View history" (✕ or ✎). */
   async function undoRecordedPayment(paymentId){
     var ok = await removePayment(paymentId);
     if (ok){
@@ -296,9 +301,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       return false;
     }
   }
-  /** Paga esta charge y cualquier periodo anterior sin pagar del mismo inquilino (el ledger es FIFO).
-   *  `date` es la fecha REAL en que el inquilino pagó (puede ser de hace varios días) — no siempre
-   *  hoy, por eso openChargePaidModal la pide en vez de asumir TODAY directamente. */
+  /** Pays this charge and any earlier unpaid period for the same tenant (the ledger is FIFO).
+   *  `date` is the ACTUAL date the tenant paid (may be several days ago) — not always
+   *  today, which is why openChargePaidModal asks for it instead of just assuming TODAY. */
   async function markChargeAsPaid(chargeId, date){
     var charge = rentCharges.find(function(c){ return c.id===chargeId; });
     if (!charge) return;
@@ -370,7 +375,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var date = (dateInput && dateInput.value) ? dateInput.value : TODAY;
     closePartialModal();
     if (!charge || !isFinite(amount) || amount <= 0) return;
-    if (amount > charge.remaining) amount = charge.remaining; // no se admite sobrepago
+    if (amount > charge.remaining) amount = charge.remaining; // overpayment is not allowed
     await recordPayment(charge.tenantId, amount, date);
     render();
   }
@@ -512,7 +517,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     return toIsoLocal(d);
   }
 
-  /* ============ dashboardService (misma lógica que src/services/dashboardService.ts) ============ */
+  /* ============ dashboardService (same logic as src/services/dashboardService.ts) ============ */
   function isRoomOccupied(room){
     return tenants.some(function(t){
       if (t.roomId !== room.id || t.rentAmount <= 0) return false;
@@ -539,7 +544,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       billsPendingCount: billsPending
     };
   }
-  /** Cuotas individuales de bills todavía sin pagar cuyo bill ya está vencido (para el dashboard y, más adelante, Reports). */
+  /** Individual bill shares that are still unpaid whose bill is already overdue (for the dashboard and, later, Reports). */
   function getOverdueUnpaidBillShares(){
     var items = [];
     bills.forEach(function(b){
@@ -564,10 +569,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     return items;
   }
   function getNeedsAttention(){
-    // Un inquilino atrasado varios meses ahora tiene muchos periodos overdue en rentCharges
-    // (uno por semana/quincena, ver generateChargesForTenant) — "Needs attention" se queda con
-    // el más reciente de cada inquilino para no repetir una fila por cada semana; el desglose
-    // completo semana por semana vive en Payments (con el filtro por tenant).
+    // A tenant who is several months behind now has many overdue periods in rentCharges
+    // (one per week/fortnight, see generateChargesForTenant) — "Needs attention" keeps only
+    // the most recent one per tenant so it doesn't repeat a row for every week; the full
+    // week-by-week breakdown lives in Payments (with the filter by tenant).
     var mostRecentByTenant = {};
     rentCharges
       .filter(function(c){ return c.status==='overdue' || c.status==='partially_paid'; })
@@ -605,9 +610,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     var leaseItems = getUpcomingLeasePayments();
     return rentItems.concat(billItems).concat(leaseItems);
   }
-  /** Propiedades cuyo pago de arriendo del ADMIN al real estate vence hoy, mañana, o pasado
-   *  mañana (avisa 2 días antes, según se pidió) — o que YA venció y no se marcó como pagado
-   *  ("generar alerta en caso de que no se realice el pago"), para que no se le pase la fecha. */
+  /** Properties whose ADMIN-to-real-estate rent payment is due today, tomorrow, or the day
+   *  after tomorrow (warns 2 days ahead, as requested) — or that is ALREADY overdue and wasn't
+   *  marked as paid ("generate an alert in case the payment isn't made"), so the date doesn't get missed. */
   function getUpcomingLeasePayments(){
     return properties
       .map(function(p){
@@ -628,17 +633,17 @@ import * as recurringBillService from './services/recurringBillService.js';
       .sort(function(a,b){ return a.date.localeCompare(b.date); });
   }
   /**
-   * FASE 10 — Calendar (sección del brief): en vez de una lista de eventos
-   * escrita a mano, los eventos del calendario se DERIVAN de los mismos
-   * datos que ya generan Payments y Bills (rent charges, bills, tenants),
-   * igual que rentService genera los rent charges a partir del schedule.
-   * Así el calendario nunca puede quedar desincronizado de un pago
-   * registrado o un bill marcado como pagado.
+   * PHASE 10 — Calendar (brief section): instead of a hand-written list of
+   * events, calendar events are DERIVED from the same data that already
+   * drives Payments and Bills (rent charges, bills, tenants),
+   * just like rentService generates rent charges from the schedule.
+   * This way the calendar can never get out of sync with a recorded
+   * payment or a bill marked as paid.
    */
   function buildCalendarEvents(){
     var events = [];
     rentCharges.forEach(function(c){
-      if (c.status === 'paid') return; // ya resuelto, no aporta al calendario
+      if (c.status === 'paid') return; // already resolved, doesn't contribute to the calendar
       var t = tenantOf(c.tenantId);
       if (!t) return;
       events.push({
@@ -652,8 +657,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       if (billEffectiveStatus(b) === 'paid') return;
       var kind = billEffectiveStatus(b) === 'overdue' ? 'overdue' : 'due';
       if (b.allocations && b.allocations.length){
-        // Un bill ya repartido: un evento por CADA cuota de inquilino sin pagar,
-        // en vez de un único evento genérico (así cada inquilino ve lo que le toca).
+        // A bill that's already been split: one event per EACH unpaid tenant share,
+        // instead of a single generic event (so each tenant sees what they owe).
         b.allocations.forEach(function(a){
           if (a.paid) return;
           var t = tenantOf(a.tenantId);
@@ -675,7 +680,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       }
     });
     tenants.forEach(function(t){
-      if (t.rentAmount <= 0) return; // owner: no genera eventos de tenancy
+      if (t.rentAmount <= 0) return; // owner: doesn't generate tenancy events
       events.push({ date: t.moveInDate, kind: 'move', title: t.fullName + ' — Move-in', href: '#/tenants/' + t.id });
       var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
       if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: '#/tenants/' + t.id });
@@ -697,7 +702,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     return events;
   }
   function pad2(n){ return n < 10 ? '0'+n : ''+n; }
-  /** Cuadrícula de un mes calendario ('YYYY-MM'): null = celda vacía de relleno; Lunes como primer día de la semana. */
+  /** Grid for a calendar month ('YYYY-MM'): null = empty filler cell; Monday as the first day of the week. */
   function buildMonthGrid(yearMonth){
     var year = parseInt(yearMonth.slice(0,4), 10);
     var month = parseInt(yearMonth.slice(5,7), 10) - 1;
@@ -749,12 +754,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'+(extra?' '+extra:'')+'>'+ICONS[name]+'</svg>';
   }
 
-  /* ============ Navegación ============ */
+  /* ============ Navigation ============ */
   // Two separate menus — which one is active is only known after the signed-in user's role
   // loads (enterApp() calls buildNavDom() again once currentProfile is set). Staff (super_admin/
   // administrator) get today's full app plus Maintenance, and Users/Audit Log for super_admin
-  // only; Tenant gets a small menu limited to their own data (see the "Tenant → solamente sus
-  // propios datos" rule).
+  // only; Tenant gets a small menu limited to their own data (see the "Tenant → only their
+  // own data" rule).
   var STAFF_NAV = [
     { hash:'#/', label:'Dashboard', icon:'dashboard', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
@@ -837,7 +842,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     return '<span class="badge '+status+'"><span class="dot"></span>'+esc(label)+'</span>';
   }
 
-  /* ============ Páginas ============ */
+  /* ============ Pages ============ */
   function pageHeader(title, sub){
     return '<div><h1 class="page-title">'+title+'</h1><p class="page-sub">'+sub+'</p></div>';
   }
@@ -850,7 +855,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       (actionHtml || '') +
       '</div>';
   }
-  /** Estado para un id de ruta dinámica que ya no existe (borrado, o link desactualizado). */
+  /** State for a dynamic route id that no longer exists (deleted, or an outdated link). */
   function notFoundState(entityLabel, backHash, backLabel){
     return emptyState('inbox', entityLabel + ' not found',
       "It may have been deleted, or the link is out of date.",
@@ -928,12 +933,12 @@ import * as recurringBillService from './services/recurringBillService.js';
 
   function roomsOf(propertyId){ return rooms.filter(function(r){ return r.propertyId===propertyId; }); }
   function currentTenantOf(roomId){ return tenants.find(function(t){ return t.roomId===roomId; }); }
-  /** Busca OTRO tenant (distinto de excludeTenantId) que ya esté asignado a esta habitación
-   *  con una estancia que se traslapa en fechas con [moveInDate, moveOutDate]. moveOutDate en
-   *  null significa "sigue viviendo ahí, sin fecha de salida" (estancia abierta). Un tenant que
-   *  ya se mudó por completo antes de que el nuevo llegara (o que llega después de que el nuevo
-   *  se fue) NO cuenta como conflicto — dos personas pueden pasar por la misma habitación en
-   *  momentos distintos. */
+  /** Looks for ANOTHER tenant (different from excludeTenantId) already assigned to this room
+   *  with a stay whose dates overlap [moveInDate, moveOutDate]. A null moveOutDate
+   *  means "still living there, no move-out date" (open-ended stay). A tenant who
+   *  had already moved out completely before the new one arrived (or who arrives after the new one
+   *  left) does NOT count as a conflict — two people can pass through the same room at
+   *  different times. */
   function overlappingRoomTenant(roomId, moveInDate, moveOutDate, excludeTenantId){
     return tenants.find(function(t){
       if (t.roomId !== roomId || t.id === excludeTenantId) return false;
@@ -990,9 +995,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       cards;
   }
 
-  /** Próxima fecha (día-de-mes) en que el admin debe pagarle al real estate, a partir de
-   *  `fromIso`. Si el día configurado (ej. 31) no existe en el mes actual, se usa el último día
-   *  de ese mes en su lugar (ej. 28/29 de febrero) en vez de desbordarse al mes siguiente. */
+  /** Next date (day-of-month) on which the admin must pay the real estate, starting from
+   *  `fromIso`. If the configured day (e.g. 31) doesn't exist in the current month, the last day
+   *  of that month is used instead (e.g. Feb 28/29) instead of overflowing into the next month. */
   function nextMonthlyDueDate(day, fromIso){
     var from = new Date(fromIso+'T00:00:00');
     var year = from.getFullYear(), month = from.getMonth();
@@ -1007,13 +1012,13 @@ import * as recurringBillService from './services/recurringBillService.js';
     return toIsoLocal(candidate);
   }
 
-  /** Próxima fecha en que el admin debe pagarle al real estate, según la frecuencia configurada.
-   *  `lastLeasePaymentDate` guarda el INICIO del periodo ya pagado (no el día en que se hizo clic
-   *  en "pagado") — así, si el periodo pagado fue 06/07–05/08, el próximo vencimiento sale
-   *  correctamente el 06/08, sin importar qué día se registró el pago. Mensual: si ya se usó
-   *  "Mark as paid" alguna vez, se calcula desde ese inicio de periodo + 1 mes; si no, cae al
-   *  comportamiento anterior (día fijo del mes). Quincenal: siempre inicio de periodo + 14 días —
-   *  por eso requiere haber marcado un primer pago para empezar a rastrear. */
+  /** Next date on which the admin must pay the real estate, based on the configured frequency.
+   *  `lastLeasePaymentDate` stores the START of the period already paid (not the day "paid" was
+   *  clicked) — so if the paid period was 06/07–05/08, the next due date correctly comes out
+   *  as 06/08, no matter what day the payment was recorded. Monthly: if "Mark as paid" has
+   *  been used at least once, it's computed from that period start + 1 month; otherwise it falls
+   *  back to the previous behavior (fixed day of the month). Fortnightly: always period start + 14
+   *  days — that's why it requires a first payment to have been marked to start tracking. */
   function nextLeaseDueDate(p, asOfIso){
     asOfIso = asOfIso || TODAY;
     if (p.leasePaymentFrequency === 'fortnightly'){
@@ -1022,17 +1027,17 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (p.lastLeasePaymentDate) return addMonthsIso(p.lastLeasePaymentDate, 1);
     return p.leasePaymentDay ? nextMonthlyDueDate(p.leasePaymentDay, asOfIso) : null;
   }
-  /** Fin del periodo cubierto por el pago cuyo inicio es `startIso`, según la frecuencia. */
+  /** End of the period covered by the payment whose start is `startIso`, based on the frequency. */
   function leasePeriodEnd(p, startIso){
     if (!startIso) return null;
     return p.leasePaymentFrequency === 'fortnightly' ? stepDateIso(startIso, 13) : stepDateIso(addMonthsIso(startIso, 1), -1);
   }
 
   var leasePaymentModalPropertyId = null;
-  /** Abre un cuadro para confirmar el pago al real estate, con las fechas del periodo que cubre
-   *  PRECARGADAS con lo que el sistema ya calcula como próximo vencimiento — pero totalmente
-   *  editables, porque esa fecha por defecto puede no coincidir con el periodo real de la
-   *  factura (p.ej. si el pago llegó atrasado o el ciclo real no coincide exactamente). */
+  /** Opens a dialog to confirm the payment to the real estate, with the dates of the period it
+   *  covers PRE-FILLED with whatever the system already computes as the next due date — but fully
+   *  editable, because that default date might not match the invoice's actual period
+   *  (e.g. if the payment arrived late or the actual cycle doesn't line up exactly). */
   function openLeasePaymentModal(propertyId){
     var p = propertyOf(propertyId);
     if (!p) return;
@@ -1080,9 +1085,9 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.confirmLeasePaymentModal = confirmLeasePaymentModal;
 
-  /** Tarjeta de detalle del lease propio del admin con el real estate (día/frecuencia de pago,
-   *  monto, próxima inspección, vencimiento del contrato y método de pago) — solo se muestra si
-   *  algo quedó configurado. */
+  /** Detail card for the admin's own lease with the real estate (payment day/frequency,
+   *  amount, next inspection, contract end date and payment method) — only shown if
+   *  something has been configured. */
   function leasePaymentCardHtml(p){
     var hasAny = p.leasePaymentDay || p.leasePaymentAmount != null || p.leaseEndDate || p.leasePaymentMethod || p.nextInspectionDate || p.lastLeasePaymentDate;
     if (!hasAny) return '';
@@ -1160,7 +1165,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '</div>';
   }
 
-  var tenantsShowInactive = false; // toggle: por default solo se ven los tenants habilitados
+  var tenantsShowInactive = false; // toggle: only active tenants are shown by default
   function setTenantsShowInactive(v){ tenantsShowInactive = v; renderPreservingScroll(); }
   window.setTenantsShowInactive = setTenantsShowInactive;
 
@@ -1177,8 +1182,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openTenantModal()">+ Add tenant</button></div>'+
       (inactiveCount>0 ? '<button class="mini-btn" style="margin-bottom:12px;" onclick="setTenantsShowInactive('+(!tenantsShowInactive)+')">'+
         (tenantsShowInactive ? 'Back to active tenants' : 'Show inactive tenants ('+inactiveCount+')')+'</button>' : '');
-    // Chips de propiedad — mismo patrón que en Bills: filtra la lista y además agrupa/organiza
-    // las tarjetas por propiedad (ordenadas alfabéticamente) en vez de por orden de alta.
+    // Property chips — same pattern as in Bills: filters the list and also groups/organizes
+    // the cards by property (sorted alphabetically) instead of by creation order.
     var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
       '<button class="chip'+(tenantsPropertyFilter==='all'?' active':'')+'" onclick="setTenantsPropertyFilter(\'all\')">All properties</button>'+
       properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
@@ -1187,9 +1192,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (tenantsPropertyFilter !== 'all'){
       paying = paying.filter(function(t){ return t.propertyId === tenantsPropertyFilter; });
     }
-    // El diagrama de estadías se calcula sobre TODOS los tenants del alcance (activos e
-    // inactivos), sin importar el toggle "Show inactive tenants" — es un historial de fechas,
-    // no la lista operativa de abajo.
+    // The stays timeline is computed over ALL tenants in scope (active and
+    // inactive), regardless of the "Show inactive tenants" toggle — it's a history of dates,
+    // not the operational list below.
     var timelineScope = tenantsPropertyFilter==='all' ? all : all.filter(function(t){ return t.propertyId===tenantsPropertyFilter; });
     var timelineHtml = tenantsTimelineHtml(timelineScope);
     if (paying.length === 0){
@@ -1204,8 +1209,8 @@ import * as recurringBillService from './services/recurringBillService.js';
           ? '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>'
           : '<button class="mini-btn primary" onclick="openTenantModal()">+ Add tenant</button>');
     }
-    // Agrupado y ordenado por propiedad (alfabético) y, dentro de cada una, por nombre del
-    // tenant — así quedan organizados por propiedad aunque el filtro esté en "All properties".
+    // Grouped and sorted by property (alphabetically) and, within each, by tenant
+    // name — so they stay organized by property even when the filter is on "All properties".
     var sorted = paying.slice().sort(function(a,b){
       var pa = propertyOf(a.propertyId), pb = propertyOf(b.propertyId);
       var cmp = (pa?pa.name:'').localeCompare(pb?pb.name:'');
@@ -1235,12 +1240,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     return header + propertyTabsHtml + timelineHtml + rows;
   }
 
-  /** Línea de tiempo de estadías (parecida a billsTimelineHtml, pero de tenants): una FILA por
-   *  habitación (no por tenant, ya que distintos tenants pueden haber pasado por la misma
-   *  habitación en momentos distintos), con una barra por cada estadía dentro de esa fila, desde
-   *  su fecha de mudanza hasta su fecha de salida (real, esperada, o hasta hoy si todavía vive
-   *  ahí). Agrupado por propiedad. Rango dinámico: desde la mudanza más antigua del alcance hasta
-   *  la salida más reciente (o un mes después de hoy, lo que sea mayor). */
+  /** Timeline of stays (similar to billsTimelineHtml, but for tenants): one ROW per
+   *  room (not per tenant, since different tenants may have passed through the same
+   *  room at different times), with one bar per stay within that row, from
+   *  their move-in date to their move-out date (actual, expected, or today if they still
+   *  live there). Grouped by property. Dynamic range: from the earliest move-in in scope to
+   *  the most recent move-out (or one month after today, whichever is later). */
   function tenantsTimelineHtml(list){
     if (!list.length) return '';
     var endOf = function(t){ return t.actualMoveOutDate || t.expectedMoveOutDate || TODAY; };
@@ -1274,8 +1279,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     var todayLeft = pct(TODAY);
     var todayLineHtml = '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
-    // Una fila por habitación — todas las estadías que pasaron por esa habitación se dibujan
-    // como barras dentro de la MISMA fila (no una fila nueva por tenant).
+    // One row per room — all stays that passed through that room are drawn
+    // as bars within the SAME row (not a new row per tenant).
     function roomRowHtml(roomLabel, tenantsInRoom){
       return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
         '<span style="font-size:11.5px;color:var(--text-dim);width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(roomLabel)+'</span>'+
@@ -1377,22 +1382,22 @@ import * as recurringBillService from './services/recurringBillService.js';
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
   }
 
-  /** Cuando un inquilino se va (o va a irse), calcula un ESTIMADO de cuánto bond le corresponde
-   *  devolver: toma su tarifa diaria promedio de bills ya facturados (importe repartido / días
-   *  ocupados en esos mismos bills) y la proyecta sobre los días entre el último periodo ya
-   *  facturado y la fecha de salida — que todavía no tienen una factura real. Se suma lo que ya
-   *  está facturado y sin pagar (eso sí es un monto real, no estimado) y se resta todo del bond
-   *  pagado. Nunca reemplaza al bill real cuando llegue: es solo una proyección para orientar al
-   *  administrador mientras tanto. */
+  /** When a tenant leaves (or is about to leave), computes an ESTIMATE of how much bond should
+   *  be refunded: it takes their average daily rate from bills already invoiced (allocated amount
+   *  / occupied days in those same bills) and projects it over the days between the last
+   *  already-invoiced period and the move-out date — which don't yet have a real bill. It adds
+   *  whatever is already invoiced and unpaid (that IS a real amount, not an estimate) and subtracts
+   *  all of that from the paid bond. It never replaces the real bill once it arrives: it's only a
+   *  projection to guide the administrator in the meantime. */
   function computeMoveOutEstimate(t){
     var moveOutDate = t.actualMoveOutDate || t.expectedMoveOutDate;
     if (!moveOutDate) return null;
     var bond = bondOf(t.id);
     var bondPaid = bond ? bond.amountPaid : 0;
 
-    // Agrupado por TIPO de servicio (electricidad, gas, internet, etc.) — cada uno tiene su
-    // propio ciclo de facturación, así que el "hueco sin facturar" y la tarifa promedio se
-    // calculan por separado para cada uno, no mezclados en un solo número.
+    // Grouped by service TYPE (electricity, gas, internet, etc.) — each one has its
+    // own billing cycle, so the "not-yet-billed gap" and the average rate are
+    // computed separately for each, not mixed into a single number.
     var byType = {};
     bills.forEach(function(b){
       (b.allocations || []).forEach(function(a){
@@ -1416,7 +1421,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       var gapDays = gapStart <= moveOutDate ? (daysBetween(gapStart, moveOutDate) + 1) : 0;
       var estimatedGapAmount = round2(dailyRate * gapDays);
       var unpaid = round2(g.unpaid);
-      if (unpaid <= 0 && estimatedGapAmount <= 0) return; // nada que mostrar para este tipo
+      if (unpaid <= 0 && estimatedGapAmount <= 0) return; // nothing to show for this type
       totalUnpaid += unpaid;
       totalEstimatedGap += estimatedGapAmount;
       lines.push({
@@ -1443,9 +1448,9 @@ import * as recurringBillService from './services/recurringBillService.js';
   function moveOutSettlementHtml(t){
     var est = computeMoveOutEstimate(t);
     if (!est) return '';
-    /** Una fila por tipo de servicio, mostrando la parte FIJA (ya facturada, sin pagar — un
-     *  monto real) separada de la parte ESTIMADA (proyectada con el promedio, para los días
-     *  que todavía no tienen factura) — así queda claro qué es seguro y qué es una proyección. */
+    /** One row per service type, showing the FIXED part (already billed, unpaid — a
+     *  real amount) separate from the ESTIMATED part (projected from the average, for the days
+     *  that don't have a bill yet) — so it's clear what's certain and what's a projection. */
     function typeLineHtml(line){
       var parts = [];
       if (line.unpaid > 0) parts.push('<b>'+money(line.unpaid)+'</b> already charged (unpaid)');
@@ -1481,7 +1486,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var paid = charges.filter(function(c){ return c.status==='paid'; })
       .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); });
     var pending = charges.filter(function(c){ return c.status!=='paid'; })
-      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // más actual primero
+      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // most recent first
     function row(c){
       var label = shortDate(c.periodStart)+' – '+shortDate(c.periodEnd);
       if (c.status === 'paid' && c.paidDate) label += ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>';
@@ -1489,7 +1494,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<span class="v" style="display:flex;align-items:center;gap:8px;">'+money(c.amountDue)+chargeStatusBadge(c)+'</span></div>';
     }
     var PAID_CAP = 12;
-    var pendingShown = pending; // lo pendiente siempre se muestra completo, nunca recortado
+    var pendingShown = pending; // pending items are always shown in full, never truncated
     var pendingExtra = 0;
     var paidShown = paid.slice(0, PAID_CAP);
     var paidExtra = paid.length - paidShown.length;
@@ -1513,18 +1518,18 @@ import * as recurringBillService from './services/recurringBillService.js';
     var m = map[c.status] || ['neutral', c.status];
     return badge(m[0], m[1]);
   }
-  /** Estado efectivo de un bill: si sigue pendiente y ya pasó su fecha de vencimiento, se muestra como overdue. */
+  /** A bill's effective status: if it's still pending and its due date has already passed, it shows as overdue. */
   function billEffectiveStatus(b){
     if (b.status === 'paid') return 'paid';
     if (b.dueDate && b.dueDate < TODAY) return 'overdue';
     return b.status;
   }
   /**
-   * Importe de un bill que ya está realmente cobrado: si tiene allocations,
-   * la suma de las cuotas marcadas como pagadas (soporta pago parcial); si
-   * no tiene allocations, el importe completo solo si el bill entero está
-   * marcado 'paid' a mano (comportamiento histórico, sin allocations no hay
-   * nada más fino que mostrar).
+   * Amount of a bill that has actually been collected: if it has allocations,
+   * the sum of the shares marked as paid (supports partial payment); if
+   * it has no allocations, the full amount only if the whole bill is
+   * marked 'paid' by hand (legacy behavior — without allocations there's
+   * nothing more granular to show).
    */
   function billPaidAmount(b){
     if (b.allocations && b.allocations.length){
@@ -1532,7 +1537,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     return b.status === 'paid' ? b.amount : 0;
   }
-  /** Lo que falta por cobrar de un bill (importe total menos lo ya pagado, nunca negativo). */
+  /** What's still owed on a bill (total amount minus what's already paid, never negative). */
   function billOutstandingAmount(b){
     return Math.max(0, round2(b.amount - billPaidAmount(b)));
   }
@@ -1542,7 +1547,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var m = map[billEffectiveStatus(b)] || ['neutral', b.status];
     return badge(m[0], m[1]);
   }
-  /** El cargo "actual" es el que contiene hoy; si no hay ninguno, el próximo futuro; si no, el último pasado. */
+  /** The "current" charge is the one that contains today; if there is none, the next future one; otherwise, the last past one. */
   function pickCurrentCharge(charges, asOfIso){
     var containing = charges.find(function(c){ return c.periodStart<=asOfIso && c.periodEnd>=asOfIso; });
     if (containing) return containing;
@@ -1557,12 +1562,12 @@ import * as recurringBillService from './services/recurringBillService.js';
   var paymentsFilter = 'all';
   var paymentsTenantFilter = 'all';
   var paymentsPropertyFilter = 'all';
-  var paymentsDateSort = 'desc'; // 'desc' = más actual primero, 'asc' = más antiguo primero
+  var paymentsDateSort = 'desc'; // 'desc' = most recent first, 'asc' = oldest first
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
   function setPaymentsFilter(f){ paymentsFilter = f; renderPreservingScroll(); }
   function setPaymentsTenantFilter(tenantId){ paymentsTenantFilter = tenantId; renderPreservingScroll(); }
-  /** Elegir una propiedad ya no deja el filtro de tenant apuntando a alguien de OTRA
-   *  propiedad — si el tenant seleccionado no vive en la propiedad elegida, vuelve a "All". */
+  /** Picking a property no longer leaves the tenant filter pointing at someone from ANOTHER
+   *  property — if the selected tenant doesn't live in the chosen property, it resets to "All". */
   function setPaymentsPropertyFilter(propertyId){
     paymentsPropertyFilter = propertyId;
     if (propertyId !== 'all' && paymentsTenantFilter !== 'all'){
@@ -1578,18 +1583,18 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (filter==='paid') return c.status==='paid';
     if (filter==='overdue') return c.status==='overdue';
     if (filter==='due') return c.status==='due' || c.status==='partially_paid';
-    return true; // 'all' — incluye también 'upcoming', que no tiene chip propio
+    return true; // 'all' — also includes 'upcoming', which has no chip of its own
   }
 
-  /** True si el inquilino no debe nada: ni arriendo pendiente/atrasado ni su parte de ningún
-   *  bill sin pagar — se usa para saber si es "seguro" desactivarlo sin dejar un saldo colgado. */
+  /** True if the tenant owes nothing: no pending/overdue rent and no unpaid share of any
+   *  bill — used to know whether it's "safe" to deactivate them without leaving a balance hanging. */
   function tenantOwesNothing(t){
     var owesRent = rentCharges.some(function(c){ return c.tenantId===t.id && c.remaining > 0.004; });
     if (owesRent) return false;
     return unpaidBillAllocationsFor(t.id).length === 0;
   }
 
-  /** Cada obligación de bill pendiente de un inquilino (para mostrarla junto a su alquiler en Payments). */
+  /** Each pending bill obligation of a tenant (to show it alongside their rent in Payments). */
   function unpaidBillAllocationsFor(tenantId){
     var out = [];
     bills.forEach(function(b){
@@ -1601,15 +1606,15 @@ import * as recurringBillService from './services/recurringBillService.js';
     return out.sort(function(x,y){ return (x.bill.dueDate||'').localeCompare(y.bill.dueDate||''); });
   }
 
-  var PAYMENTS_ROW_LIMIT = 5; // cuántas filas se muestran por bloque antes de mandar a "View history"
+  var PAYMENTS_ROW_LIMIT = 5; // how many rows are shown per block before sending to "View history"
 
   function renderPaymentsRentTab(){
     var propertyOptions = '<option value="all"'+(paymentsPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
       properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
         return '<option value="'+p.id+'"'+(paymentsPropertyFilter===p.id?' selected':'')+'>'+esc(p.name)+'</option>';
       }).join('');
-    // Con una propiedad elegida, "All tenants" deja de listar a todo el mundo — solo a quienes
-    // viven ahí, para no poder seleccionar (ni confundir con) un tenant de otra propiedad.
+    // With a property chosen, "All tenants" no longer lists everyone — only those who
+    // live there, so a tenant from another property can't be selected (or confused with).
     var tenantPool = paymentsPropertyFilter==='all' ? tenants : tenants.filter(function(t){ return t.propertyId===paymentsPropertyFilter; });
     var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>All tenants</option>'+
       tenantPool.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
@@ -1627,9 +1632,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<button type="button" class="mini-btn" style="flex:1;min-width:160px;" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
       '</div>';
 
-    // Property + tenant scope al filtrar los rent charges — los 3 stats de arriba (Expected/
-    // Received/Outstanding) se calculan DESPUÉS de este filtro, así "All properties" sigue
-    // sumando el portafolio completo pero elegir una propiedad limita los 3 números a ella sola.
+    // Property + tenant scope when filtering rent charges — the 3 stats above (Expected/
+    // Received/Outstanding) are computed AFTER this filter, so "All properties" still
+    // sums the whole portfolio but choosing a property limits all 3 numbers to just that one.
     var charges = paymentsTenantFilter==='all' ? rentCharges : rentCharges.filter(function(c){ return c.tenantId===paymentsTenantFilter; });
     if (paymentsPropertyFilter !== 'all'){
       charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); return t && t.propertyId === paymentsPropertyFilter; });
@@ -1677,15 +1682,31 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+o.tenant.id+'\')">Mark as paid</button>'+
         '</div></div>';
     }
-    /** Todo lo que todavía está PENDIENTE (por pagar/deber) se muestra completo, sin recortar —
-     *  nunca se manda a "history" algo que el inquilino sigue debiendo. */
+    /** Everything still PENDING (owed/due) is shown in full, never truncated —
+     *  something the tenant still owes is never sent off to "history". */
     function fullSection(list, rowFn, emptyText){
       if (!list.length) return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+emptyText+'</p>';
       return '<div class="field-list">'+list.map(rowFn).join('')+'</div>';
     }
-    /** Recorta una lista a los primeros N y, si sobran más, agrega una nota + el link que ya
-     *  abre el historial completo — se usa SOLO para lo ya pagado/resuelto (nunca para lo
-     *  pendiente, que siempre se muestra completo vía fullSection). */
+    /** The "Due" section, with one addition over fullSection: when there's nothing pending
+     *  (every generated period — including the single future one rentService always keeps
+     *  one period ahead — has already been paid), it still names that next period instead of
+     *  just saying "nothing due". Without this, a tenant who happens to be paid in advance
+     *  shows no "Upcoming" line at all, while one who isn't paid that far ahead still has an
+     *  unpaid future period to show — which looked like an inconsistency between tenants,
+     *  but was really just "already paid ahead" vs "not yet". */
+    function dueSectionHtml(list, nextCharge){
+      if (list.length) return '<div class="field-list">'+list.map(pendingRow).join('')+'</div>';
+      var note = 'Nothing due right now.';
+      if (nextCharge){
+        note += ' Next: '+shortDate(nextCharge.periodStart)+' – '+shortDate(nextCharge.periodEnd)+' · '+money(nextCharge.amountDue)+
+          ' (due '+shortDate(nextCharge.dueDate)+' — already paid)';
+      }
+      return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+note+'</p>';
+    }
+    /** Trims a list to the first N and, if more remain, adds a note + the link that
+     *  opens the full history — used ONLY for things already paid/resolved (never for
+     *  pending items, which are always shown in full via fullSection). */
     function limitedSection(list, rowFn, emptyText, moreLabel, tenantId){
       if (!list.length) return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+emptyText+'</p>';
       var shown = list.slice(0, PAYMENTS_ROW_LIMIT);
@@ -1696,16 +1717,21 @@ import * as recurringBillService from './services/recurringBillService.js';
       return html;
     }
 
-    // Agrupado por tenant — tres bloques fijos por tenant ("Por pagar" / "Pagado" / "Bills") en
-    // vez de una tarjeta separada por cada semana o una pestaña Bills aparte.
-    var relevantTenantIds = {};
-    filtered.forEach(function(c){ relevantTenantIds[c.tenantId] = true; });
-    (paymentsPropertyFilter==='all' ? tenants : tenantPool).forEach(function(t){
-      if (paymentsTenantFilter==='all' || paymentsTenantFilter===t.id){
-        if (unpaidBillAllocationsFor(t.id).length) relevantTenantIds[t.id] = true;
-      }
-    });
-    var groupTenants = tenants.filter(function(t){ return relevantTenantIds[t.id]; })
+    // Grouped by tenant — three fixed blocks per tenant ("Due" / "Paid" / "Bills") instead
+    // of a separate card for every week or a separate Bills tab.
+    function tenantOwesSomething(t){
+      return rentCharges.some(function(c){ return c.tenantId===t.id && c.status!=='paid'; }) ||
+        unpaidBillAllocationsFor(t.id).length > 0;
+    }
+    // A tenant who's moved out (or been deactivated) and is fully settled has nothing left to
+    // track here, so they drop off the list entirely — only kept around while they still owe
+    // rent or a bill. A currently-active tenant always stays, even with zero charges yet, so
+    // the admin can see them (and their next upcoming period, added below) from day one.
+    // Picking a specific tenant from the dropdown always shows that one regardless.
+    var groupTenants = (paymentsPropertyFilter==='all' ? tenants : tenantPool).filter(function(t){
+        if (paymentsTenantFilter !== 'all') return paymentsTenantFilter === t.id;
+        return !tenantHasMovedOut(t) || tenantOwesSomething(t);
+      })
       .sort(function(a,b){ return a.fullName.localeCompare(b.fullName); });
 
     var rows = groupTenants.length===0
@@ -1723,13 +1749,21 @@ import * as recurringBillService from './services/recurringBillService.js';
           var pendingTotal = pending.reduce(function(s,c){ return s+c.remaining; }, 0);
           var paidTotal = paid.reduce(function(s,c){ return s+c.amountDue; }, 0);
           var billsTotal = owedBills.reduce(function(s,o){ return s+o.alloc.amount; }, 0);
+          // rentCharges (unfiltered by the chip/date-sort above) is sorted most-future-first,
+          // so the tenant's first match here is always their next period — paid or not —
+          // regardless of which filter chip is currently selected. Only meaningful for a
+          // tenant who's still active; a moved-out tenant kept on the list because they owe
+          // a bill has no real "next period" — their last generated charge is history, not
+          // upcoming — so it's left out for them.
+          var allTenantCharges = rentCharges.filter(function(c){ return c.tenantId===t.id; });
+          var nextCharge = (!tenantHasMovedOut(t) && allTenantCharges.length) ? allTenantCharges[0] : null;
           return '<div class="card">'+
             '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
-            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Por pagar ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
-            fullSection(pending, pendingRow, 'Nothing due right now.')+
-            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Pagado ('+paid.length+') · '+money(paidTotal)+'</h3>'+
-            limitedSection(paid, paidRow, 'No payments recorded yet.', 'Pagado', t.id)+
+            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
+            dueSectionHtml(pending, nextCharge)+
+            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+') · '+money(paidTotal)+'</h3>'+
+            limitedSection(paid, paidRow, 'No payments recorded yet.', 'Paid', t.id)+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.')+
             '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
@@ -1753,7 +1787,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     return billEffectiveStatus(b) === filter;
   }
 
-  /* ---------- Import bill (FASE 7: solo la UI de captura; OCR llega después) ---------- */
+  /* ---------- Import bill (PHASE 7: capture UI only; OCR comes later) ---------- */
   var importQueue = [];
   var pendingImportFile = null;
 
@@ -1763,7 +1797,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   function handleImportFile(evt){
     var file = evt.target.files && evt.target.files[0];
-    evt.target.value = ''; // permite volver a elegir el mismo archivo más tarde
+    evt.target.value = ''; // allows the same file to be picked again later
     if (!file) return;
     if (pendingImportFile && pendingImportFile.previewUrl) URL.revokeObjectURL(pendingImportFile.previewUrl);
     var isImage = file.type.indexOf('image/') === 0;
@@ -1821,16 +1855,16 @@ import * as recurringBillService from './services/recurringBillService.js';
       previewUrl: pendingImportFile.previewUrl,
       file: pendingImportFile.file,
       addedAt: TODAY,
-      accountNumberHint: accountNumber, // se usa si hace falta mandar la foto a analizar (ver analyzeImportedFile)
+      accountNumberHint: accountNumber, // used if the photo needs to be sent for analysis (see analyzeImportedFile)
       billTypeHint: billTypeHint,
-      status: 'processing', // 'processing' -> 'ready' (con los datos que devolvió la IA, o en blanco si el análisis falló)
+      status: 'processing', // 'processing' -> 'ready' (with the data the AI returned, or blank if the analysis failed)
       extracted: null,
       aiError: null
     };
     if (knownAccount){
-      // Cuenta (+ tipo de servicio) ya conocida — no hace falta gastar una llamada a la IA: se
-      // completan propiedad/tipo/proveedor solos y el usuario solo tiene que escribir el monto
-      // y las fechas de esta factura en particular (eso sí cambia cada vez).
+      // Account (+ service type) already known — no need to spend an AI call: the
+      // property/type/provider fill in on their own and the user only has to enter the amount
+      // and dates for this particular bill (those do change every time).
       item.status = 'ready';
       item.skippedAi = true;
       item.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, {
@@ -1854,17 +1888,17 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   var BLANK_EXTRACTED_BILL = { propertyId:'', billType:'other', provider:'', accountNumber:'', invoiceNumber:'', issueDate:'', dueDate:'', billingPeriodStart:'', billingPeriodEnd:'', amount:'' };
 
-  /* ---------- Known accounts (FASE: identificar la factura a mano antes de gastar una llamada
-   *  a la IA) — cada bill guardado con un número de cuenta queda "recordado": la próxima vez
-   *  que llega una factura de esa misma cuenta, la propiedad/tipo/proveedor se completan solos
-   *  y no hace falta mandarle la foto a la IA.
-   *  Un mismo número de cuenta puede cubrir más de un servicio (ej. Neogrids factura
-   *  electricidad Y agua caliente bajo la misma cuenta) — por eso el registro se guarda por
-   *  (número de cuenta + tipo de servicio), no solo por número de cuenta. ---------- */
+  /* ---------- Known accounts (PHASE: identify the bill by hand before spending an AI
+   *  call) — every bill saved with an account number gets "remembered": the next time
+   *  a bill arrives for that same account, the property/type/provider fill in on their own
+   *  and there's no need to send the photo to the AI.
+   *  The same account number can cover more than one service (e.g. Neogrids bills
+   *  electricity AND hot water under the same account) — that's why the record is keyed by
+   *  (account number + service type), not just by account number. ---------- */
   function normalizeAccountNumber(v){ return (v || '').trim().toLowerCase(); }
-  /** { "<cuenta>": { "<billType>": {accountNumber, propertyId, billType, provider}, ... }, ... }
-   *  Si hay más de un bill con la misma cuenta y tipo (lo normal), se queda con el más reciente
-   *  por fecha de emisión. */
+  /** { "<account>": { "<billType>": {accountNumber, propertyId, billType, provider}, ... }, ... }
+   *  If there's more than one bill with the same account and type (the normal case), it keeps
+   *  the most recent one by issue date. */
   function knownAccountsMap(){
     var map = {};
     bills.slice()
@@ -1877,9 +1911,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       });
     return map;
   }
-  /** Con billType: devuelve el registro solo si esa cuenta+tipo coincide exactamente. Sin
-   *  billType: si la cuenta solo tiene un tipo de servicio conocido, lo devuelve igual (caso
-   *  común); si tiene más de uno, no adivina — hace falta indicar el tipo. */
+  /** With billType: returns the record only if that account+type matches exactly. Without
+   *  billType: if the account only has one known service type, it returns it anyway (the
+   *  common case); if it has more than one, it doesn't guess — the type needs to be specified. */
   function findKnownAccount(raw, billType){
     var key = normalizeAccountNumber(raw);
     if (!key) return null;
@@ -1889,8 +1923,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     var types = Object.keys(entry);
     return types.length === 1 ? entry[types[0]] : null;
   }
-  /** Qué tipos de servicio existen para una cuenta — se usa para avisar cuando la cuenta se
-   *  reconoce pero hace falta el tipo de servicio para saber cuál de ellos es. */
+  /** Which service types exist for an account — used to warn when the account is
+   *  recognized but the service type is needed to know which one it is. */
   function findKnownAccountTypes(raw){
     var key = normalizeAccountNumber(raw);
     var entry = key && knownAccountsMap()[key];
@@ -1913,9 +1947,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     });
     list.innerHTML = options.join('');
   }
-  /** En el modal de importar: si lo que se escribió (cuenta + tipo, si se indicó) coincide con
-   *  una cuenta ya conocida, muestra el aviso de que la IA no hará falta. Si la cuenta se
-   *  reconoce pero cubre más de un servicio, pide indicar el tipo en vez de adivinar. */
+  /** In the import modal: if what was typed (account + type, if given) matches an
+   *  already known account, shows the notice that the AI won't be needed. If the account is
+   *  recognized but covers more than one service, asks for the type instead of guessing. */
   function onImportAccountInput(){
     var val = document.getElementById('import-account').value;
     var billType = document.getElementById('import-billtype').value;
@@ -1937,9 +1971,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.onImportAccountInput = onImportAccountInput;
-  /** Lo mismo, pero dentro del modal de revisión (entrada manual, o para corregir el número de
-   *  cuenta después de que la IA ya analizó la foto) — usa el tipo de servicio ya seleccionado
-   *  ahí para desambiguar, y solo rellena propiedad/proveedor (no pisa el tipo elegido). */
+  /** The same, but inside the review modal (manual entry, or to correct the account
+   *  number after the AI has already analyzed the photo) — uses the service type already
+   *  selected there to disambiguate, and only fills in property/provider (doesn't overwrite the chosen type). */
   function onReviewAccountInput(){
     var val = document.getElementById('review-account').value;
     var billType = document.getElementById('review-billtype').value;
@@ -1963,10 +1997,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.onReviewAccountInput = onReviewAccountInput;
-  /** Lista de proveedores que ya se usaron para la propiedad seleccionada en el modal de
-   *  revisión — para que al tipear el proveedor salgan sugerencias relevantes en vez de la
-   *  lista completa de todos los proveedores de todas las propiedades. Se refresca cada vez
-   *  que se abre el modal y cada vez que se cambia de propiedad ahí adentro. */
+  /** List of providers already used for the property selected in the review
+   *  modal — so typing the provider shows relevant suggestions instead of the
+   *  full list of every provider across every property. Refreshed every time
+   *  the modal is opened and every time the property is changed inside it. */
   function refreshReviewProviderDatalist(){
     var list = document.getElementById('review-provider-list');
     if (!list) return;
@@ -1984,16 +2018,16 @@ import * as recurringBillService from './services/recurringBillService.js';
       });
     list.innerHTML = options.join('');
   }
-  /** Al cambiar de propiedad en el modal de revisión, la lista de proveedores sugeridos se
-   *  limita a los que ya se usaron en ESA propiedad. */
+  /** When the property changes in the review modal, the suggested providers list
+   *  is limited to those already used in THAT property. */
   function onReviewPropertyChange(){
     refreshReviewProviderDatalist();
   }
   window.onReviewPropertyChange = onReviewPropertyChange;
-  /** Al escribir/elegir un proveedor ya conocido (para esta propiedad, o para cualquiera si acá
-   *  todavía no se cargó ninguno), rellena el tipo de servicio, el número de cuenta y el importe
-   *  con lo último que se cargó de ese proveedor — el usuario solo confirma o corrige, sin tener
-   *  que volver a escribir todo. Nunca pisa un campo que el usuario ya completó a mano. */
+  /** When typing/choosing an already known provider (for this property, or for any if none
+   *  has been loaded here yet), fills in the service type, account number and amount
+   *  with the last thing loaded for that provider — the user only confirms or corrects, without
+   *  having to type everything again. Never overwrites a field the user already filled in by hand. */
   function onReviewProviderInput(){
     var provider = document.getElementById('review-provider').value.trim();
     if (!provider) return;
@@ -2016,23 +2050,23 @@ import * as recurringBillService from './services/recurringBillService.js';
   var BILL_TYPES = ['electricity','water','hot_water','gas','internet','other'];
   var BILL_TYPE_LABELS = { electricity:'Electricity', water:'Water', hot_water:'Hot water', gas:'Gas', internet:'Internet', other:'Other' };
   function billTypeLabel(t){ return BILL_TYPE_LABELS[t] || (t ? t.charAt(0).toUpperCase()+t.slice(1) : ''); }
-  /** Envía la foto/PDF a la IA (Gemini, vía la Edge Function analyze-bill) para extraer
-   *  proveedor, tipo de servicio, fechas, importe y una propiedad sugerida. Si el análisis
-   *  falla (sin red, sin API key configurada del lado del servidor, foto poco clara, etc.) el
-   *  item igual queda listo para revisar con los campos en blanco, para completarlos a mano
-   *  en vez de quedar atascado. */
+  /** Sends the photo/PDF to the AI (Gemini, via the analyze-bill Edge Function) to extract
+   *  provider, service type, dates, amount and a suggested property. If the analysis
+   *  fails (no network, no API key configured server-side, unclear photo, etc.) the
+   *  item still ends up ready to review with blank fields, to be filled in by hand
+   *  instead of getting stuck. */
   async function analyzeImportedFile(item){
     try {
       var data = await aiService.analyzeBill(item.file, properties, TODAY);
       var current = importQueue.find(function(i){ return i.id===item.id; });
-      if (!current) return; // se eliminó de la cola mientras se analizaba
+      if (!current) return; // it was removed from the queue while being analyzed
       current.status = 'ready';
       var issueDate = data.issueDate || '';
       var dueDate = data.dueDate || '';
       var dueDateWasGuessed = false;
       if (!dueDate && issueDate){
-        // El recibo no traía (o la IA no encontró) una fecha límite de pago legible —
-        // se asume 10 días hábiles después de la fecha de emisión en vez de dejarlo en blanco.
+        // The receipt didn't have (or the AI couldn't find) a legible payment due date —
+        // it's assumed to be 10 business days after the issue date instead of leaving it blank.
         dueDate = addBusinessDays(issueDate, 10);
         dueDateWasGuessed = true;
       }
@@ -2057,7 +2091,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       render();
     } catch(err){
       var current2 = importQueue.find(function(i){ return i.id===item.id; });
-      if (!current2) return; // se eliminó de la cola mientras se analizaba
+      if (!current2) return; // it was removed from the queue while being analyzed
       current2.status = 'ready';
       current2.aiError = friendlyErrorMessage(err);
       current2.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, { accountNumber: item.accountNumberHint || '', billType: item.billTypeHint || 'other' });
@@ -2091,10 +2125,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       rows+'</div>';
   }
 
-  /** Busca un bill ya guardado que probablemente sea el mismo que se está por guardar:
-   *  mismo número de factura (si ambos lo tienen), o mismo proveedor + propiedad + periodo
-   *  de facturación. Sirve para avisar antes de guardar un bill repetido por error (ej. subir
-   *  la misma foto dos veces, o re-escanear un recibo que ya se había cargado). */
+  /** Looks for an already saved bill that is likely the same one about to be saved:
+   *  same invoice number (if both have one), or same provider + property + billing
+   *  period. Used to warn before saving a bill duplicated by mistake (e.g. uploading
+   *  the same photo twice, or re-scanning a receipt that had already been loaded). */
   function findDuplicateBill(propertyId, provider, invoiceNumber, periodStart, periodEnd, accountNumber){
     var providerNorm = (provider || '').trim().toLowerCase();
     var invoiceNorm = (invoiceNumber || '').trim().toLowerCase();
@@ -2110,9 +2144,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     });
   }
 
-  /* ---------- Review extracted data (revisar/editar antes de confirmar) ---------- */
+  /* ---------- Review extracted data (review/edit before confirming) ---------- */
   var reviewItemId = null;
-  var reviewDuplicateOverride = false; // true una vez que el usuario confirma "Save anyway" sobre un posible duplicado
+  var reviewDuplicateOverride = false; // true once the user confirms "Save anyway" on a possible duplicate
   var editingBillId = null; // set while #review-modal is being reused to EDIT an existing bill instead of importing a new one
   function openReviewModal(itemId){
     var item = importQueue.find(function(i){ return i.id===itemId; });
@@ -2154,11 +2188,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-recurring-existing-hint').textContent = 'This provider already repeats automatically every month for this property — that won\'t be duplicated.';
     document.getElementById('review-modal').hidden = true;
   }
-  /** Reabre el mismo modal de "Review extracted data" pero precargado con un bill ya guardado,
-   *  para poder corregir un dato mal cargado (proveedor, fechas, monto, etc.) sin tener que
-   *  borrar el bill y crearlo de nuevo. No toca las allocations — si el monto o el periodo
-   *  cambian de forma relevante, el admin puede usar "Re-allocate" para recalcular los montos
-   *  de cada inquilino aparte. */
+  /** Reopens the same "Review extracted data" modal but pre-loaded with an already saved bill,
+   *  so a wrongly entered value (provider, dates, amount, etc.) can be corrected without having
+   *  to delete the bill and create it again. Doesn't touch the allocations — if the amount or
+   *  period change in a meaningful way, the admin can use "Re-allocate" to recalculate each
+   *  tenant's share separately. */
   function openEditBillModal(billId){
     var b = billOf(billId);
     if (!b) return;
@@ -2207,9 +2241,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('review-modal').hidden = false;
   }
   window.openEditBillModal = openEditBillModal;
-  /** Guarda los cambios de un bill existente editado desde openEditBillModal — a diferencia de
-   *  confirmReviewedBill (que crea un bill nuevo desde la cola de importación), esto solo
-   *  actualiza los campos del bill ya guardado; no toca sus allocations ni crea recurring bills. */
+  /** Saves changes to an existing bill edited from openEditBillModal — unlike
+   *  confirmReviewedBill (which creates a new bill from the import queue), this only
+   *  updates the fields of the already saved bill; it doesn't touch its allocations or create recurring bills. */
   async function saveEditedBill(){
     var provider = document.getElementById('review-provider').value.trim();
     var accountNumber = document.getElementById('review-account').value.trim();
@@ -2300,8 +2334,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.saveEditedBill = saveEditedBill;
-  /** El botón "Save" del modal se reusa para crear (import) y editar — dirige a una u otra
-   *  función según si editingBillId está seteado. */
+  /** The modal's "Save" button is reused for creating (import) and editing — routes to one
+   *  function or the other depending on whether editingBillId is set. */
   function submitReviewModal(){
     if (editingBillId) return saveEditedBill();
     return confirmReviewedBill();
@@ -2311,10 +2345,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (reviewItemId) removeImportQueueItem(reviewItemId);
     closeReviewModal();
   }
-  /** Busca una plantilla de recurring bill ACTIVA ya existente para esa propiedad + proveedor +
-   *  tipo de servicio — para no dejar crear una duplicada. Esto es lo que causó los bills
-   *  fantasma vistos en Dodo: dos plantillas activas generando el mismo bill cada mes, una de
-   *  ellas con la fecha mal calculada. La comparación de proveedor ignora mayúsculas/espacios. */
+  /** Looks for an already existing ACTIVE recurring bill template for that property + provider +
+   *  service type — to prevent creating a duplicate. This is what caused the phantom bills
+   *  seen at Dodo: two active templates generating the same bill every month, one of
+   *  them with a wrongly computed date. The provider comparison ignores case/whitespace. */
   function findActiveRecurringTemplate(propertyId, provider, billType){
     var normProvider = (provider || '').trim().toLowerCase();
     return recurringBills.find(function(r){
@@ -2322,10 +2356,10 @@ import * as recurringBillService from './services/recurringBillService.js';
         (r.provider || '').trim().toLowerCase() === normProvider;
     });
   }
-  /** Muestra/oculta el campo "día del mes" cuando se marca "Repeats every month" — y si el
-   *  usuario ya cargó una fecha de vencimiento, la usa para adivinar el día por defecto. Si ya
-   *  hay una plantilla activa para este proveedor+propiedad+tipo, no deja marcar la casilla y
-   *  explica por qué en vez de dejar que se cree una duplicada. */
+  /** Shows/hides the "day of month" field when "Repeats every month" is checked — and if the
+   *  user has already entered a due date, uses it to guess the default day. If there's
+   *  already an active template for this provider+property+type, it won't allow checking
+   *  the box and explains why instead of letting a duplicate be created. */
   function toggleReviewRecurringDay(){
     var checkboxEl = document.getElementById('review-recurring');
     var row = document.getElementById('review-recurring-day-row');
@@ -2353,9 +2387,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.toggleReviewRecurringDay = toggleReviewRecurringDay;
-  /** Abre el modal de revisión de bill en blanco, sin pasar por la foto/IA — para un bill que
-   *  el administrador prefiere escribir a mano. Reutiliza el mismo modal y el mismo guardado
-   *  (confirmReviewedBill) que el flujo de importar una foto. */
+  /** Opens the bill review modal blank, without going through the photo/AI — for a bill
+   *  the administrator prefers to enter by hand. Reuses the same modal and the same save
+   *  (confirmReviewedBill) as the photo-import flow. */
   function openManualBillModal(){
     var item = {
       id: 'manual-' + Date.now() + '-' + Math.round(Math.random()*1000),
@@ -2448,14 +2482,14 @@ import * as recurringBillService from './services/recurringBillService.js';
 
       newBill = await autoAllocateNewBill(newBill);
 
-      // "Repeats every month" — además de este bill, guarda un template (recurring_bills) que
-      // genera automáticamente el del próximo mes cuando llegue su fecha, sin tener que volver
-      // a cargarlo a mano cada vez (gas, internet, etc.).
+      // "Repeats every month" — in addition to this bill, saves a template (recurring_bills) that
+      // automatically generates next month's bill when its date arrives, without having to
+      // enter it by hand every time (gas, internet, etc.).
       var makeRecurring = document.getElementById('review-recurring').checked;
       var skippedDuplicateRecurring = false;
       if (makeRecurring && findActiveRecurringTemplate(newBill.propertyId, newBill.provider, newBill.billType)){
-        // Re-chequeo por si acaso (otra pestaña, u otro bill de la cola creó la plantilla justo
-        // ahora) — no crear una segunda plantilla activa para el mismo proveedor+propiedad+tipo.
+        // Re-check just in case (another tab, or another bill from the queue just created the
+        // template) — don't create a second active template for the same provider+property+type.
         makeRecurring = false;
         skippedDuplicateRecurring = true;
         showToast('Bill saved. This provider already repeats automatically for this property, so a duplicate monthly repeat wasn\'t created.', 'info');
@@ -2486,11 +2520,11 @@ import * as recurringBillService from './services/recurringBillService.js';
       removeImportQueueItem(reviewItemId);
       closeReviewModal();
       if (!makeRecurring && !skippedDuplicateRecurring) showToast('Bill saved successfully.', 'success');
-      // Paso 7 del flujo (revisar y confirmar el reparto): en vez de aterrizar
-      // en el listado de Bills, se abre directamente el detalle del bill recién
-      // creado, donde la tarjeta de Allocation ya muestra el reparto por
-      // inquilino calculado automáticamente (o el botón "Allocate" si la
-      // propiedad no tenía inquilinos pagando).
+      // Step 7 of the flow (review and confirm the allocation): instead of landing
+      // on the Bills list, the detail of the newly created bill is opened
+      // directly, where the Allocation card already shows the per-tenant
+      // split calculated automatically (or the "Allocate" button if the
+      // property had no paying tenants).
       location.hash = '#/bills/' + newBill.id;
       render();
     } catch(err){
@@ -2512,11 +2546,11 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.discardReviewItem = discardReviewItem;
   window.confirmReviewedBill = confirmReviewedBill;
 
-  /* ---------- Bill allocation (FASE 9): repartir un bill entre los inquilinos que ocuparon la propiedad ---------- */
+  /* ---------- Bill allocation (PHASE 9): split a bill among the tenants who occupied the property ---------- */
   function tenantsOfProperty(propertyId){
     return tenants.filter(function(t){ return t.propertyId===propertyId && t.rentAmount>0; });
   }
-  /** Días de solapamiento (inclusive) entre la estancia de un inquilino y el periodo de un bill. */
+  /** Days of overlap (inclusive) between a tenant's stay and a bill's period. */
   function occupiedDaysInRange(tenant, rangeStart, rangeEnd){
     var tenantEnd = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || rangeEnd;
     var start = tenant.moveInDate > rangeStart ? tenant.moveInDate : rangeStart;
@@ -2528,7 +2562,7 @@ import * as recurringBillService from './services/recurringBillService.js';
 
   var allocationDraft = null; // { billId, method, periodDays, rows:[{tenantId,name,days,amount}] }
 
-  /** Reparte `total` entre `weights` (proporcional), ajustando el redondeo en la fila con mayor peso para que la suma cuadre exacto. */
+  /** Splits `total` across `weights` (proportionally), adjusting the rounding on the row with the highest weight so the sum comes out exact. */
   function splitByWeights(total, weights){
     var sumW = weights.reduce(function(s,w){ return s+w; }, 0);
     if (sumW <= 0) return weights.map(function(){ return 0; });
@@ -2542,18 +2576,18 @@ import * as recurringBillService from './services/recurringBillService.js';
     return amounts;
   }
 
-  /** Un inquilino puede estar excluido de pagar uno o más tipos de servicio (tenant.excludedBillTypes,
-   *  editable desde el formulario de inquilino) — por ejemplo, si su renta ya incluye el gas. */
+  /** A tenant can be excluded from paying one or more service types (tenant.excludedBillTypes,
+   *  editable from the tenant form) — for example, if their rent already includes gas. */
   function isTenantExcludedFromBillType(tenant, billType){
     return !!(tenant && Array.isArray(tenant.excludedBillTypes) && tenant.excludedBillTypes.indexOf(billType) >= 0);
   }
 
-  /** ¿El tenant ocupaba su habitación ESE día concreto? Fecha de entrada incluida, fecha de
-   *  salida NO incluida (medio-abierto) — así el mismo día no se cuenta doble cuando alguien se
-   *  va y otra persona entra a la misma habitación. Esto es aparte de occupiedDaysInRange (que
-   *  sigue siendo inclusive en ambos extremos y se usa para las métricas informativas de "días
-   *  ocupados" en la UI) — solo se usa para decidir cuántas HABITACIONES estaban ocupadas cada
-   *  día del bill. */
+  /** Did the tenant occupy their room on THAT specific day? Move-in date included, move-out
+   *  date NOT included (half-open) — so the same day isn't counted twice when someone
+   *  leaves and another person moves into the same room. This is separate from occupiedDaysInRange
+   *  (which is still inclusive on both ends and is used for the informational "days
+   *  occupied" metrics in the UI) — it's only used to decide how many ROOMS were occupied each
+   *  day of the bill. */
   function tenantOccupiesDay(t, dayIso){
     if (dayIso < t.moveInDate) return false;
     var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
@@ -2561,16 +2595,16 @@ import * as recurringBillService from './services/recurringBillService.js';
     return true;
   }
 
-  /** Reparto día por día, por HABITACIÓN — no por tenant. Cada día, el costo diario del bill se
-   *  divide entre las habitaciones que estuvieron ocupadas ESE día (no entre el total de
-   *  habitaciones de la propiedad, ni entre el total de personas). Si dos tenants comparten una
-   *  misma habitación ese día, dividen entre ellos la parte de esa habitación. Un día sin ninguna
-   *  habitación ocupada no se pierde ni se reparte a la fuerza entre otros días: se junta en la
-   *  fila del administrador, igual que la parte de un tenant excluido de este tipo de servicio. */
+  /** Day-by-day allocation, by ROOM — not by tenant. Each day, the bill's daily cost is
+   *  divided among the rooms that were occupied on THAT day (not among the property's
+   *  total rooms, nor among the total number of people). If two tenants share the
+   *  same room that day, they split that room's share between them. A day with no
+   *  room occupied is neither lost nor forced onto other days: it's added to the
+   *  administrator's row, just like the share of a tenant excluded from this service type. */
   function computeDailyRoomAllocationRows(bill){
     var totalDays = daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1;
     var propTenants = tenantsOfProperty(bill.propertyId);
-    var totals = {}; // tenantId -> acumulado (sin redondear todavía)
+    var totals = {}; // tenantId -> accumulated total (not yet rounded)
     var adminTotal = 0;
     var dailyCost = bill.amount / totalDays;
     for (var i=0; i<totalDays; i++){
@@ -2578,18 +2612,18 @@ import * as recurringBillService from './services/recurringBillService.js';
       var byRoom = {};
       propTenants.forEach(function(t){
         if (!tenantOccupiesDay(t, dayIso)) return;
-        var key = t.roomId || ('__no_room_'+t.id); // sin habitación asignada = su propia "habitación"
+        var key = t.roomId || ('__no_room_'+t.id); // no room assigned = their own "room"
         (byRoom[key] = byRoom[key] || []).push(t);
       });
       var roomKeys = Object.keys(byRoom);
       if (roomKeys.length === 0){
-        adminTotal += dailyCost; // ningún tenant registrado ese día — el admin absorbe ese día
+        adminTotal += dailyCost; // no tenant registered that day — the admin absorbs that day
         continue;
       }
       var costPerRoom = dailyCost / roomKeys.length;
       roomKeys.forEach(function(key){
         var occupants = byRoom[key];
-        var costPerPerson = costPerRoom / occupants.length; // se reparte entre quienes comparten la habitación ESE día
+        var costPerPerson = costPerRoom / occupants.length; // split among whoever shares the room THAT day
         occupants.forEach(function(t){
           if (isTenantExcludedFromBillType(t, bill.billType)){
             adminTotal += costPerPerson;
@@ -2608,8 +2642,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (adminTotal > 0.004){
       rows.push({ tenantId: null, isAdmin: true, name: 'Administrator (you)', days: null, amount: round2(adminTotal) });
     }
-    // Ajusta el redondeo (61 días repartidos en fracciones de centavo pueden desviar el total por
-    // unos pocos centavos) en la fila más grande, para que la suma cuadre exacto con el bill.
+    // Adjusts the rounding (61 days split into fractions of a cent can throw off the total by
+    // a few cents) on the largest row, so the sum matches the bill exactly.
     var sum = round2(rows.reduce(function(s,r){ return s + r.amount; }, 0));
     var diff = round2(bill.amount - sum);
     if (diff !== 0 && rows.length){
@@ -2622,19 +2656,19 @@ import * as recurringBillService from './services/recurringBillService.js';
 
   function computeAllocationRows(bill, method){
     if (method === 'days') return computeDailyRoomAllocationRows(bill);
-    // 'equal' y el punto de partida de 'custom' — split parejo entre tenants (no por habitación,
-    // ya que "equal" es intencionalmente "todos pagan lo mismo", sin importar cuántos comparten
-    // habitación ni cuántos días estuvieron).
-    // Solo entran quienes realmente se solaparon con el periodo del bill — alguien que se mudó
-    // antes de que empezara, o después de que terminó (o que ya no vive ahí hoy), queda afuera
-    // en vez de aparecer con $0 para repartir a mano.
+    // 'equal' and the starting point for 'custom' — even split among tenants (not by room,
+    // since "equal" is intentionally "everyone pays the same", regardless of how many share a
+    // room or how many days they were there).
+    // Only tenants who actually overlapped with the bill's period are included — someone who moved
+    // out before it started, or moved in after it ended (or no longer lives there today), is left
+    // out instead of showing up with $0 to split by hand.
     var propTenants = tenantsOfProperty(bill.propertyId).filter(function(t){
       return occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd) > 0;
     });
     var amounts = splitByWeights(bill.amount, propTenants.map(function(){ return 1; }));
-    // Si un inquilino está excluido de este tipo de servicio, su parte no se reparte entre el
-    // resto (eso les subiría el monto injustamente) — en vez de eso, se junta en una fila aparte
-    // a nombre del administrador, que la absorbe.
+    // If a tenant is excluded from this service type, their share isn't redistributed among the
+    // rest (that would unfairly raise their amount) — instead, it's collected into a separate row
+    // under the administrator's name, who absorbs it.
     var rows = [];
     var adminAmount = 0;
     propTenants.forEach(function(t, i){
@@ -2650,9 +2684,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     return rows;
   }
 
-  /** Reparte automáticamente un bill recién guardado entre los inquilinos que pagan renta en esa
-   *  propiedad ahora mismo (por días ocupados), usado tanto al guardar un bill desde el modal de
-   *  revisión como al generar uno automáticamente desde un recurring bill. */
+  /** Automatically splits a newly saved bill among the tenants who currently pay rent at that
+   *  property (by days occupied), used both when saving a bill from the review modal
+   *  and when generating one automatically from a recurring bill. */
   async function autoAllocateNewBill(newBill){
     var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
     if (propTenantsForBill.length > 0){
@@ -2672,10 +2706,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     return newBill;
   }
 
-  /** Revisa cada recurring bill activo y, si ya llegó (o pasó) su próxima fecha de facturación,
-   *  crea el bill correspondiente y lo reparte automáticamente — igual que rentService genera
-   *  los rent charges a partir de un schedule, pero para bills mensuales (gas, internet, etc.).
-   *  Si la app estuvo varios meses sin abrirse, genera uno por cada mes que quedó pendiente. */
+  /** Checks every active recurring bill and, if its next billing date has already arrived (or
+   *  passed), creates the corresponding bill and allocates it automatically — just like rentService
+   *  generates rent charges from a schedule, but for monthly bills (gas, internet, etc.).
+   *  If the app went several months without being opened, generates one for each month that was pending. */
   async function generateDueRecurringBills(){
     for (var i=0; i<recurringBills.length; i++){
       var tpl = recurringBills[i];
@@ -2683,9 +2717,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       var guard = 0;
       while (tpl.nextDueDate <= TODAY && guard < 24){
         guard++;
-        // Se cobra POR ADELANTADO: el ciclo que arranca es el que se factura, no el que ya
-        // terminó — el periodo de facturación empieza en la fecha de vencimiento (nextDueDate)
-        // y se extiende un mes hacia adelante, con vencimiento el mismo día que arranca.
+        // Charged IN ADVANCE: the cycle that's starting is the one being billed, not the one that
+        // already ended — the billing period starts on the due date (nextDueDate)
+        // and extends one month forward, with the due date the same day it starts.
         var periodStart = tpl.nextDueDate;
         var periodEnd = stepDateIso(addMonthsIso(tpl.nextDueDate, 1), -1);
         var draftBill = {
@@ -2707,7 +2741,7 @@ import * as recurringBillService from './services/recurringBillService.js';
           bills.push(newBill);
         } catch(err){
           console.error('generateDueRecurringBills: could not create bill for template', tpl.id, err);
-          break; // no sigas intentando avanzar este template si falló — se reintenta en el próximo bootstrap
+          break; // don't keep trying to advance this template if it failed — it's retried on the next bootstrap
         }
         var advanced = await recurringBillService.advanceNextDueDate(tpl.id, addMonthsIso(tpl.nextDueDate, 1));
         tpl.nextDueDate = advanced.nextDueDate;
@@ -2715,8 +2749,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
 
-  /* ---------- Recurring bills (gas, internet, etc. — repiten cada mes) ---------- */
-  var recurringModalId = null; // null = creando uno nuevo
+  /* ---------- Recurring bills (gas, internet, etc. — repeat every month) ---------- */
+  var recurringModalId = null; // null = creating a new one
   function openRecurringBillModal(id){
     recurringModalId = id || null;
     var tpl = id ? recurringBills.find(function(r){ return r.id===id; }) : null;
@@ -2737,9 +2771,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('recurring-bill-modal').hidden = true;
   }
   window.closeRecurringBillModal = closeRecurringBillModal;
-  /** El día de facturación puede caer más adelante este mes (todavía no llegó) o ya haber
-   *  pasado (entonces la próxima ocurrencia es el mes que viene) — generateDueRecurringBills
-   *  se encarga de generar el bill apenas llegue esa fecha. */
+  /** The billing day may fall later this month (hasn't arrived yet) or may have already
+   *  passed (in which case the next occurrence is next month) — generateDueRecurringBills
+   *  takes care of generating the bill as soon as that date arrives. */
   function nextDueDateForBillingDay(day){
     var thisMonth = TODAY.slice(0,7) + '-' + String(day).padStart(2,'0');
     return thisMonth >= TODAY ? thisMonth : addMonthsIso(thisMonth, 1);
@@ -2756,8 +2790,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       errEl.hidden = false;
       return;
     }
-    // No dejar crear una segunda plantilla activa para el mismo proveedor+propiedad+tipo — es lo
-    // que generó los bills fantasma de Dodo (dos plantillas generando el mismo bill cada mes).
+    // Don't allow creating a second active template for the same provider+property+type — this is
+    // what generated the phantom bills at Dodo (two templates generating the same bill every month).
     if (!recurringModalId){
       var dupTpl = findActiveRecurringTemplate(propertyId, provider, billType);
       if (dupTpl){
@@ -2825,20 +2859,20 @@ import * as recurringBillService from './services/recurringBillService.js';
     var bill = billOf(billId);
     if (!bill) return;
     var totalDays = daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1;
-    // bill.allocations puede venir como un array VACÍO (no null/undefined) — por ejemplo, si este
-    // bill se guardó antes de que existieran los registros de los tenants de esa propiedad, o si
-    // ninguno de los tenants guardados se solapó con su periodo. Un array vacío sigue siendo
-    // "truthy" en JS, así que sin este chequeo el modal quedaba en modo Custom con $0 de $X — como
-    // si el admin tuviera que cubrir el 100% a mano — en vez de proponer un reparto real entre
-    // tenants y admin (según tenant.excludedBillTypes) como haría un bill recién creado.
+    // bill.allocations can come back as an EMPTY array (not null/undefined) — for example, if this
+    // bill was saved before that property's tenant records existed, or if none of the saved
+    // tenants overlapped with its period. An empty array is still "truthy" in JS, so without this
+    // check the modal would land in Custom mode with $0 of $X — as if the admin had to cover 100%
+    // by hand — instead of proposing a real split between tenants and admin (per
+    // tenant.excludedBillTypes) the way a newly created bill would.
     var existingRows = (bill.allocations && bill.allocations.length)
       ? bill.allocations.map(function(a){
           if (a.isAdmin) return { tenantId:null, isAdmin:true, name:'Administrator (you)', days:null, amount:a.amount };
           var t = tenantOf(a.tenantId);
           return { tenantId:a.tenantId, name:t?t.fullName:a.tenantId,
             days: t?occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd):0, amount:a.amount };
-        // Filtra allocations viejas de alguien que no se solapó con el periodo (o que ya no vive
-        // ahí) — quedaron con $0 de una repartición anterior y no deberían seguir apareciendo.
+        // Filters out old allocations for someone who didn't overlap with the period (or who no
+        // longer lives there) — they were left at $0 from an earlier allocation and shouldn't keep showing up.
         }).filter(function(row){ return row.isAdmin || row.days > 0 || row.amount > 0; })
       : [];
     var rows = existingRows.length ? existingRows : computeAllocationRows(bill, 'days');
@@ -2857,7 +2891,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var bill = billOf(allocationDraft.billId);
     allocationDraft.method = method;
     if (method === 'custom'){
-      // Parte de la última distribución visible en pantalla en vez de resetear a cero.
+      // Starts from the last distribution visible on screen instead of resetting to zero.
       allocationDraft.rows = allocationDraft.rows.slice();
     } else {
       allocationDraft.rows = computeAllocationRows(bill, method);
@@ -2869,11 +2903,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     days: "The amount is split day by day between the rooms that were occupied each day (not a fixed number of rooms) — tenants sharing a room split that room's share between them.",
     custom: "Set each amount by hand. The total must match the bill's amount exactly."
   };
-  /** Deja marcar que el administrador cubre (parte de) este bill él mismo — por ejemplo, si le
-   *  corresponde pagar una parte y solo hace falta repartir el resto entre los inquilinos. Es
-   *  manual e independiente del reparto automático por tenant.excludedBillTypes (ver
-   *  computeAllocationRows); agrega/quita una fila editable a nombre del administrador y pasa
-   *  el método a 'custom' para que el monto no se recalcule solo por encima. */
+  /** Lets the administrator mark that they're covering (part of) this bill themselves — for
+   *  example, if they're on the hook for a portion and only the rest needs to be split among
+   *  tenants. This is manual and independent of the automatic allocation via tenant.excludedBillTypes
+   *  (see computeAllocationRows); it adds/removes an editable row under the administrator's name
+   *  and switches the method to 'custom' so the amount isn't just recalculated over it. */
   function toggleAllocationAdmin(){
     if (!allocationDraft) return;
     var idx = allocationDraft.rows.findIndex(function(r){ return r.isAdmin; });
@@ -2938,22 +2972,22 @@ import * as recurringBillService from './services/recurringBillService.js';
       errorEl.hidden = false;
       return;
     }
-    // Conserva el estado de "pagado" de cada inquilino que ya estaba en la
-    // asignación anterior (por tenantId), aunque cambie el importe o el
-    // método — reasignar no debería des-marcar como pagado a alguien que ya
-    // pagó su parte.
+    // Preserves the "paid" status of each tenant who was already in the
+    // previous allocation (by tenantId), even if the amount or method
+    // changes — reallocating shouldn't un-mark as paid someone who already
+    // paid their share.
     var oldPaidByTenant = {};
     (bill.allocations || []).forEach(function(a){ oldPaidByTenant[a.isAdmin ? 'admin' : a.tenantId] = { paid: !!a.paid, paidDate: a.paidDate || null }; });
     var newRows = allocationDraft.rows.map(function(r){
       if (r.isAdmin){
         var prevAdmin = oldPaidByTenant.admin;
-        // La parte del administrador no la debe nadie más — se da por cubierta apenas se guarda.
+        // No one else owes the administrator's share — it's considered covered as soon as it's saved.
         return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate: (prevAdmin && prevAdmin.paidDate) || TODAY };
       }
       var amt = round2(r.amount);
       if (amt <= 0){
-        // No le corresponde pagar nada (p.ej. está excluido de este servicio, o el admin le puso
-        // $0 a mano) — se da por saldado solo, sin pedirle al admin que lo marque como pagado.
+        // They don't owe anything (e.g. excluded from this service, or the admin set
+        // $0 by hand) — it's considered settled on its own, without asking the admin to mark it as paid.
         var prevZero = oldPaidByTenant[r.tenantId];
         return { tenantId:r.tenantId, amount:0, paid:true, paidDate: (prevZero && prevZero.paidDate) || TODAY };
       }
@@ -2987,10 +3021,10 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.confirmAllocation = confirmAllocation;
 
   /**
-   * Estado global de un bill derivado de sus cuotas por inquilino: si no
-   * tiene allocations, el estado no cambia (sigue 'pending', igual que
-   * antes). Si las tiene, se deriva de cuántas están pagadas: ninguna ->
-   * 'allocated', todas -> 'paid', algunas -> 'partially_paid'.
+   * A bill's overall status derived from its per-tenant shares: if it has
+   * no allocations, the status doesn't change (stays 'pending', same as
+   * before). If it does have them, it's derived from how many are paid: none ->
+   * 'allocated', all -> 'paid', some -> 'partially_paid'.
    */
   function recomputeBillStatus(bill){
     if (!bill.allocations || !bill.allocations.length) return;
@@ -3000,8 +3034,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     else if (paidCount === total) bill.status = 'paid';
     else bill.status = 'partially_paid';
   }
-  /** Marca la cuota de un inquilino en un bill como pagada (con la fecha real que el admin indique,
-   *  no siempre hoy), y recalcula el estado general del bill. */
+  /** Marks a tenant's share of a bill as paid (with the actual date the admin specifies,
+   *  not always today), and recomputes the bill's overall status. */
   async function markAllocationPaid(billId, tenantId, date){
     var bill = billOf(billId);
     if (!bill || !bill.allocations) return;
@@ -3022,10 +3056,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
     }
   }
-  /** Corrige un error del administrador: deshace el marcado de "pagado" de la cuota de un
-   *  inquilino en un bill (por ejemplo, si se marcó por accidente antes de que el inquilino
-   *  pagara de verdad). El comprobante adjunto, si lo hay, se conserva — usar removeReceipt
-   *  si también hay que quitarlo. */
+  /** Corrects an administrator mistake: undoes the "paid" mark on a tenant's share of a
+   *  bill (for example, if it was marked by accident before the tenant actually
+   *  paid). The attached receipt, if any, is kept — use removeReceipt
+   *  if it also needs to be removed. */
   async function unmarkAllocationPaid(billId, tenantId){
     var bill = billOf(billId);
     if (!bill || !bill.allocations) return;
@@ -3077,8 +3111,8 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.closeAllocPaidModal = closeAllocPaidModal;
   window.confirmAllocPaidModal = confirmAllocPaidModal;
 
-  /** Quita un comprobante adjunto por error (de un tenant o del propio admin) sin tocar si la
-   *  cuota está marcada como pagada — para cuando se subió el archivo equivocado. */
+  /** Removes a receipt that was attached by mistake (from a tenant or the admin themselves)
+   *  without touching whether the share is marked as paid — for when the wrong file was uploaded. */
   async function removeReceipt(billId, tenantId){
     var bill = billOf(billId);
     if (!bill) return;
@@ -3185,7 +3219,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.handleReceiptFile = handleReceiptFile;
   window.viewReceipt = viewReceipt;
 
-  /* ---------- FASE 12: Documents (lease agreements, ID copies, otros) ---------- */
+  /* ---------- PHASE 12: Documents (lease agreements, ID copies, other) ---------- */
   var tenantDocuments = [];
   var pendingDocFile = null;
   function triggerDocInput(kind){
@@ -3313,8 +3347,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       '</div></a>';
   }
 
-  /** Resumen de "lo que los tenants tienen que pagar" para la tabla de Bills: cuántos ya
-   *  pagaron su cuota y cuánto se ha cobrado del total. */
+  /** Summary of "what the tenants have to pay" for the Bills table: how many have already
+   *  paid their share and how much has been collected of the total. */
   function billTenantPaymentsSummary(b){
     if (b.allocations && b.allocations.length){
       var tenantAllocs = b.allocations.filter(function(a){ return !a.isAdmin; });
@@ -3324,15 +3358,15 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     return '<span style="color:var(--text-faint);">Not yet allocated</span>';
   }
-  /** Resumen de "lo que el administrador tiene que pagarle al proveedor" — el segundo leg del
-   *  pago, separado de billTenantPaymentsSummary (ver billReadyForAdminPayment). */
+  /** Summary of "what the administrator has to pay the provider" — the second leg of the
+   *  payment, separate from billTenantPaymentsSummary (see billReadyForAdminPayment). */
   function billAdminPaymentSummary(b){
     if (b.adminPaid) return badge('paid', 'Paid'+(b.adminPaidDate?(' '+shortDate(b.adminPaidDate)):''));
     return billReadyForAdminPayment(b) ? badge('due','Ready to pay') : badge('neutral','Waiting on tenants');
   }
-  /** Orden actual de la tabla de bills — el usuario puede tocar cualquier encabezado para
-   *  organizar por proveedor, propiedad, fechas o pagos; tocar la misma columna otra vez
-   *  invierte la dirección. Persiste mientras se navega entre pestañas/filtros de Bills. */
+  /** Current sort order for the bills table — the user can tap any header to
+   *  sort by provider, property, dates or payments; tapping the same column again
+   *  reverses the direction. Persists while navigating between Bills tabs/filters. */
   var billsSortColumn = 'dueDate';
   var billsSortDir = 'desc'; // 'asc' | 'desc'
   var BILLS_SORT_DEFAULT_DIR = { provider:'asc', property:'asc', issueDate:'desc', dueDate:'desc', tenantPayments:'desc', providerPayment:'desc', status:'asc' };
@@ -3354,13 +3388,13 @@ import * as recurringBillService from './services/recurringBillService.js';
       default: return '';
     }
   }
-  /** Aplica el orden actual (billsSortColumn/billsSortDir) a una lista de bills ya filtrada. */
+  /** Applies the current sort order (billsSortColumn/billsSortDir) to an already filtered list of bills. */
   function sortBillsList(list){
     var col = billsSortColumn, dir = billsSortDir === 'asc' ? 1 : -1;
     return list.slice().sort(function(a, b){
       var av = billsSortValue(a, col), bv = billsSortValue(b, col);
       var cmp = (typeof av === 'number' && typeof bv === 'number') ? (av - bv) : String(av).localeCompare(String(bv));
-      if (cmp === 0) cmp = (b.dueDate || '').localeCompare(a.dueDate || ''); // desempate estable
+      if (cmp === 0) cmp = (b.dueDate || '').localeCompare(a.dueDate || ''); // stable tie-breaker
       return cmp * dir;
     });
   }
@@ -3409,9 +3443,9 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
 
   function renderBillsListTab(){
-    // Pestaña por propiedad — "All properties" o una específica; el filtro de estado (chips)
-    // y las stats se calculan DESPUÉS de aplicar esta, así cada pestaña muestra sus propios
-    // números en vez de los del portafolio completo.
+    // Property tab — "All properties" or a specific one; the status filter (chips)
+    // and the stats are computed AFTER applying this, so each tab shows its own
+    // numbers instead of the whole portfolio's.
     var propertyScoped = billsPropertyFilter==='all' ? bills : bills.filter(function(b){ return b.propertyId===billsPropertyFilter; });
     var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
       '<button class="chip'+(billsPropertyFilter==='all'?' active':'')+'" onclick="setBillsPropertyFilter(\'all\')">All properties</button>'+
@@ -3419,10 +3453,10 @@ import * as recurringBillService from './services/recurringBillService.js';
         return '<button class="chip'+(billsPropertyFilter===p.id?' active':'')+'" onclick="setBillsPropertyFilter(\''+p.id+'\')">'+esc(p.name)+'</button>';
       }).join('') + '</div>';
 
-    // "Pending" y "Paid" usan el importe REALMENTE cobrado (billPaidAmount),
-    // no un corte todo-o-nada por bill.status: un bill parcialmente pagado
-    // aporta su parte cobrada a "Paid" y el resto a "Pending", igual que
-    // Reports (billPaidAmount/billOutstandingAmount más arriba).
+    // "Pending" and "Paid" use the ACTUALLY collected amount (billPaidAmount),
+    // not an all-or-nothing cut by bill.status: a partially paid bill
+    // contributes its collected share to "Paid" and the rest to "Pending", just like
+    // Reports (billPaidAmount/billOutstandingAmount above).
     var pendingTotal = propertyScoped.reduce(function(s,b){ return s+billOutstandingAmount(b); },0);
     var overdueCount = propertyScoped.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).length;
     var paidTotal = propertyScoped.reduce(function(s,b){ return s+billPaidAmount(b); },0);
@@ -3455,15 +3489,15 @@ import * as recurringBillService from './services/recurringBillService.js';
       importQueueCard() + propertyTabsHtml + billsTimelineHtml() + recurringBillsCardHtml(billsPropertyFilter) + statHtml + chipsHtml + rows;
   }
 
-  /* ============ "Missing invoices" tab — cálculo local por promedio de facturas pasadas ============
-   * Ya no depende de la IA (Edge Function predict-bills) — esa dependencia fallaba seguido
-   * ("AI service is overloaded"). En su lugar, para cada propiedad + tipo de servicio con al
-   * menos 2 bills cargados, calcula el intervalo PROMEDIO real entre facturas consecutivas
-   * (en vez de un umbral fijo de 45 días para todos) y proyecta la próxima fecha esperada a
-   * partir de la última factura — así se ajusta solo a cada proveedor (mensual, trimestral,
-   * etc.) y mejora a medida que se van cargando más bills. También estima el importe esperado
-   * como el promedio de los importes ya vistos. Es puro cálculo local, sin red — se recalcula
-   * solo en cada render(), siempre con los datos más recientes. */
+  /* ============ "Missing invoices" tab — local calculation based on the average of past invoices ============
+   * No longer depends on AI (the predict-bills Edge Function) — that dependency used to fail
+   * often ("AI service is overloaded"). Instead, for each property + service type with at
+   * least 2 bills loaded, it computes the actual AVERAGE interval between consecutive invoices
+   * (instead of a fixed 45-day threshold for everyone) and projects the next expected date
+   * from the last invoice — so it adapts on its own to each provider (monthly, quarterly,
+   * etc.) and improves as more bills get loaded. It also estimates the expected amount
+   * as the average of the amounts already seen. It's pure local computation, no network — it's
+   * recomputed on every render(), always with the most recent data. */
   function computeMissingInvoicePredictions(){
     function dateOf(b){ return b.billingPeriodStart || b.issueDate || b.dueDate || null; }
     var groups = {};
@@ -3475,7 +3509,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var predictions = [];
     Object.keys(groups).forEach(function(key){
       var list = groups[key].slice().sort(function(a,b){ return dateOf(a).localeCompare(dateOf(b)); });
-      if (list.length < 2) return; // hace falta al menos 2 para saber el ritmo habitual
+      if (list.length < 2) return; // need at least 2 to know the usual pace
       var intervals = [];
       for (var i=1;i<list.length;i++) intervals.push(daysBetween(dateOf(list[i-1]), dateOf(list[i])));
       var avgInterval = Math.round(intervals.reduce(function(s,n){ return s+n; }, 0) / intervals.length);
@@ -3484,7 +3518,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       var lastDate = dateOf(last);
       var predictedNextDate = stepDateIso(lastDate, avgInterval);
       var daysOverdue = daysBetween(predictedNextDate, TODAY);
-      if (daysOverdue <= 0) return; // todavía no le toca, según su propio ritmo histórico
+      if (daysOverdue <= 0) return; // not due yet, based on its own historical pace
       var estimatedAmount = round2(list.reduce(function(s,b){ return s + (b.amount||0); }, 0) / list.length);
       var p = properties.find(function(x){ return x.id===last.propertyId; });
       predictions.push({
@@ -3522,10 +3556,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     return header + predictions.map(missingInvoiceRowHtml).join('');
   }
 
-  /** Detecta bills "recurrentes" (electricidad, agua, hot water, gas, internet — no "other") que
-   *  llevan más de ~45 días sin uno nuevo cargado, comparado con el último que sí llegó, para
-   *  esa propiedad + tipo. Solo aplica una vez hay al menos 2 bills de ese tipo en esa propiedad
-   *  (si no, no hay todavía un patrón del que se pueda decir que "falta" algo). */
+  /** Detects "recurring" bills (electricity, water, hot water, gas, internet — not "other") that
+   *  have gone more than ~45 days without a new one loaded, compared to the last one that did
+   *  arrive, for that property + type. Only applies once there are at least 2 bills of that
+   *  type for that property (otherwise there isn't yet a pattern to say anything is "missing"). */
   var BILL_RECURRING_TYPES = ['electricity','water','hot_water','gas','internet'];
   function detectMissingBills(){
     var byKey = {};
@@ -3553,28 +3587,28 @@ import * as recurringBillService from './services/recurringBillService.js';
     return gaps;
   }
 
-  /** A qué color de estado le corresponde a un bill, reusando el mismo criterio que
-   *  billStatusBadge (ver más abajo) — para que la barra del timeline y la insignia de la
-   *  tabla siempre coincidan en el mismo color para el mismo bill. */
+  /** Which status color a bill maps to, reusing the same criteria as
+   *  billStatusBadge (see below) — so the timeline bar and the table badge
+   *  always match the same color for the same bill. */
   var BILL_TIMELINE_STATUS_COLOR = { paid:'paid', pending:'due', overdue:'overdue', allocated:'upcoming', partially_allocated:'due', partially_paid:'due' };
   var BILL_TIMELINE_STATUS_LABEL = { paid:'Paid', pending:'Pending', overdue:'Overdue', allocated:'Allocated', partially_allocated:'Partially allocated', partially_paid:'Partially paid' };
   function billTimelineColorVar(b){
     return 'var(--status-' + (BILL_TIMELINE_STATUS_COLOR[billEffectiveStatus(b)] || 'upcoming') + ')';
   }
 
-  /** Línea de tiempo real (no una cuadrícula por mes) de los últimos 6 meses por propiedad ×
-   *  tipo de bill: cada bill se pinta como una barra en las fechas exactas de su periodo de
-   *  facturación (billingPeriodStart–billingPeriodEnd), coloreada según su estado (pagado,
-   *  pendiente, vencido). El fondo rayado que queda visible entre barras es un hueco — un
-   *  tramo de fechas sin ningún bill cargado. Respeta el filtro de propiedad de la pestaña. */
+  /** A real timeline (not a monthly grid) of the last 6 months by property ×
+   *  bill type: each bill is drawn as a bar over the exact dates of its billing
+   *  period (billingPeriodStart–billingPeriodEnd), colored according to its status (paid,
+   *  pending, overdue). The striped background left visible between bars is a gap — a
+   *  stretch of dates with no bill loaded. Respects the tab's property filter. */
   function billsTimelineHtml(){
-    // Respeta el mismo chip de propiedad ("All properties / Belmont / ...") que filtra la tabla.
+    // Respects the same property chip ("All properties / Belmont / ...") that filters the table.
     var scopedProperties = billsPropertyFilter==='all' ? properties : properties.filter(function(p){ return p.id===billsPropertyFilter; });
     if (!scopedProperties.length) return '';
     var months = [];
     for (var i=5; i>=0; i--) months.push(addMonthsIso(TODAY.slice(0,7)+'-01', -i).slice(0,7));
     var rangeStart = months[0] + '-01';
-    var rangeEnd = stepDateIso(addMonthsIso(months[5] + '-01', 1), -1); // último día del mes más reciente
+    var rangeEnd = stepDateIso(addMonthsIso(months[5] + '-01', 1), -1); // last day of the most recent month
     var totalDays = daysBetween(rangeStart, rangeEnd) + 1;
     function pct(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); }
     function monthLabel(ym){
@@ -3582,10 +3616,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       return names[parseInt(ym.slice(5,7),10)-1];
     }
 
-    /** Un bill de una fila a dibujar como barra: la posición/tamaño ya viene resuelta en %, con
-     *  un pequeño inset en px a cada lado — así dos bills consecutivos (el mismo día uno termina
-     *  y el otro empieza) se ven como dos barras separadas, no una sola pegada, y se nota el
-     *  corte de fecha entre ellos aunque no haya hueco real. */
+    /** A bill from a row to draw as a bar: the position/size already comes resolved in %, with
+     *  a small px inset on each side — so two consecutive bills (one ends and the other
+     *  starts on the same day) show up as two separate bars, not a single merged one, making the
+     *  date cut between them noticeable even when there's no real gap. */
     function timelineSegmentHtml(b){
       var segStart = b.billingPeriodStart < rangeStart ? rangeStart : b.billingPeriodStart;
       var segEnd = b.billingPeriodEnd > rangeEnd ? rangeEnd : b.billingPeriodEnd;
@@ -3596,10 +3630,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       return '<div title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
         'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+billTimelineColorVar(b)+';"></div>';
     }
-    /** Separa los bills de un mismo tipo en "el cobro habitual" (el importe que más se repite)
-     *  y "reajustes" (un importe distinto — p.ej. Kleenheat sube la tarifa cada 3 meses). Solo
-     *  separa cuando hay un importe claramente habitual (se repite 2+ veces); si no, no hay un
-     *  "normal" con el que comparar y todo queda en una sola línea. */
+    /** Splits bills of the same type into "the usual charge" (the amount that repeats most) and
+     *  "adjustments" (a different amount — e.g. Kleenheat raises its rate every 3 months). Only
+     *  splits when there's a clearly usual amount (repeats 2+ times); otherwise there's no
+     *  "normal" to compare against and everything stays on a single line. */
     function splitByModalAmount(list){
       if (list.length < 2) return { regular: list, adjustments: [] };
       var counts = {};
@@ -3612,10 +3646,10 @@ import * as recurringBillService from './services/recurringBillService.js';
         adjustments: list.filter(function(b){ return b.amount.toFixed(2) !== modeKey; })
       };
     }
-    // Línea vertical de "hoy" — se recalcula siempre contra TODAY, así que se corre sola cada
-    // día sin tener que tocar nada. Se dibuja DENTRO de cada track (misma % que las barras, mismo
-    // rangeStart/rangeEnd) en vez de un único overlay flotando sobre todo el diagrama, para que
-    // quede perfectamente alineada fila por fila sin depender de medir el layout con JS.
+    // "Today" vertical line — always recomputed against TODAY, so it moves on its own every
+    // day without anything needing to be touched. It's drawn INSIDE each track (same % as the
+    // bars, same rangeStart/rangeEnd) instead of a single overlay floating over the whole diagram,
+    // so it stays perfectly aligned row by row without relying on measuring the layout with JS.
     var todayLeft = pct(TODAY);
     var todayLineHtml = '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
     function timelineTrackRowHtml(label, faint, list){
@@ -3627,11 +3661,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     var rows = [];
     scopedProperties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).forEach(function(p){
       var propBills = bills.filter(function(b){ return b.propertyId===p.id; });
-      // A diferencia de detectMissingBills (que solo mira los tipos "recurrentes" de verdad),
-      // el diagrama tiene que reflejar TODOS los pagos — incluido "Other", donde puede haber
-      // cargos sueltos o ajustes que el admin clasificó aparte del servicio recurrente principal
-      // (p.ej. un reajuste de tarifa del mismo proveedor de gas, guardado como "Other" para no
-      // mezclarlo con el cobro mensual habitual).
+      // Unlike detectMissingBills (which only looks at the truly "recurring" types),
+      // the diagram has to reflect ALL payments — including "Other", where there might be
+      // one-off charges or adjustments the admin classified separately from the main recurring
+      // service (e.g. a rate adjustment from the same gas provider, saved as "Other" so it
+      // doesn't mix with the usual monthly charge).
       var typesPresent = BILL_RECURRING_TYPES.concat(['other']).filter(function(t){ return propBills.some(function(b){ return b.billType===t; }); });
       propBills.forEach(function(b){ if (typesPresent.indexOf(b.billType) === -1) typesPresent.push(b.billType); });
       if (!typesPresent.length) return;
@@ -3673,9 +3707,9 @@ import * as recurringBillService from './services/recurringBillService.js';
       '</div>';
   }
 
-  /** Manda una notificación (al usuario actual) por cada hueco detectado que no se haya
-   *  avisado ya en los últimos 30 días — para no repetir el mismo aviso cada vez que se abre
-   *  la app. Corre una sola vez por carga, después de generar los recurring bills del mes. */
+  /** Sends a notification (to the current user) for each detected gap that hasn't already
+   *  been notified in the last 30 days — so the same alert isn't repeated every time the
+   *  app is opened. Runs once per load, after generating the month's recurring bills. */
   async function checkMissingBillsNotifications(){
     if (isTenantRole() || !currentProfile) return;
     var gaps = detectMissingBills();
@@ -3694,10 +3728,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
 
-  /** "Recurring bills": templates para gas/internet/etc. que generan un bill nuevo cada mes solos
-   *  (ver generateDueRecurringBills) — así no hay que volver a cargar el mismo bill a mano cada vez.
-   *  `scopePropertyId` filtra por propiedad (como en la pestaña Bills); pásalo como 'all' o
-   *  omítelo para ver/editar las de todo el portafolio (como en Settings). */
+  /** "Recurring bills": templates for gas/internet/etc. that generate a new bill every month on
+   *  their own (see generateDueRecurringBills) — so the same bill doesn't need to be re-entered by
+   *  hand every time. `scopePropertyId` filters by property (as in the Bills tab); pass it as 'all' or
+   *  omit it to view/edit the ones for the whole portfolio (as in Settings). */
   function recurringBillsCardHtml(scopePropertyId){
     var scoped = (!scopePropertyId || scopePropertyId==='all') ? recurringBills : recurringBills.filter(function(r){ return r.propertyId===scopePropertyId; });
     var rows = scoped.slice().sort(function(a,b){ return a.provider.localeCompare(b.provider); }).map(function(r){
@@ -3710,11 +3744,11 @@ import * as recurringBillService from './services/recurringBillService.js';
         '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="toggleRecurringBillActive(\''+r.id+'\','+(!r.isActive)+')">'+(r.isActive?'Pause':'Resume')+'</button>'+
         '</span></div>';
     }).join('');
-    // No hay botón "+ New recurring" acá a propósito: una plantilla recurrente solo se puede
-    // ORIGINAR desde un bill real (la casilla "Repeats every month" al agregar o editar un
-    // bill), nunca desde cero. Así siempre queda un bill real como primer punto de referencia
-    // (fechas, importe) en vez de una plantilla flotando sin ningún bill que la respalde. Acá
-    // solo se edita/pausa/retoma lo que ya existe.
+    // There's no "+ New recurring" button here on purpose: a recurring template can only
+    // ORIGINATE from a real bill (the "Repeats every month" checkbox when adding or editing a
+    // bill), never from scratch. That way there's always a real bill as the first reference point
+    // (dates, amount) instead of a template floating with no bill backing it up. Here you can
+    // only edit/pause/resume what already exists.
     return '<div class="card"><div class="detail-head" style="margin-top:0;">'+
       '<h2 style="margin:0;font-size:14px;">Recurring bills</h2></div>'+
       (rows ? '<div class="field-list">'+rows+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">None yet — check "Repeats every month" when adding or editing a bill, like gas or internet, to set one up.</p>')+
@@ -3766,18 +3800,18 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.deleteBillConfirm = deleteBillConfirm;
 
-  /** Deja solo los dígitos de un teléfono guardado (quita espacios, guiones, paréntesis y el
-   *  '+') para armar un link wa.me — WhatsApp exige el número completo con código de país pero
-   *  sin ningún símbolo. Si no quedan suficientes dígitos como para ser un número real, devuelve
-   *  null (no hay a quién mandarle el mensaje). */
+  /** Keeps only the digits of a saved phone number (strips spaces, dashes, parentheses and the
+   *  '+') to build a wa.me link — WhatsApp requires the full number with country code but
+   *  no symbols at all. If there aren't enough digits left to be a real number, returns
+   *  null (there's no one to send the message to). */
   function phoneDigitsForWhatsApp(phone){
     var digits = (phone || '').replace(/[^0-9]/g, '');
     return digits.length >= 8 ? digits : null;
   }
 
-  /** Arma el link de WhatsApp (wa.me) que abre un chat con el inquilino y ya trae redactado el
-   *  aviso de cobro de este bill — proveedor, servicio, monto que le corresponde y fecha límite.
-   *  El admin solo tiene que revisar y tocar enviar; nada se manda automáticamente. */
+  /** Builds the WhatsApp link (wa.me) that opens a chat with the tenant with the
+   *  bill's payment notice already drafted — provider, service, amount owed and due date.
+   *  The admin only has to review and tap send; nothing is sent automatically. */
   function billAllocationWhatsAppLink(bill, property, tenant, amount){
     var digits = phoneDigitsForWhatsApp(tenant.phone);
     if (!digits) return null;
@@ -3788,9 +3822,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     return 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message);
   }
 
-  /** El botoncito "Send WhatsApp" que se muestra junto a cada inquilino en el reparto de un
-   *  bill — solo aparece si el inquilino tiene teléfono guardado; si no, muestra un aviso corto
-   *  en vez del botón, para que quede claro por qué no puede mandarlo desde ahí. */
+  /** The small "Send WhatsApp" button shown next to each tenant in a bill's
+   *  allocation — only appears if the tenant has a saved phone number; if not, shows a short
+   *  notice instead of the button, so it's clear why it can't be sent from there. */
   function whatsAppButtonHtml(bill, property, tenant, amount){
     if (!tenant || isTenantHiddenProvider(bill.provider)) return '';
     var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
@@ -3798,9 +3832,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     return '<a class="text-link" style="font-size:11.5px;" href="'+link+'" target="_blank" rel="noopener">Send WhatsApp</a>';
   }
 
-  /** Arma el mensaje general para el grupo de WhatsApp de la propiedad cuando ya se repartió un
-   *  bill entre los inquilinos — proveedor, servicio, periodo, fecha límite, y una línea
-   *  "Nombre: $monto" por cada inquilino con parte asignada (se marca aparte quién ya pagó). */
+  /** Builds the general message for the property's WhatsApp group once a bill has been split
+   *  among tenants — provider, service, period, due date, and a
+   *  "Name: $amount" line for each tenant with a share assigned (who has already paid is marked separately). */
   function billGroupWhatsAppMessage(bill, property, tenants){
     var lines = tenants.map(function(row){
       return '• ' + row.name + ': ' + money(row.amount) + (row.paid ? ' (ya pagó)' : '');
@@ -3813,10 +3847,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       '\n\nPor favor confirmen el pago con su comprobante. ¡Gracias!';
   }
 
-  /** Baja el documento original del bill (guardado en el bucket privado `receipts`) como un
-   *  File listo para adjuntar al panel nativo de compartir. Devuelve null si el bill no tiene
-   *  documento adjunto o si algo falla al bajarlo (el mensaje se puede compartir igual sin
-   *  archivo adjunto). */
+  /** Downloads the bill's original document (saved in the private `receipts` bucket) as a
+   *  File ready to attach to the native share sheet. Returns null if the bill has no
+   *  attached document or if something fails while downloading it (the message can still be
+   *  shared without an attached file). */
   async function fetchBillReceiptFile(bill){
     if (!bill.receiptPath) return null;
     try {
@@ -3831,11 +3865,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
 
-  /** Comparte el reparto de un bill al grupo de WhatsApp de la propiedad usando el panel nativo
-   *  de compartir del teléfono (Web Share API) — arma el mensaje y, si hay documento adjunto,
-   *  lo incluye como archivo. El admin elige el grupo y toca enviar; nada se manda solo. Si el
-   *  teléfono/navegador no soporta compartir archivos (o nada de compartir), cae a copiar el
-   *  mensaje al portapapeles y abrir el link del grupo para pegarlo a mano. */
+  /** Shares a bill's allocation to the property's WhatsApp group using the phone's native
+   *  share sheet (Web Share API) — builds the message and, if there's an attached document,
+   *  includes it as a file. The admin picks the group and taps send; nothing is sent on its own. If
+   *  the phone/browser doesn't support sharing files (or sharing at all), falls back to copying the
+   *  message to the clipboard and opening the group's link to paste it by hand. */
   async function shareBillToWhatsAppGroup(billId){
     var bill = billOf(billId);
     if (!bill || !bill.allocations || !bill.allocations.length) return;
@@ -3926,13 +3960,13 @@ import * as recurringBillService from './services/recurringBillService.js';
         }
         var t = tenantOf(a.tenantId);
         var owesNothing = round2(a.amount) <= 0;
-        // Un ex-inquilino que ya se fue y a quien las fechas de este bill ni le tocan (no vivía
-        // ahí durante el periodo) — dejado de una repartición vieja, no debería seguir apareciendo.
+        // A former tenant who already left and whose dates don't even overlap this bill (they
+        // didn't live there during the period) — left over from an old allocation, shouldn't keep showing up.
         var notRelevant = t && b.billingPeriodStart && b.billingPeriodEnd &&
           occupiedDaysInRange(t, b.billingPeriodStart, b.billingPeriodEnd) <= 0;
-        // No le corresponde pagar nada por esta cuota (p.ej. quedó en $0 al repartir a mano), o
-        // no es relevante — no se muestra en el reparto en vez de pedir un comprobante o marcar
-        // como pagado algo que no aplica.
+        // They don't owe anything on this share (e.g. it ended up at $0 when allocated by hand), or
+        // it's not relevant — it isn't shown in the allocation instead of asking for a receipt or marking
+        // as paid something that doesn't apply.
         if (owesNothing || notRelevant) return '';
         var paidBit = a.paid
           ? badge('paid', 'Paid'+(a.paidDate ? ' ' + shortDate(a.paidDate) : ''))
@@ -4020,7 +4054,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="card">'+toolbarHtml+weekdayHtml+cellsHtml+legendHtml+monthEmptyNote+'</div>';
   }
 
-  /* ---------- FASE 11: Reports ---------- */
+  /* ---------- PHASE 11: Reports ---------- */
   function renderReports(){
     if (properties.length === 0 && tenants.length === 0){
       return pageHeader('Reports', "Expected vs received rent, outstanding balances, bills and occupancy at a glance.") +
@@ -4029,10 +4063,10 @@ import * as recurringBillService from './services/recurringBillService.js';
           '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>');
     }
     var s = getDashboardSummary();
-    // Ledger real de bills: suma de lo REALMENTE cobrado por allocation
-    // (billPaidAmount) en vez de todo-o-nada por bill.status, para que un
-    // bill parcialmente pagado se refleje correctamente en vez de contar
-    // como "0% pagado" hasta que la última cuota se marque.
+    // Real bill ledger: sums what's ACTUALLY been collected per allocation
+    // (billPaidAmount) instead of all-or-nothing by bill.status, so a
+    // partially paid bill is reflected correctly instead of counting
+    // as "0% paid" until the last share is marked.
     var billsPaidTotal = bills.reduce(function(sum,b){ return sum+billPaidAmount(b); },0);
     var billsOutstandingTotal = bills.reduce(function(sum,b){ return sum+billOutstandingAmount(b); },0);
     var billsOverdueTotal = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; })
@@ -4090,18 +4124,18 @@ import * as recurringBillService from './services/recurringBillService.js';
       statHtml + occupancyHtml + billsBreakdownHtml + tenantTableHtml;
   }
 
-  /** "Ganancias" por propiedad: lo que pagan los tenants (payments reales, no solo lo
-   *  facturado) menos lo que el admin le paga al real estate por esa propiedad, según su
-   *  frecuencia. En "All time" el gasto de lease se prorratea por los meses transcurridos desde
-   *  la mudanza más antigua de esa propiedad (o desde hoy, si no hay tenants), ya que no
-   *  guardamos una fecha de inicio del lease en sí — se deja claro que es un estimado. */
+  /** "Profits" by property: what tenants pay (actual payments, not just what's
+   *  billed) minus what the admin pays the real estate for that property, based on its
+   *  frequency. In "All time" the lease expense is prorated over the months elapsed since
+   *  that property's earliest move-in (or from today, if there are no tenants), since we
+   *  don't store an actual lease start date — it's made clear that this is an estimate. */
   var profitsPeriod = 'month'; // 'month' | 'all'
   function setProfitsPeriod(p){ profitsPeriod = p; renderPreservingScroll(); }
   window.setProfitsPeriod = setProfitsPeriod;
 
   function monthlyLeaseCost(p){
     if (p.leasePaymentAmount == null) return 0;
-    // Quincenal ≈ 26.09 ciclos al año (365.25/14) → dividido entre 12 meses.
+    // Fortnightly ≈ 26.09 cycles per year (365.25/14) → divided over 12 months.
     return p.leasePaymentFrequency === 'fortnightly' ? p.leasePaymentAmount * (365.25/14) / 12 : p.leasePaymentAmount;
   }
 
@@ -4153,7 +4187,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       periodChipsHtml + rows;
   }
 
-  /* ---------- FASE 13: Notifications ---------- */
+  /* ---------- PHASE 13: Notifications ---------- */
   function notifId(e){ return e.kind + '|' + e.date + '|' + e.title; }
   function isNotifRead(e){ return notifReadIds.indexOf(notifId(e)) > -1; }
   function toggleNotifRead(id){
@@ -4227,7 +4261,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.markDbNotifRead = markDbNotifRead;
 
-  /* ---------- FASE 14: App lock (PIN local) + Backup/restore ---------- */
+  /* ---------- PHASE 14: App lock (local PIN) + Backup/restore ---------- */
   var APP_PIN_KEY = 'belmont-manager-app-pin';
   function getAppPin(){ try { return localStorage.getItem(APP_PIN_KEY) || ''; } catch(e){ return ''; } }
   function setAppPin(pin){ try { if (pin) localStorage.setItem(APP_PIN_KEY, pin); else localStorage.removeItem(APP_PIN_KEY); } catch(e){ /* ignorar */ } }
@@ -4272,7 +4306,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.attemptUnlock = attemptUnlock;
 
   function downloadViaAnchor(filename, json){
-    // Fallback para cuando no hay capability system (p.ej. abierto directo como file://).
+    // Fallback for when there's no capability system (e.g. opened directly as file://).
     var blob = new Blob([json], { type:'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -4308,12 +4342,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (!file) return;
     var reader = new FileReader();
     reader.onload = function(){
-      // Importante: render() vuelve a dibujar toda la página (innerHTML), así que
-      // el mensaje de estado tiene que vivir en una variable y salir de renderSettings(),
-      // no escribirse directo en el <p> viejo — ese nodo desaparece en cuanto render() corre.
+      // Important: render() redraws the whole page (innerHTML), so
+      // the status message has to live in a variable and come out of renderSettings(),
+      // not be written directly into the old <p> — that node disappears as soon as render() runs.
       try {
         var data = JSON.parse(reader.result);
-        if (!data || typeof data !== 'object') throw new Error('formato inválido');
+        if (!data || typeof data !== 'object') throw new Error('invalid format');
         // NOTE: this restores into the CURRENT SESSION's in-memory view only —
         // it does not write back to Supabase. It's a quick way to inspect an
         // old snapshot; reloading the page goes back to what's in the cloud.
@@ -4452,8 +4486,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     errorEl.hidden = true;
     try {
       await auth.updatePassword(newPw);
-      // Guarda la copia visible en Users (si esta cuenta es Administrator/Super Admin) — lo
-      // mismo que hace un reset hecho por el Super Admin, así "Users" no queda desactualizado.
+      // Saves the copy visible in Users (if this account is Administrator/Super Admin) — the
+      // same thing a reset done by the Super Admin does, so "Users" doesn't end up out of date.
       if (currentProfile){
         try { await profileService.forceSetPassword(currentProfile.id, newPw); } catch(_e){ /* best-effort */ }
       }
@@ -4848,10 +4882,10 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.confirmDeleteUser = confirmDeleteUser;
 
-  /** El Super Admin asigna, cambia o restablece la clave de CUALQUIER usuario (Administrator o
-   *  Tenant) directamente — ya no se manda un link de reseteo por correo para nadie. En vez de
-   *  eso, después de guardar la nueva clave se ofrece compartirla por WhatsApp (con el teléfono
-   *  guardado en el perfil), igual que el resto de la app comparte cosas con los tenants. */
+  /** The Super Admin sets, changes or resets the password of ANY user (Administrator or
+   *  Tenant) directly — no email reset link is sent to anyone anymore. Instead,
+   *  after saving the new password, the option to share it over WhatsApp is offered (using the
+   *  phone number saved on the profile), just like the rest of the app shares things with tenants. */
   async function resetUserPassword(profileId){
     var target = allProfiles.find(function(p){ return p.id===profileId; });
     if (!target) return;
@@ -4869,10 +4903,10 @@ import * as recurringBillService from './services/recurringBillService.js';
       showToast('Could not update the password. ' + friendlyErrorMessage(err), 'error');
     }
   }
-  /** Ofrece compartir la clave recién asignada por WhatsApp — usa el panel nativo de compartir
-   *  cuando está disponible (igual que "Share to WhatsApp group" en Bills); si no, abre un chat
-   *  de WhatsApp directo con el teléfono guardado en el perfil; si no hay teléfono guardado,
-   *  solo avisa que hay que copiarla a mano (ya queda guardada y visible en Users). */
+  /** Offers to share the newly assigned password over WhatsApp — uses the native share sheet
+   *  when available (same as "Share to WhatsApp group" in Bills); otherwise, opens a direct
+   *  WhatsApp chat with the phone number saved on the profile; if there's no saved phone number,
+   *  just notes that it needs to be copied by hand (it's already saved and visible in Users). */
   async function offerPasswordWhatsAppShare(profile, newPassword){
     var loginId = isPhoneLoginProfile(profile) ? profile.phone : profile.email;
     var name = (profile.firstName + ' ' + profile.lastName).trim() || 'there';
@@ -4891,9 +4925,9 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.resetUserPassword = resetUserPassword;
 
-  /** Alternativa a "Set / reset password" para un usuario con correo (Administrator/Super
-   *  Admin) — en vez de que el Super Admin invente y comparta una clave nueva, le manda el
-   *  enlace estándar de Supabase para que la persona misma elija su nueva clave. */
+  /** Alternative to "Set / reset password" for a user with an email (Administrator/Super
+   *  Admin) — instead of the Super Admin making up and sharing a new password, it sends them the
+   *  standard Supabase link so the person can choose their own new password. */
   async function sendUserPasswordResetEmail(profileId){
     var p = allProfiles.find(function(x){ return x.id===profileId; });
     if (!p || !p.email) return;
@@ -4937,7 +4971,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.onUserTenantLinkChange = onUserTenantLinkChange;
 
-  /** 8 caracteres, sin 0/O/1/l/I (se prestan a confusión al transcribirlos a mano o por WhatsApp/correo). */
+  /** 8 characters, without 0/O/1/l/I (they're easy to confuse when copied by hand or over WhatsApp/email). */
   function generatePassword(len){
     len = len || 8;
     var chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -5029,9 +5063,9 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.saveUserForm = saveUserForm;
 
-  /** Tras crear un Administrator/Super Admin (login por correo), ofrece enviarle sus credenciales
-   *  por email — mismo patrón que offerPasswordWhatsAppShare: usa el panel nativo de compartir
-   *  cuando está disponible (puede elegirse Mail ahí mismo), si no abre un mailto: directo. */
+  /** After creating an Administrator/Super Admin (email login), offers to send them their
+   *  credentials by email — same pattern as offerPasswordWhatsAppShare: uses the native share sheet
+   *  when available (Mail can be picked right there), otherwise opens a direct mailto:. */
   async function offerNewUserEmailShare(email, name, password){
     var subject = 'Your Manager login';
     var message = 'Hi ' + (name || 'there') + ', your Manager account was created.\n' +
@@ -5129,11 +5163,11 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.viewTenantBillReceipt = viewTenantBillReceipt;
 
-  /** El tenant ve el desglose completo de CADA bill (proveedor, monto total, su parte, periodo,
-   *  vencimiento, si ya pagó y la factura original) agrupado por mes — del más reciente al más
-   *  antiguo — para que sea fácil ubicar "la de tal mes" en vez de una lista plana. Solo ve su
-   *  propia fila de asignación (bill_allocations RLS ya la limita a eso) — no lo que pagaron o
-   *  deben los demás inquilinos de la casa. */
+  /** The tenant sees the full breakdown of EACH bill (provider, total amount, their share, period,
+   *  due date, whether it's paid, and the original invoice) grouped by month — most recent to
+   *  oldest — so it's easy to find "the one from such-and-such month" instead of a flat list. They only
+   *  see their own allocation row (bill_allocations RLS already limits it to that) — not what the
+   *  other tenants in the house paid or owe. */
   function renderTenantBills(){
     var t = myTenantRecord();
     var myAllocations = [];
@@ -5188,14 +5222,14 @@ import * as recurringBillService from './services/recurringBillService.js';
     return pageHeader('My Documents', 'Your rental agreement, receipts and other files.') + body;
   }
 
-  /* ============ FASE 15 — CRUD: properties, rooms, tenants, bonds ============ */
+  /* ============ PHASE 15 — CRUD: properties, rooms, tenants, bonds ============ */
   var crudIdSeq = 0;
   function genId(prefix){
     crudIdSeq++;
     return prefix + '-' + Date.now() + '-' + crudIdSeq;
   }
 
-  /** Vuelve a poblar los <select> de property/tenant que se llenaron una sola vez al cargar la página. */
+  /** Re-populates the property/tenant <select> elements that were filled in once when the page loaded. */
   function refreshStaticSelects(){
     var reviewPropertySelect = document.getElementById('review-property');
     if (reviewPropertySelect){
@@ -5223,7 +5257,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
 
-  /* ---------- Modal genérico de confirmación (delete de property/room/tenant) ---------- */
+  /* ---------- Generic confirmation modal (deleting a property/room/tenant) ---------- */
   var confirmModalAction = null;
   function openConfirmModal(title, body, action, opts){
     document.getElementById('confirm-modal-title').textContent = title;
@@ -5240,7 +5274,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('confirm-modal').hidden = true;
     confirmModalAction = null;
   }
-  /** La acción puede devolver {blocked:true, message} (o una Promise de eso) para mostrar un error sin cerrar el modal (p.ej. "tiene habitaciones", o un error de red/servidor). */
+  /** The action can return {blocked:true, message} (or a Promise of that) to show an error without closing the modal (e.g. "has rooms", or a network/server error). */
   async function runConfirmModalAction(){
     if (typeof confirmModalAction === 'function'){
       var btn = document.getElementById('confirm-modal-confirm-btn');
@@ -5277,8 +5311,8 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.onPropertyPaymentMethodChange = onPropertyPaymentMethodChange;
 
-  // El día del mes (1-31) solo tiene sentido cuando el pago al real estate es mensual —
-  // si es quincenal, el próximo vencimiento se calcula desde last_lease_payment_date + 14.
+  // The day of the month (1-31) only makes sense when the payment to the real estate is monthly —
+  // if it's fortnightly, the next due date is computed from last_lease_payment_date + 14.
   function onPropertyLeaseFrequencyChange(){
     var freq = document.getElementById('property-lease-frequency').value;
     document.getElementById('property-lease-day-row').hidden = freq === 'fortnightly';
@@ -5334,8 +5368,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       return;
     }
 
-    // Todos estos campos son opcionales (una propiedad puede no tener un lease propio del
-    // admin con un real estate) — solo se validan si el admin empezó a llenarlos.
+    // All these fields are optional (a property may not have a lease of its own between the
+    // admin and a real estate) — they're only validated if the admin started filling them in.
     var leasePaymentFrequency = document.getElementById('property-lease-frequency').value === 'fortnightly' ? 'fortnightly' : 'monthly';
     var leaseDayRaw = document.getElementById('property-lease-day').value;
     var leasePaymentDay = (leaseDayRaw && leasePaymentFrequency==='monthly') ? parseInt(leaseDayRaw, 10) : null;
@@ -5381,8 +5415,8 @@ import * as recurringBillService from './services/recurringBillService.js';
         whatsappGroupLink:whatsappGroupLink,
         leasePaymentDay:leasePaymentDay, leasePaymentAmount:leasePaymentAmount, leaseEndDate:leaseEndDate,
         leasePaymentFrequency:leasePaymentFrequency, nextInspectionDate:nextInspectionDate,
-        // last_lease_payment_date solo se cambia con el botón "Mark lease payment as paid" —
-        // no lo toca este formulario, así que se preserva el valor que ya tenía.
+        // last_lease_payment_date is only changed via the "Mark lease payment as paid" button —
+        // this form doesn't touch it, so the value it already had is preserved.
         lastLeasePaymentDate: existingForEdit ? existingForEdit.lastLeasePaymentDate : null,
         leasePaymentMethod:leasePaymentMethod,
         bpayBillerCode: leasePaymentMethod==='bpay' ? bpayBillerCode : '',
@@ -5512,7 +5546,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.saveRoomForm = saveRoomForm;
   window.deleteRoomConfirm = deleteRoomConfirm;
 
-  /** Fila de una habitación con acciones de editar/borrar (solo en Property detail; el listado de Properties no las lleva). */
+  /** A room row with edit/delete actions (only in Property detail; the Properties list doesn't have them). */
   function roomLine(r, propertyId){
     var t = currentTenantOf(r.id);
     var isPaying = t && t.rentAmount>0;
@@ -5676,8 +5710,8 @@ import * as recurringBillService from './services/recurringBillService.js';
         tenants.push(tenantObj);
       }
 
-      // rentService lee de rentSchedules, no de tenant.rentAmount/rentFrequency directamente:
-      // hay que mantener el schedule del inquilino sincronizado con lo que se guarda aquí.
+      // rentService reads from rentSchedules, not directly from tenant.rentAmount/rentFrequency:
+      // the tenant's schedule needs to stay in sync with what's saved here.
       var schedule = rentSchedules.find(function(s){ return s.tenantId===tenantObj.id; });
       if (rentAmount > 0){
         var scheduleDraft = { tenantId: tenantObj.id, frequency: rentFrequency, amount: rentAmount, startDate: moveInDate };
@@ -5723,8 +5757,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       render();
     }, { confirmLabel:'Delete', danger:true });
   }
-  /** Guarda el nuevo estado activo/inactivo de un tenant — no borra nada, solo lo saca (o lo
-   *  vuelve a meter) de la lista de tenants habilitados en la pestaña Tenants. */
+  /** Saves a tenant's new active/inactive status — doesn't delete anything, just takes them out
+   *  of (or puts them back into) the list of active tenants in the Tenants tab. */
   async function setTenantActive(tenantId, isActiveValue){
     var t = tenantOf(tenantId);
     if (!t) return;
@@ -5737,11 +5771,12 @@ import * as recurringBillService from './services/recurringBillService.js';
       showToast('Could not update the tenant. ' + friendlyErrorMessage(err), 'error');
     }
   }
-  /** Botón "Deactivate tenant" / "Reactivate tenant" del detalle. Reactivar es inmediato. Para
-   *  desactivar: si el tenant YA se mudó (actual move-out registrado) y no debe nada de arriendo
-   *  ni de bills, es el caso normal — se confirma sin más. Si todavía no tiene fecha de salida
-   *  real, o SÍ debe algo, eso es una inconsistencia (se está por ocultar a alguien que sigue
-   *  vigente o que dejó un saldo pendiente) así que se explica antes de dejar confirmar igual. */
+  /** "Deactivate tenant" / "Reactivate tenant" button on the detail page. Reactivating is immediate. To
+   *  deactivate: if the tenant has ALREADY moved out (actual move-out recorded) and doesn't owe
+   *  anything on rent or bills, that's the normal case — it's just confirmed. If they don't yet
+   *  have an actual move-out date, or they DO owe something, that's an inconsistency (someone
+   *  still current, or who left an outstanding balance, is about to be hidden), so it's
+   *  explained before letting the user confirm anyway. */
   function toggleTenantActiveConfirm(tenantId){
     var t = tenantOf(tenantId);
     if (!t) return;
@@ -5770,7 +5805,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.saveTenantForm = saveTenantForm;
   window.deleteTenantConfirm = deleteTenantConfirm;
 
-  /* ---------- Bond form (accesible desde Tenant detail) ---------- */
+  /* ---------- Bond form (accessible from Tenant detail) ---------- */
   var bondModalTenantId = null;
   function openBondModal(tenantId){
     bondModalTenantId = tenantId;
@@ -5921,8 +5956,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     setActiveNav(hash);
     if (!preserveScroll) window.scrollTo(0,0);
   }
-  /** Igual que render(), pero sin volver arriba — para acciones como cambiar el orden de una
-   *  tabla o un filtro, donde el usuario quiere seguir viendo lo mismo que estaba mirando. */
+  /** Same as render(), but without scrolling back to the top — for actions like changing a
+   *  table's sort order or a filter, where the user wants to keep looking at what they were already viewing. */
   function renderPreservingScroll(){
     var y = window.scrollY;
     render(true);
@@ -6005,23 +6040,23 @@ import * as recurringBillService from './services/recurringBillService.js';
     render();
   }
 
-  /** True si algún modal de formulario está abierto — no queremos que un refresco automático de
-   *  datos en segundo plano le borre a alguien lo que está escribiendo a mitad de un formulario. */
+  /** True if any form modal is open — we don't want a background automatic data
+   *  refresh to wipe out what someone is typing in the middle of filling out a form. */
   function anyModalOpen(){
     return Array.prototype.some.call(document.querySelectorAll('.modal-overlay'), function(el){ return !el.hidden; });
   }
 
   var isRefreshingData = false;
-  /** Vuelve a traer TODOS los datos desde Supabase y re-renderiza — para que dos administradores
-   *  trabajando al mismo tiempo (p.ej. el Super Admin y Geraldine) siempre vean lo mismo, sin
-   *  depender de que alguien cierre la pestaña por completo. Se salta el refresco si hay un modal
-   *  abierto (formulario a medio llenar) o si ya hay uno en curso. */
+  /** Fetches ALL data from Supabase again and re-renders — so two administrators
+   *  working at the same time (e.g. the Super Admin and Geraldine) always see the same thing,
+   *  without relying on someone closing the tab entirely. Skips the refresh if a modal is
+   *  open (a partly filled-out form) or if one is already in progress. */
   async function refreshAllData(){
     if (isRefreshingData || anyModalOpen()) return;
     isRefreshingData = true;
     try {
       await bootstrapData();
-      render(true); // preserva el scroll — es un refresco silencioso, no una navegación
+      render(true); // preserves scroll position — this is a silent refresh, not a navigation
     } catch(err){
       console.error('refreshAllData failed', err);
     } finally {
@@ -6031,13 +6066,13 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.refreshAllData = refreshAllData;
 
   var autoRefreshSetupDone = false;
-  /** Tres disparadores para mantener todo sincronizado "de inmediato" entre usuarios, sin que
-   *  nadie tenga que cerrar y volver a abrir la pestaña:
-   *  1) Al volver a esta pestaña (cambiar de app y regresar, o destrabar el celular).
-   *  2) Al restaurarse desde el back-forward cache de Safari (navegar "atrás" no vuelve a cargar
-   *     el JS por defecto — así se fuerza a traer datos frescos igual).
-   *  3) Un sondeo cada 60s mientras la pestaña esté visible, por si alguien más hizo un cambio y
-   *     esta pestaña se quedó abierta y visible todo ese tiempo sin cambiar de foco. */
+  /** Three triggers to keep everything synced "immediately" between users, without
+   *  anyone having to close and reopen the tab:
+   *  1) When returning to this tab (switching apps and coming back, or unlocking the phone).
+   *  2) When restored from Safari's back-forward cache (navigating "back" doesn't reload
+   *     the JS by default — so fresh data is forced anyway).
+   *  3) A poll every 60s while the tab is visible, in case someone else made a change and
+   *     this tab stayed open and visible that whole time without losing focus. */
   function setupAutoRefresh(){
     if (autoRefreshSetupDone) return;
     autoRefreshSetupDone = true;
@@ -6119,8 +6154,8 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.signOutAndReload = signOutAndReload;
 
-  /** El botón de la topbar (visible en cualquier página, para cualquier rol) — confirma antes
-   *  de cerrar sesión para que un toque accidental no saque a alguien en medio de algo. */
+  /** The topbar button (visible on any page, for any role) — confirms before
+   *  signing out so an accidental tap doesn't kick someone out mid-task. */
   function confirmSignOut(){
     if (window.confirm('Sign out?')) signOutAndReload();
   }
@@ -6163,15 +6198,16 @@ import * as recurringBillService from './services/recurringBillService.js';
     return role==='super_admin' ? 'Super Admin' : role==='administrator' ? 'Administrator' : 'Tenant';
   }
 
-  // Un enlace de "reset your password" por correo deja a supabase-js crear automáticamente una
-  // sesión válida apenas carga la página (detectSessionInUrl) — sin esto, esa persona entraría
-  // directo a la app con su clave VIEJA sin darse cuenta de que nunca llegó a cambiarla. Detecta
-  // ese caso (evento PASSWORD_RECOVERY) y abre el modal de cambio de clave apenas entra.
+  // A "reset your password" email link lets supabase-js automatically create a
+  // valid session as soon as the page loads (detectSessionInUrl) — without this, that person
+  // would go straight into the app with their OLD password without realizing they never got to
+  // change it. Detects that case (the PASSWORD_RECOVERY event) and opens the change-password
+  // modal as soon as they enter.
   var pendingPasswordRecovery = false;
   auth.onAuthStateChange(function(event){
     if (event !== 'PASSWORD_RECOVERY') return;
-    if (currentProfile) openChangePasswordModal(); // enterApp() ya terminó — ábrelo ya mismo
-    else pendingPasswordRecovery = true; // todavía no — initAuthGate lo revisa apenas entre
+    if (currentProfile) openChangePasswordModal(); // enterApp() has already finished — open it right away
+    else pendingPasswordRecovery = true; // not yet — initAuthGate checks this as soon as it enters
   });
 
   async function initAuthGate(){
@@ -6192,7 +6228,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   var signoutBtn = document.getElementById('signout-btn');
   if (signoutBtn) signoutBtn.innerHTML = svg('logout');
 
-  /* ============ Theme toggle (independiente del tema del host) ============ */
+  /* ============ Theme toggle (independent of the host's theme) ============ */
   var root = document.documentElement;
   var themeBtn = document.getElementById('theme-toggle');
   var STORAGE_KEY = 'belmont-manager-theme';
@@ -6218,7 +6254,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     storeTheme(next);
   });
 
-  /* ============ App lock (FASE 14): se muestra tras cargar los datos si hay un PIN guardado (ver enterApp()) ============ */
+  /* ============ App lock (PHASE 14): shown after loading the data if a PIN is saved (see enterApp()) ============ */
   var lockPinInput = document.getElementById('lock-pin-input');
   lockPinInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') attemptUnlock(); });
 })();
