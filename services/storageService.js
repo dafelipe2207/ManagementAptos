@@ -63,6 +63,23 @@ export async function uploadCleaningPhotos(files) {
   return paths;
 }
 
+/** Move-in / move-out condition photos — same private, path-scoped-by-uid pattern. */
+export async function uploadInspectionPhoto(file) {
+  const userId = await getCurrentUserId();
+  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
+  const { error } = await supabase.storage.from('inspection-photos').upload(path, file, { upsert: false });
+  if (error) throw error;
+  return path;
+}
+
+export async function uploadInspectionPhotos(files) {
+  const paths = [];
+  for (const file of Array.from(files || [])) {
+    paths.push(await uploadInspectionPhoto(file));
+  }
+  return paths;
+}
+
 /** Buckets are private — always use a signed URL (expires after `expiresInSeconds`) to display/open a file. */
 export async function getSignedUrl(bucket, path, expiresInSeconds) {
   const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, expiresInSeconds || 3600);
