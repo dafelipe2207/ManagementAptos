@@ -24,6 +24,7 @@ import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js';
 import * as trashService from './services/trashService.js';
+import * as inspectionService from './services/inspectionService.js';
 
 (function(){
   "use strict";
@@ -49,6 +50,7 @@ import * as trashService from './services/trashService.js';
   var cleaningSubmissions = [];
   var cleaningComments = [];
   var trashSchedule = [];
+  var inspectionSubmissions = [];
   var WEEKDAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   var signedUrlCache = {}; // "bucket|path" -> { url, expiresAt }
   var PHONE_LOGIN_SUFFIX = '@tenant.belmontmanager.internal'; // must match the create-user Edge Function exactly
@@ -809,6 +811,7 @@ import * as trashService from './services/trashService.js';
     { hash:'#/properties', label:'Properties', icon:'building', primary:false },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
     { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
+    { hash:'#/inspection', label:'Inspection', icon:'document', primary:false },
     { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
     { hash:'#/documents', label:'Documents', icon:'document', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
@@ -823,6 +826,7 @@ import * as trashService from './services/trashService.js';
     { hash:'#/documents', label:'Documents', icon:'document', primary:true },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
     { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
+    { hash:'#/inspection', label:'Inspection', icon:'document', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
   ];
@@ -5081,11 +5085,12 @@ import * as trashService from './services/trashService.js';
    * simpler weekly agenda (not tied to specific dates). */
   function cleaningTaskSubmissions(taskId){ return cleaningSubmissions.filter(function(s){ return s.taskId===taskId; }); }
   function cleaningTaskComments(taskId){ return cleaningComments.filter(function(c){ return c.taskId===taskId; }); }
-  function cleaningPhotoThumbsHtml(photoPaths){
+  function photoThumbsHtml(bucket, photoPaths){
     return (photoPaths||[]).map(function(path){
-      return '<img class="lazy-thumb" data-bucket="cleaning-photos" data-path="'+esc(path)+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);" />';
+      return '<img class="lazy-thumb" data-bucket="'+esc(bucket)+'" data-path="'+esc(path)+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);" />';
     }).join('');
   }
+  function cleaningPhotoThumbsHtml(photoPaths){ return photoThumbsHtml('cleaning-photos', photoPaths); }
 
   function renderCleaning(){
     return isStaff() ? renderCleaningStaff() : renderCleaningTenant();
@@ -5409,6 +5414,106 @@ import * as trashService from './services/trashService.js';
     }
   }
   window.deleteTrashEntryConfirm = deleteTrashEntryConfirm;
+
+  /* ============ Inspection: move-in / move-out condition photos ============ */
+  var INSPECTION_TYPE_LABEL = { move_in:'Move-in', move_out:'Move-out' };
+  function inspectionSubmissionsFor(tenantId, type){
+    return inspectionSubmissions.filter(function(s){ return s.tenantId===tenantId && s.type===type; });
+  }
+  function inspectionSectionHtml(tenantId, type, canAdd){
+    var subs = inspectionSubmissionsFor(tenantId, type);
+    var photosHtml = subs.length===0 ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">No photos yet.</p>' :
+      subs.map(function(s){
+        return '<div style="margin-bottom:8px;">'+
+          (s.note ? '<p style="font-size:12px;color:var(--text-faint);margin:0 0 4px;">'+esc(s.note)+' · '+shortDate((s.createdAt||'').slice(0,10))+'</p>' : '<p style="font-size:11px;color:var(--text-faint);margin:0 0 4px;">'+shortDate((s.createdAt||'').slice(0,10))+'</p>')+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+photoThumbsHtml('inspection-photos', s.photoPaths)+'</div></div>';
+      }).join('');
+    return '<div class="card" style="margin-bottom:10px;">'+
+      '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+INSPECTION_TYPE_LABEL[type]+' photos</h2>'+
+      (canAdd ? '<button class="mini-btn primary" onclick="openInspectionSubmitModal(\''+tenantId+'\',\''+type+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>' : '')+
+      '</div>'+photosHtml+'</div>';
+  }
+
+  function renderInspection(){
+    if (isStaff()) return renderInspectionStaff();
+    var t = myTenantRecord();
+    if (!t) return pageHeader('Inspection', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
+    if (!t.roomId) return pageHeader('Inspection', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
+    return pageHeader('Inspection', 'Photos of the room when you moved in, and again when you move out.') +
+      inspectionSectionHtml(t.id, 'move_in', true) +
+      inspectionSectionHtml(t.id, 'move_out', true);
+  }
+
+  function renderInspectionStaff(){
+    var activeTenants = tenants.filter(function(t){ return t.rentAmount > 0; }).sort(function(a,b){ return (a.fullName||'').localeCompare(b.fullName||''); });
+    var rows = activeTenants.map(function(t){
+      var p = propertyOf(t.propertyId), r = t.roomId ? roomOf(t.roomId) : null;
+      var moveIn = inspectionSubmissionsFor(t.id, 'move_in').length;
+      var moveOut = inspectionSubmissionsFor(t.id, 'move_out').length;
+      return '<div class="card" style="cursor:pointer;" onclick="openInspectionDetailModal(\''+t.id+'\')">'+
+        '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+'</h2></div>'+
+        '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+(p?esc(p.name):'—')+(r?' · '+esc(r.name):'')+'</p>'+
+        '<p style="font-size:11.5px;color:var(--text-faint);margin:0;">Move-in: '+moveIn+' photo submission'+(moveIn!==1?'s':'')+' · Move-out: '+moveOut+' photo submission'+(moveOut!==1?'s':'')+'</p>'+
+        '</div>';
+    }).join('');
+    return pageHeader('Inspection', "Move-in and move-out condition photos, per tenant.") +
+      (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No tenants yet.</p></div>');
+  }
+
+  function openInspectionDetailModal(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    document.getElementById('inspection-detail-title').textContent = t.fullName;
+    document.getElementById('inspection-detail-body').innerHTML =
+      inspectionSectionHtml(tenantId, 'move_in', false) + inspectionSectionHtml(tenantId, 'move_out', false);
+    document.getElementById('inspection-detail-modal').hidden = false;
+    hydrateLazyThumbs();
+  }
+  window.openInspectionDetailModal = openInspectionDetailModal;
+
+  function closeInspectionDetailModal(){ document.getElementById('inspection-detail-modal').hidden = true; }
+  window.closeInspectionDetailModal = closeInspectionDetailModal;
+
+  var inspectionSubmitTenantId = null, inspectionSubmitType = null;
+  function openInspectionSubmitModal(tenantId, type){
+    inspectionSubmitTenantId = tenantId;
+    inspectionSubmitType = type;
+    document.getElementById('inspection-submit-title').textContent = 'Add ' + (INSPECTION_TYPE_LABEL[type]||'').toLowerCase() + ' photos';
+    document.getElementById('inspection-submit-photos').value = '';
+    document.getElementById('inspection-submit-note').value = '';
+    document.getElementById('inspection-submit-modal-error').hidden = true;
+    document.getElementById('inspection-submit-modal').hidden = false;
+  }
+  window.openInspectionSubmitModal = openInspectionSubmitModal;
+
+  function closeInspectionSubmitModal(){ document.getElementById('inspection-submit-modal').hidden = true; inspectionSubmitTenantId = null; inspectionSubmitType = null; }
+  window.closeInspectionSubmitModal = closeInspectionSubmitModal;
+
+  async function saveInspectionSubmitForm(){
+    var errorEl = document.getElementById('inspection-submit-modal-error');
+    var t = tenantOf(inspectionSubmitTenantId);
+    if (!t || !inspectionSubmitType){ errorEl.textContent = 'Something went wrong — close and try again.'; errorEl.hidden = false; return; }
+    var files = document.getElementById('inspection-submit-photos').files;
+    if (!files || !files.length){ errorEl.textContent = 'Add at least one photo.'; errorEl.hidden = false; return; }
+    var note = document.getElementById('inspection-submit-note').value.trim();
+    var saveBtn = document.querySelector('#inspection-submit-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Uploading…'; }
+    try {
+      var photoPaths = await storageService.uploadInspectionPhotos(files);
+      var created = await inspectionService.create(t.propertyId, t.roomId, t.id, inspectionSubmitType, photoPaths, note);
+      inspectionSubmissions.push(created);
+      closeInspectionSubmitModal();
+      showToast('Photos submitted.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveInspectionSubmitForm = saveInspectionSubmitForm;
 
   /* ============ Users (Super Admin only) ============ */
   var ROLE_LABEL = { super_admin:'Super Admin', administrator:'Administrator', tenant:'Tenant' };
@@ -6740,6 +6845,7 @@ import * as trashService from './services/trashService.js';
     '#/bills': renderBills,
     '#/maintenance': renderMaintenance,
     '#/cleaning': renderCleaning,
+    '#/inspection': renderInspection,
     '#/calendar': renderCalendar,
     '#/reports': renderReports,
     '#/profits': renderProfits,
@@ -6757,6 +6863,7 @@ import * as trashService from './services/trashService.js';
     '#/documents': renderTenantDocuments,
     '#/maintenance': renderMaintenance,
     '#/cleaning': renderCleaning,
+    '#/inspection': renderInspection,
     '#/notifications': renderNotifications,
     '#/settings': renderSettings,
     '#/more': renderMore
@@ -6837,7 +6944,8 @@ import * as trashService from './services/trashService.js';
       cleaningService.getAllTasks(),
       cleaningService.getAllSubmissions(),
       cleaningService.getAllComments(),
-      trashService.getAll()
+      trashService.getAll(),
+      inspectionService.getAll()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -6859,6 +6967,7 @@ import * as trashService from './services/trashService.js';
     cleaningSubmissions = results[13];
     cleaningComments = results[14];
     trashSchedule = results[15];
+    inspectionSubmissions = results[16];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
