@@ -1146,7 +1146,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
       '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div>'+
       '<div class="actions-row">'+
-      (p.whatsappGroupLink ? '<a class="mini-btn" href="'+esc(p.whatsappGroupLink)+'" target="_blank" rel="noopener">Open WhatsApp group</a>' : '')+
+      (p.whatsappGroupLink ? '<a class="mini-btn" href="'+esc(whatsAppBusinessLink(p.whatsappGroupLink))+'" target="_blank" rel="noopener">Open WhatsApp group</a>' : '')+
       '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
       '</div>'+
@@ -3809,17 +3809,32 @@ import * as recurringBillService from './services/recurringBillService.js';
     return digits.length >= 8 ? digits : null;
   }
 
+  /** Rewrites a wa.me / chat.whatsapp.com link so that, on Android, it opens specifically in
+   *  WhatsApp Business instead of whichever WhatsApp app the OS would otherwise pick when both
+   *  the regular app and Business are installed. A web page can't change the phone's default
+   *  handler for wa.me — but on Android it CAN name the app outright with an "intent://" URL
+   *  that points straight at Business's package (com.whatsapp.w4b), falling back to the plain
+   *  link (browser_fallback_url) if Business isn't installed. There is no equivalent way to do
+   *  this on iOS or desktop — Apple doesn't expose a separate public URL scheme for the
+   *  Business app there — so those just get the ordinary link back, same as before. */
+  function whatsAppBusinessLink(httpsUrl){
+    var isAndroid = /Android/i.test((navigator.userAgent || ''));
+    if (!isAndroid) return httpsUrl;
+    var withoutScheme = httpsUrl.replace(/^https?:\/\//, '');
+    return 'intent://' + withoutScheme + '#Intent;package=com.whatsapp.w4b;scheme=https;S.browser_fallback_url=' + encodeURIComponent(httpsUrl) + ';end';
+  }
+
   /** Builds the WhatsApp link (wa.me) that opens a chat with the tenant with the
    *  bill's payment notice already drafted — provider, service, amount owed and due date.
    *  The admin only has to review and tap send; nothing is sent automatically. */
   function billAllocationWhatsAppLink(bill, property, tenant, amount){
     var digits = phoneDigitsForWhatsApp(tenant.phone);
     if (!digits) return null;
-    var message = 'Hola ' + tenant.fullName + ', te escribo de ' + (property ? property.name : 'la propiedad') +
-      ' para avisarte que te corresponde pagar ' + money(amount) + ' por el servicio de ' + bill.billType +
-      ' (' + bill.provider + '), del periodo ' + shortDate(bill.billingPeriodStart) + ' al ' + shortDate(bill.billingPeriodEnd) +
-      (bill.dueDate ? ('. Fecha límite de pago: ' + shortDate(bill.dueDate)) : '') + '. ¡Gracias!';
-    return 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message);
+    var message = 'Hi ' + tenant.fullName + ', this is ' + (property ? property.name : 'the property') +
+      ' — you owe ' + money(amount) + ' for ' + bill.billType +
+      ' (' + bill.provider + '), for the period ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
+      (bill.dueDate ? ('. Due date: ' + shortDate(bill.dueDate)) : '') + '. Thank you!';
+    return whatsAppBusinessLink('https://wa.me/' + digits + '?text=' + encodeURIComponent(message));
   }
 
   /** The small "Send WhatsApp" button shown next to each tenant in a bill's
@@ -3837,12 +3852,12 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  "Name: $amount" line for each tenant with a share assigned (who has already paid is marked separately). */
   function billGroupWhatsAppMessage(bill, property, tenants){
     var lines = tenants.map(function(row){
-      return '• ' + row.name + ': ' + money(row.amount) + (row.paid ? ' (ya pagó)' : '');
+      return '• ' + row.name + ': ' + money(row.amount) + (row.paid ? ' (already paid)' : '');
     });
-    return 'Reparto de la factura de ' + bill.billType + ' (' + bill.provider + ') — ' +
-      (property ? property.name : 'la propiedad') + '\n' +
-      'Periodo: ' + shortDate(bill.billingPeriodStart) + ' al ' + shortDate(bill.billingPeriodEnd) +
-      (bill.dueDate ? ('\nFecha límite de pago: ' + shortDate(bill.dueDate)) : '') + '\n\n' +
+    return 'Bill split for ' + bill.billType + ' (' + bill.provider + ') — ' +
+      (property ? property.name : 'the property') + '\n' +
+      'Period: ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
+      (bill.dueDate ? ('\nDue date: ' + shortDate(bill.dueDate)) : '') + '\n\n' +
       lines.join('\n') +
       '\n\nPor favor confirmen el pago con su comprobante. ¡Gracias!';
   }
@@ -3858,7 +3873,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       var res = await fetch(url);
       if (!res.ok) return null;
       var blob = await res.blob();
-      var name = bill.receiptPath.split('/').pop() || 'factura';
+      var name = bill.receiptPath.split('/').pop() || 'bill';
       return new File([blob], name, { type: blob.type || 'application/octet-stream' });
     } catch (_e){
       return null;
@@ -3879,23 +3894,23 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     var property = propertyOf(bill.propertyId);
     if (!property || !property.whatsappGroupLink){
-      showToast('Agrega primero el link del grupo de WhatsApp de esta propiedad (Edit property).', 'error');
+      showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error');
       return;
     }
     var tenantsForMsg = bill.allocations.filter(function(a){ return !a.isAdmin; }).map(function(a){
       var t = tenantOf(a.tenantId);
-      return { name: t ? t.fullName : 'Inquilino', amount: a.amount, paid: !!a.paid };
+      return { name: t ? t.fullName : 'Tenant', amount: a.amount, paid: !!a.paid };
     });
     var message = billGroupWhatsAppMessage(bill, property, tenantsForMsg);
     var file = await fetchBillReceiptFile(bill);
 
     try {
       if (file && navigator.canShare && navigator.canShare({ files: [file] })){
-        await navigator.share({ files: [file], text: message, title: 'Reparto de factura' });
+        await navigator.share({ files: [file], text: message, title: 'Bill split' });
         return;
       }
       if (navigator.share){
-        await navigator.share({ text: message, title: 'Reparto de factura' });
+        await navigator.share({ text: message, title: 'Bill split' });
         return;
       }
       throw new Error('not supported');
@@ -3903,11 +3918,11 @@ import * as recurringBillService from './services/recurringBillService.js';
       if (err && err.name === 'AbortError') return; // person cancelled the share sheet — not an error
       try {
         await navigator.clipboard.writeText(message);
-        showToast('Tu teléfono no permite compartir directo — copiamos el mensaje, ábrelo y pégalo en el grupo.', 'info');
+        showToast('Your phone doesn\'t support direct sharing — we copied the message; open the group and paste it in.', 'info');
       } catch (_e){
-        showToast('Copia este mensaje a mano y pégalo en el grupo:\n\n' + message, 'info');
+        showToast('Copy this message by hand and paste it in the group:\n\n' + message, 'info');
       }
-      window.open(property.whatsappGroupLink, '_blank', 'noopener');
+      window.open(whatsAppBusinessLink(property.whatsappGroupLink), '_blank', 'noopener');
     }
   }
   window.shareBillToWhatsAppGroup = shareBillToWhatsAppGroup;
@@ -4918,7 +4933,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     var digits = phoneDigitsForWhatsApp(profile.phone);
     if (digits){
-      window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent(message), '_blank', 'noopener');
+      window.open(whatsAppBusinessLink('https://wa.me/' + digits + '?text=' + encodeURIComponent(message)), '_blank', 'noopener');
     } else {
       showToast('No phone number saved for ' + name + ' — copy the password from Users to send it another way.', 'info');
     }
