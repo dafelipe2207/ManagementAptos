@@ -3830,7 +3830,8 @@ import * as recurringBillService from './services/recurringBillService.js';
   function billAllocationWhatsAppLink(bill, property, tenant, amount){
     var digits = phoneDigitsForWhatsApp(tenant.phone);
     if (!digits) return null;
-    var message = 'Hi ' + tenant.fullName + ', this is ' + (property ? property.name : 'the property') +
+    var propertyLabel = property ? (property.address || property.name) : 'the property';
+    var message = 'Hi ' + tenant.fullName + ', this is ' + propertyLabel +
       ' — you owe ' + money(amount) + ' for ' + bill.billType +
       ' (' + bill.provider + '), for the period ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
       (bill.dueDate ? ('. Due date: ' + shortDate(bill.dueDate)) : '') + '. Thank you!';
@@ -3854,12 +3855,13 @@ import * as recurringBillService from './services/recurringBillService.js';
     var lines = tenants.map(function(row){
       return '• ' + row.name + ': ' + money(row.amount) + (row.paid ? ' (already paid)' : '');
     });
+    var propertyLabel = property ? (property.address || property.name) : 'the property';
     return 'Bill split for ' + bill.billType + ' (' + bill.provider + ') — ' +
-      (property ? property.name : 'the property') + '\n' +
+      propertyLabel + '\n' +
       'Period: ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
       (bill.dueDate ? ('\nDue date: ' + shortDate(bill.dueDate)) : '') + '\n\n' +
       lines.join('\n') +
-      '\n\nPor favor confirmen el pago con su comprobante. ¡Gracias!';
+      '\n\nPlease confirm payment with your receipt. Thank you!';
   }
 
   /** Downloads the bill's original document (saved in the private `receipts` bucket) as a
