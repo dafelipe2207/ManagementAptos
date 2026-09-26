@@ -26,6 +26,10 @@ function fromRow(row) {
   if (row.expected_move_out_date) t.expectedMoveOutDate = row.expected_move_out_date;
   if (row.actual_move_out_date) t.actualMoveOutDate = row.actual_move_out_date;
   if (row.notes) t.notes = row.notes;
+  // Idempotency guard for the move-out bond settlement (auto-deduct outstanding rent/bills
+  // from the bond): set the first time it runs for this tenant so it never re-runs on its own
+  // on a later save. Null/absent = not settled yet. See processMoveOutBondSettlement in app.js.
+  t.moveOutSettledAt = row.move_out_settled_at || null;
   t.authUserId = row.auth_user_id || null;
   return t;
 }
@@ -73,4 +77,13 @@ export async function update(id, t) {
 export async function remove(id) {
   const { error } = await supabase.from('tenants').delete().eq('id', id);
   if (error) throw error;
+}
+
+/** Marks that the move-out bond settlement has run for this tenant, without touching any other
+ *  field (a plain `update()` call would send toRow(t), which requires the FULL tenant draft). */
+export async function markMoveOutSettled(id, isoTimestamp) {
+  const { data, error } = await supabase.from('tenants')
+    .update({ move_out_settled_at: isoTimestamp }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
 }
