@@ -2,8 +2,13 @@
 // Maps the app's camelCase `property` shape ({id, name, address, bedrooms,
 // bathrooms, notes, leasePaymentDay, leasePaymentAmount, leaseEndDate,
 // leasePaymentMethod, bpayBillerCode, bpayReference, bankAccountName,
-// bankBsb, bankAccountNumber}) to/from the `properties` table. Every
-// create() sets user_id explicitly from the current session (RLS requires it).
+// bankBsb, bankAccountNumber, hasParking, parkingCost, parkingTenantId})
+// to/from the `properties` table. Every create() sets user_id explicitly
+// from the current session (RLS requires it).
+//
+// hasParking/parkingCost/parkingTenantId just record that the property has a
+// parking spot, what it costs (optional) and which tenant is charged for it —
+// it's informational only and doesn't generate a rent charge on its own.
 //
 // The lease* / bpay* / bank* fields are about the LANDLORD's own lease with
 // the real estate agent for this property (when the admin themselves rents
@@ -33,7 +38,10 @@ function fromRow(row) {
     bankAccountName: row.bank_account_name || '',
     bankBsb: row.bank_bsb || '',
     bankAccountNumber: row.bank_account_number || '',
-    whatsappGroupLink: row.whatsapp_group_link || ''
+    whatsappGroupLink: row.whatsapp_group_link || '',
+    hasParking: !!row.has_parking,
+    parkingCost: row.parking_cost != null ? Number(row.parking_cost) : null,
+    parkingTenantId: row.parking_tenant_id || null
   };
 }
 
@@ -56,7 +64,10 @@ function toRow(p) {
     bank_account_name: p.bankAccountName || null,
     bank_bsb: p.bankBsb || null,
     bank_account_number: p.bankAccountNumber || null,
-    whatsapp_group_link: p.whatsappGroupLink || null
+    whatsapp_group_link: p.whatsappGroupLink || null,
+    has_parking: !!p.hasParking,
+    parking_cost: p.hasParking && p.parkingCost != null && p.parkingCost !== '' ? p.parkingCost : null,
+    parking_tenant_id: p.hasParking && p.parkingTenantId ? p.parkingTenantId : null
   };
 }
 
