@@ -567,7 +567,9 @@
           </select>
         </div>
       </div>
-      <div class="form-row"><label for="maintenance-photo">Photo (optional)</label><input id="maintenance-photo" type="file" accept="image/*" /></div>
+      <div class="form-row"><label for="maintenance-photo">Photos (optional)</label><input id="maintenance-photo" type="file" accept="image/*" multiple />
+        <div id="maintenance-photos-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
+      </div>
       <div class="form-row" id="maintenance-status-row" hidden>
         <label for="maintenance-status">Status</label>
         <select id="maintenance-status">
@@ -581,6 +583,76 @@
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeMaintenanceModal()">Cancel</button>
         <button class="mini-btn primary" onclick="saveMaintenanceForm()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="cleaning-task-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Schedule cleaning</h2>
+      <div class="form-row"><label for="cleaning-task-property">Property</label>
+        <select id="cleaning-task-property" onchange="onCleaningTaskPropertyChange()"></select>
+      </div>
+      <div class="form-row"><label for="cleaning-task-room">Room</label><select id="cleaning-task-room"></select></div>
+      <div class="form-row"><label for="cleaning-task-date">Date</label><input id="cleaning-task-date" type="date" /></div>
+      <div class="form-row"><label for="cleaning-task-repeat">Repeat weekly for how many weeks</label><input id="cleaning-task-repeat" type="number" min="1" max="52" value="1" /></div>
+      <p id="cleaning-task-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeCleaningTaskModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveCleaningTaskForm()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="cleaning-detail-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 id="cleaning-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning task</h2>
+      <div id="cleaning-detail-body"></div>
+      <div class="form-row" id="cleaning-detail-comment-row"><label for="cleaning-detail-comment">Add a comment / observation</label><textarea id="cleaning-detail-comment"></textarea></div>
+      <p id="cleaning-detail-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeCleaningDetailModal()">Close</button>
+        <button class="mini-btn" id="cleaning-detail-review-btn" onclick="markCleaningTaskReviewed()">Mark as reviewed</button>
+        <button class="mini-btn primary" id="cleaning-detail-comment-btn" onclick="saveCleaningComment()">Add comment</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="cleaning-submit-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add cleaning photos</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Take photos or choose several from your gallery to show how the room was left.</p>
+      <div class="form-row"><label for="cleaning-submit-photos">Photos</label><input id="cleaning-submit-photos" type="file" accept="image/*" multiple /></div>
+      <div class="form-row"><label for="cleaning-submit-note">Note (optional)</label><textarea id="cleaning-submit-note"></textarea></div>
+      <p id="cleaning-submit-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeCleaningSubmitModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveCleaningSubmitForm()">Submit photos</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="trash-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 id="trash-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add to trash agenda</h2>
+      <div class="form-row"><label for="trash-property">Property</label>
+        <select id="trash-property" onchange="onTrashPropertyChange()"></select>
+      </div>
+      <div class="form-row"><label for="trash-room">Room</label><select id="trash-room"></select></div>
+      <div class="form-row"><label for="trash-day">Day it goes out</label>
+        <select id="trash-day">
+          <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option>
+          <option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option>
+          <option value="6">Saturday</option>
+        </select>
+      </div>
+      <div class="form-row"><label for="trash-type">Bin / trash type</label><input id="trash-type" type="text" placeholder="e.g. General waste, Recycling, Green waste" /></div>
+      <div class="form-row"><label for="trash-notes">Notes (optional)</label><input id="trash-notes" type="text" /></div>
+      <p id="trash-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="trash-delete-btn" onclick="deleteTrashEntryConfirm()" hidden>Delete</button>
+        <button class="mini-btn" onclick="closeTrashModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveTrashForm()">Save</button>
       </div>
     </div>
   </div>
