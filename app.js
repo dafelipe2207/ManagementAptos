@@ -51,7 +51,6 @@ import * as inspectionService from './services/inspectionService.js';
   var cleaningComments = [];
   var trashSchedule = [];
   var inspectionSubmissions = [];
-  var WEEKDAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   var signedUrlCache = {}; // "bucket|path" -> { url, expiresAt }
   var PHONE_LOGIN_SUFFIX = '@tenant.belmontmanager.internal'; // must match the create-user Edge Function exactly
   function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
@@ -524,6 +523,14 @@ import * as inspectionService from './services/inspectionService.js';
   function stepDateIso(iso, days){
     var d = new Date(iso + 'T00:00:00');
     d.setDate(d.getDate() + days);
+    return toIsoLocal(d);
+  }
+  /** The next date on/after `iso` that falls on `targetDow` (0=Sunday..6=Saturday) — used to
+   *  default the cleaning rotation's first date to the coming weekend. */
+  function nextWeekdayIso(iso, targetDow){
+    var d = new Date(iso + 'T00:00:00');
+    var diff = (targetDow - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + diff);
     return toIsoLocal(d);
   }
 
@@ -1248,6 +1255,9 @@ import * as inspectionService from './services/inspectionService.js';
       (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
       '</div></div>'+
       leasePaymentCardHtml(p)+
+      '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Trash collection</h2>'+
+      '<button class="mini-btn primary" onclick="openTrashModal(\''+p.id+'\')">+ Add</button></div>'+
+      trashScheduleListHtml(p.id, true)+'</div>'+
       '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Rooms</h2>'+
       '<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">+ Add room</button></div>'+roomsHtml+'</div>'+
       '<div class="card"><h2>Bills</h2>'+
@@ -1484,6 +1494,8 @@ import * as inspectionService from './services/inspectionService.js';
       tenantRentHistoryHtml(t.id) +
       (bondRows ? '<div class="card"><h2>Bond</h2><div class="field-list">'+bondRows+'</div></div>' : '') +
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
+      inspectionSectionHtml(t.id, 'move_in', false) +
+      inspectionSectionHtml(t.id, 'move_out', false) +
       moveOutSettlementHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
   }
@@ -4982,14 +4994,13 @@ import * as inspectionService from './services/inspectionService.js';
     var box = document.getElementById('maintenance-photos-preview');
     if (!box) return;
     box.innerHTML = '';
-    (existingPaths||[]).forEach(function(path){
+    var groupId = 'lbg' + (++lightboxGroupSeq);
+    (existingPaths||[]).forEach(function(path, idx){
       var img = document.createElement('img');
-      img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;';
+      img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);';
       img.title = 'Open photo';
-      storageService.getSignedUrl('maintenance-photos', path, 600).then(function(url){
-        img.src = url;
-        img.onclick = function(){ window.open(url, '_blank', 'noopener'); };
-      }).catch(function(){ /* ignore a single broken thumbnail */ });
+      registerLightboxImg(img, 'maintenance-photos', path, groupId, idx);
+      getCachedSignedUrl('maintenance-photos', path, 600).then(function(url){ img.src = url; }).catch(function(){ /* ignore a single broken thumbnail */ });
       box.appendChild(img);
     });
   }
@@ -5078,16 +5089,46 @@ import * as inspectionService from './services/inspectionService.js';
   window.saveMaintenanceForm = saveMaintenanceForm;
 
   /* ============ Cleaning organizer + trash agenda ============
-   * cleaningTasks: one row per (room, scheduled date) — "it's this room's turn on this date".
+   * cleaningTasks: one row per (room, scheduled date) — "it's this room's turn on this date",
+   * generated as a weekly rotation across a property's rooms (see saveCleaningTaskForm) so each
+   * room's turn repeats every N weeks (N = room count).
    * cleaningSubmissions: the tenant's photos of how it turned out (a task can have more than one,
    * if they add photos more than once). cleaningComments: the admin's observations on those
-   * photos. trashSchedule: which room takes which bin out on which day of the week — a separate,
-   * simpler weekly agenda (not tied to specific dates). */
+   * photos.
+   * trashSchedule: property-level (not per-room) — which bin type is collected, from a reference
+   * date, repeating every `intervalDays` days (not every property has this set up at all). */
+  var TRASH_TYPE_LABEL = { garbage:'Garbage (red bin)', recycling:'Recycling (yellow bin)', organic:'Organic (green bin)' };
+  /** The next pickup date on/after `asOfIso` for a trash_schedule entry. */
+  function nextTrashPickupIso(entry, asOfIso){
+    if (!entry.referenceDate || !entry.intervalDays) return null;
+    var diffDays = daysBetween(entry.referenceDate, asOfIso);
+    if (diffDays <= 0) return entry.referenceDate; // reference date is today or still ahead
+    var cyclesPassed = Math.ceil(diffDays / entry.intervalDays);
+    return stepDateIso(entry.referenceDate, cyclesPassed * entry.intervalDays);
+  }
+  function trashScheduleListHtml(propertyId, clickable){
+    var entries = trashSchedule.filter(function(x){ return x.propertyId===propertyId; })
+      .map(function(x){ return { entry:x, next: nextTrashPickupIso(x, TODAY) }; })
+      .sort(function(a,b){ return (a.next||'').localeCompare(b.next||''); });
+    if (entries.length===0) return '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No trash collection set up for this property yet.</p>';
+    return entries.map(function(e){
+      var x = e.entry;
+      return '<div class="field-row"'+(clickable?' style="cursor:pointer;" onclick="openTrashModal(\''+x.propertyId+'\',\''+x.id+'\')"':'')+'>'+
+        '<span class="k">'+(TRASH_TYPE_LABEL[x.trashType]||x.trashType)+'</span>'+
+        '<span class="v" style="font-weight:400;">Next: '+shortDate(e.next)+' · every '+x.intervalDays+' days'+(x.notes?' · '+esc(x.notes):'')+'</span>'+
+        '</div>';
+    }).join('');
+  }
   function cleaningTaskSubmissions(taskId){ return cleaningSubmissions.filter(function(s){ return s.taskId===taskId; }); }
   function cleaningTaskComments(taskId){ return cleaningComments.filter(function(c){ return c.taskId===taskId; }); }
+  var lightboxGroupSeq = 0;
+  /** Renders thumbnails for one photo set. All photos passed in a single call form one gallery —
+   *  clicking any of them opens the lightbox with Previous/Next across just that set. */
   function photoThumbsHtml(bucket, photoPaths){
-    return (photoPaths||[]).map(function(path){
-      return '<img class="lazy-thumb" data-bucket="'+esc(bucket)+'" data-path="'+esc(path)+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);" />';
+    if (!photoPaths || !photoPaths.length) return '';
+    var groupId = 'lbg' + (++lightboxGroupSeq);
+    return photoPaths.map(function(path, idx){
+      return '<img class="lazy-thumb" data-bucket="'+esc(bucket)+'" data-path="'+esc(path)+'" data-group="'+groupId+'" data-index="'+idx+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);" />';
     }).join('');
   }
   function cleaningPhotoThumbsHtml(photoPaths){ return photoThumbsHtml('cleaning-photos', photoPaths); }
@@ -5117,24 +5158,11 @@ import * as inspectionService from './services/inspectionService.js';
       : upcoming.map(taskRow).join('') +
         (past.length ? '<h3 style="margin:18px 0 8px;font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+past.map(taskRow).join('') : '');
 
-    var trashSorted = trashSchedule.slice().sort(function(a,b){ return a.dayOfWeek-b.dayOfWeek; });
-    var trashListHtml = trashSorted.length===0
-      ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No trash agenda set up yet.</p>'
-      : trashSorted.map(function(x){
-          var p = propertyOf(x.propertyId), r = roomOf(x.roomId);
-          return '<div class="field-row" style="cursor:pointer;" onclick="openTrashModal(\''+x.id+'\')">'+
-            '<span class="k">'+WEEKDAY_NAMES[x.dayOfWeek]+'</span>'+
-            '<span class="v" style="font-weight:400;">'+esc(r?r.name:'—')+' · '+esc(p?p.name:'—')+' — '+esc(x.trashType)+(x.notes?' ('+esc(x.notes)+')':'')+'</span>'+
-            '</div>';
-        }).join('');
-
-    return pageHeader('Cleaning', "Who cleans which room and when, plus the trash agenda.") +
+    return pageHeader('Cleaning', "Who cleans which room and when.") +
       '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Cleaning schedule</h2>'+
-      '<button class="mini-btn primary" onclick="openCleaningTaskModal()">+ Schedule cleaning</button></div>'+
+      '<button class="mini-btn primary" onclick="openCleaningTaskModal()">+ Generate rotation</button></div>'+
       taskListHtml +
-      '<div class="detail-head" style="margin-top:22px;align-items:center;"><h2 style="margin:0;">Trash agenda</h2>'+
-      '<button class="mini-btn primary" onclick="openTrashModal()">+ Add to trash agenda</button></div>'+
-      '<div class="card">'+trashListHtml+'</div>';
+      '<p style="font-size:12px;color:var(--text-faint);margin:14px 0 0;">The trash agenda now lives on each property\'s page (Properties → open a property).</p>';
   }
 
   function renderCleaningTenant(){
@@ -5162,12 +5190,7 @@ import * as inspectionService from './services/inspectionService.js';
             '</div>';
         }).join('');
 
-    var myTrash = trashSchedule.filter(function(x){ return x.roomId===t.roomId; }).sort(function(a,b){ return a.dayOfWeek-b.dayOfWeek; });
-    var trashHtml = myTrash.length===0
-      ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No trash schedule set for your room yet.</p>'
-      : myTrash.map(function(x){
-          return '<div class="field-row"><span class="k">'+WEEKDAY_NAMES[x.dayOfWeek]+'</span><span class="v" style="font-weight:400;">'+esc(x.trashType)+(x.notes?' · '+esc(x.notes):'')+'</span></div>';
-        }).join('');
+    var trashHtml = trashScheduleListHtml(t.propertyId, false);
 
     return pageHeader('Cleaning', "Your room's cleaning turn and trash day.") +
       '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:0 0 8px;">Cleaning schedule</h2>'+
@@ -5176,11 +5199,14 @@ import * as inspectionService from './services/inspectionService.js';
       '<div class="card">'+trashHtml+'</div>';
   }
 
-  /* ---- Staff: schedule a cleaning task ---- */
+  /* ---- Staff: generate the weekly cleaning rotation ---- */
   function onCleaningTaskPropertyChange(){
     var propId = document.getElementById('cleaning-task-property').value;
-    var roomSelect = document.getElementById('cleaning-task-room');
-    roomSelect.innerHTML = roomsOf(propId).map(function(r){ return '<option value="'+r.id+'">'+esc(r.name)+'</option>'; }).join('');
+    var roomCount = roomsOf(propId).length;
+    var note = document.getElementById('cleaning-task-periodicity');
+    note.textContent = roomCount === 0
+      ? 'This property has no rooms yet.'
+      : 'With ' + roomCount + ' room' + (roomCount===1?'':'s') + ', each room\'s turn comes back around every ' + roomCount + ' week' + (roomCount===1?'':'s') + '.';
   }
   window.onCleaningTaskPropertyChange = onCleaningTaskPropertyChange;
 
@@ -5189,8 +5215,8 @@ import * as inspectionService from './services/inspectionService.js';
     propSelect.innerHTML = properties.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
     propSelect.value = properties[0] ? properties[0].id : '';
     onCleaningTaskPropertyChange();
-    document.getElementById('cleaning-task-date').value = TODAY;
-    document.getElementById('cleaning-task-repeat').value = '1';
+    document.getElementById('cleaning-task-date').value = nextWeekdayIso(TODAY, 6); // default: coming Saturday
+    document.getElementById('cleaning-task-repeat').value = '12';
     document.getElementById('cleaning-task-modal-error').hidden = true;
     document.getElementById('cleaning-task-modal').hidden = false;
   }
@@ -5201,22 +5227,25 @@ import * as inspectionService from './services/inspectionService.js';
 
   async function saveCleaningTaskForm(){
     var propertyId = document.getElementById('cleaning-task-property').value;
-    var roomId = document.getElementById('cleaning-task-room').value;
-    var date = document.getElementById('cleaning-task-date').value;
+    var startDate = document.getElementById('cleaning-task-date').value;
     var weeks = parseInt(document.getElementById('cleaning-task-repeat').value, 10) || 1;
     var errorEl = document.getElementById('cleaning-task-modal-error');
-    if (!propertyId || !roomId || !date){
-      errorEl.textContent = 'Choose a property, room and date.';
+    var propRooms = roomsOf(propertyId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+    if (!propertyId || !startDate || propRooms.length===0){
+      errorEl.textContent = 'Choose a property (with at least one room) and a start date.';
       errorEl.hidden = false;
       return;
     }
-    var dates = [];
-    for (var i=0; i<Math.max(1, Math.min(52, weeks)); i++){ dates.push(stepDateIso(date, i*7)); }
+    weeks = Math.max(1, Math.min(52, weeks));
+    var rows = [];
+    for (var i=0; i<weeks; i++){
+      rows.push({ propertyId: propertyId, roomId: propRooms[i % propRooms.length].id, scheduledDate: stepDateIso(startDate, i*7) });
+    }
     try {
-      var created = await cleaningService.createTasks(propertyId, roomId, dates);
+      var created = await cleaningService.createTasksBulk(rows);
       cleaningTasks = cleaningTasks.concat(created);
       closeCleaningTaskModal();
-      showToast('Cleaning schedule updated.', 'success');
+      showToast('Cleaning rotation generated — each room\'s turn repeats every ' + propRooms.length + ' week' + (propRooms.length===1?'':'s') + '.', 'success');
       render();
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
@@ -5338,26 +5367,26 @@ import * as inspectionService from './services/inspectionService.js';
   }
   window.saveCleaningSubmitForm = saveCleaningSubmitForm;
 
-  /* ---- Staff: trash agenda entries ---- */
-  function onTrashPropertyChange(){
-    var propId = document.getElementById('trash-property').value;
-    var roomSelect = document.getElementById('trash-room');
-    roomSelect.innerHTML = roomsOf(propId).map(function(r){ return '<option value="'+r.id+'">'+esc(r.name)+'</option>'; }).join('');
+  /* ---- Staff: trash agenda entries (property-level, opened from the property's own page) ---- */
+  function onTrashTypeChange(){
+    // Prefills the usual interval for the chosen bin type — the admin can still override it.
+    var type = document.getElementById('trash-type').value;
+    var intervalInput = document.getElementById('trash-interval');
+    if (!trashModalEditId && trashService.TRASH_TYPE_DEFAULT_INTERVAL[type] != null){
+      intervalInput.value = trashService.TRASH_TYPE_DEFAULT_INTERVAL[type];
+    }
   }
-  window.onTrashPropertyChange = onTrashPropertyChange;
+  window.onTrashTypeChange = onTrashTypeChange;
 
-  var trashModalEditId = null;
-  function openTrashModal(id){
+  var trashModalEditId = null, trashModalPropertyId = null;
+  function openTrashModal(propertyId, id){
+    trashModalPropertyId = propertyId;
     trashModalEditId = id || null;
     var x = id ? trashSchedule.find(function(i){ return i.id===id; }) : null;
-    document.getElementById('trash-modal-title').textContent = x ? 'Edit trash agenda entry' : 'Add to trash agenda';
-    var propSelect = document.getElementById('trash-property');
-    propSelect.innerHTML = properties.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
-    propSelect.value = x ? x.propertyId : (properties[0] ? properties[0].id : '');
-    onTrashPropertyChange();
-    if (x) document.getElementById('trash-room').value = x.roomId;
-    document.getElementById('trash-day').value = x ? String(x.dayOfWeek) : '1';
-    document.getElementById('trash-type').value = x ? x.trashType : '';
+    document.getElementById('trash-modal-title').textContent = x ? 'Edit trash collection' : 'Add trash collection';
+    document.getElementById('trash-type').value = x ? x.trashType : 'garbage';
+    document.getElementById('trash-reference-date').value = x ? x.referenceDate : nextWeekdayIso(TODAY, 1);
+    document.getElementById('trash-interval').value = x ? x.intervalDays : trashService.TRASH_TYPE_DEFAULT_INTERVAL.garbage;
     document.getElementById('trash-notes').value = x ? (x.notes||'') : '';
     document.getElementById('trash-delete-btn').hidden = !x;
     document.getElementById('trash-modal-error').hidden = true;
@@ -5365,22 +5394,21 @@ import * as inspectionService from './services/inspectionService.js';
   }
   window.openTrashModal = openTrashModal;
 
-  function closeTrashModal(){ document.getElementById('trash-modal').hidden = true; trashModalEditId = null; }
+  function closeTrashModal(){ document.getElementById('trash-modal').hidden = true; trashModalEditId = null; trashModalPropertyId = null; }
   window.closeTrashModal = closeTrashModal;
 
   async function saveTrashForm(){
-    var propertyId = document.getElementById('trash-property').value;
-    var roomId = document.getElementById('trash-room').value;
-    var dayOfWeek = parseInt(document.getElementById('trash-day').value, 10);
-    var trashType = document.getElementById('trash-type').value.trim();
+    var trashType = document.getElementById('trash-type').value;
+    var referenceDate = document.getElementById('trash-reference-date').value;
+    var intervalDays = parseInt(document.getElementById('trash-interval').value, 10);
     var notes = document.getElementById('trash-notes').value.trim();
     var errorEl = document.getElementById('trash-modal-error');
-    if (!propertyId || !roomId || !trashType){
-      errorEl.textContent = 'Choose a property, room, and enter what kind of bin it is.';
+    if (!trashModalPropertyId || !referenceDate || !isFinite(intervalDays) || intervalDays < 1){
+      errorEl.textContent = 'Enter a pickup date and a valid interval (in days).';
       errorEl.hidden = false;
       return;
     }
-    var draft = { propertyId:propertyId, roomId:roomId, dayOfWeek:dayOfWeek, trashType:trashType, notes:notes };
+    var draft = { propertyId:trashModalPropertyId, trashType:trashType, referenceDate:referenceDate, intervalDays:intervalDays, notes:notes };
     try {
       if (trashModalEditId){
         var saved = await trashService.update(trashModalEditId, draft);
@@ -5391,7 +5419,7 @@ import * as inspectionService from './services/inspectionService.js';
         trashSchedule.push(created);
       }
       closeTrashModal();
-      showToast('Trash agenda saved.', 'success');
+      showToast('Trash collection saved.', 'success');
       render();
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
@@ -5991,11 +6019,11 @@ import * as inspectionService from './services/inspectionService.js';
 
   function renderTenantPayments(){
     var t = myTenantRecord();
-    var rows = t ? paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.paymentDate||'').localeCompare(a.paymentDate||''); }) : [];
+    var rows = t ? paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); }) : [];
     var body = rows.length === 0
       ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No payments recorded yet.</p></div>'
       : rows.map(function(pmt){
-          return '<div class="card"><div class="field-row"><span class="k">'+shortDate(pmt.paymentDate)+'</span><span class="v">'+money(pmt.amount)+'</span></div></div>';
+          return '<div class="card"><div class="field-row"><span class="k">'+shortDate(pmt.date)+'</span><span class="v">'+money(pmt.amount)+'</span></div></div>';
         }).join('');
     return pageHeader('My Payments', 'Rent payments on file. You can view these — only staff can change them.') + body;
   }
@@ -6907,7 +6935,8 @@ import * as inspectionService from './services/inspectionService.js';
   }
   /** Fills in every `<img class="lazy-thumb" data-bucket=".." data-path="..">` placeholder left
    *  by a page's HTML string with its real signed-URL image — used for cleaning photos (and
-   *  anywhere else a private-bucket thumbnail needs to show up in a plain list, not a modal). */
+   *  anywhere else a private-bucket thumbnail needs to show up in a plain list, not a modal).
+   *  Clicking any of them opens the full lightbox (see below) instead of a new browser tab. */
   function hydrateLazyThumbs(){
     document.querySelectorAll('img.lazy-thumb[data-path]').forEach(function(img){
       var bucket = img.getAttribute('data-bucket');
@@ -6915,10 +6944,191 @@ import * as inspectionService from './services/inspectionService.js';
       if (!bucket || !path) return;
       getCachedSignedUrl(bucket, path, 600).then(function(url){
         img.src = url;
-        img.onclick = function(){ window.open(url, '_blank', 'noopener'); };
       }).catch(function(){ /* one broken thumbnail shouldn't break the rest of the page */ });
+      img.onclick = function(){ openLightboxForThumb(img); };
     });
   }
+
+  /* ============ Image lightbox ============
+   * One reusable overlay (markup lives in index.html, outside #content so render() never wipes
+   * it) for every photo gallery in the app. A "gallery" is every .lazy-thumb image that shares a
+   * data-group value (set by photoThumbsHtml()) — clicking one opens the lightbox positioned on
+   * that image, with Previous/Next cycling through the rest of that same group. Photos rendered
+   * straight into a modal (not through photoThumbsHtml/hydrateLazyThumbs) can still join in by
+   * calling registerLightboxImg(imgEl, bucket, path, group, index). */
+  var lightboxItems = [];   // [{bucket, path}]
+  var lightboxIndex = 0;
+  var lightboxRequestToken = 0; // bumped on every navigation so a slow, stale load can't clobber a newer one
+  var lightboxReturnFocusTo = null;
+
+  function registerLightboxImg(imgEl, bucket, path, groupId, index){
+    imgEl.classList.add('lazy-thumb');
+    imgEl.setAttribute('data-bucket', bucket);
+    imgEl.setAttribute('data-path', path);
+    imgEl.setAttribute('data-group', groupId);
+    imgEl.setAttribute('data-index', String(index));
+    imgEl.style.cursor = 'pointer';
+    imgEl.onclick = function(){ openLightboxForThumb(imgEl); };
+  }
+  window.registerLightboxImg = registerLightboxImg;
+
+  function lightboxCollectGroup(groupId){
+    var els = Array.prototype.slice.call(document.querySelectorAll('.lazy-thumb[data-group="'+cssEscape(groupId)+'"]'));
+    els.sort(function(a,b){ return (parseInt(a.getAttribute('data-index'),10)||0) - (parseInt(b.getAttribute('data-index'),10)||0); });
+    return els.map(function(el){ return { bucket: el.getAttribute('data-bucket'), path: el.getAttribute('data-path') }; });
+  }
+  // Minimal CSS.escape fallback (older WebViews) — group ids are our own 'lbgN' strings, so this
+  // only ever needs to handle plain alphanumerics, but stay defensive.
+  function cssEscape(s){ return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&'); }
+
+  function openLightboxForThumb(imgEl){
+    var group = imgEl.getAttribute('data-group');
+    var bucket = imgEl.getAttribute('data-bucket'), path = imgEl.getAttribute('data-path');
+    var items = group ? lightboxCollectGroup(group) : [{ bucket:bucket, path:path }];
+    var startIndex = group ? Math.max(0, parseInt(imgEl.getAttribute('data-index'),10)||0) : 0;
+    if (items.length===0) items = [{ bucket:bucket, path:path }];
+    openLightbox(items, startIndex);
+  }
+
+  function openLightbox(items, startIndex){
+    if (!items || !items.length) return;
+    lightboxItems = items;
+    lightboxIndex = Math.max(0, Math.min(items.length-1, startIndex||0));
+    lightboxReturnFocusTo = document.activeElement;
+    var overlay = document.getElementById('lightbox-overlay');
+    overlay.hidden = false;
+    document.body.style.overflow = 'hidden';
+    renderLightboxCurrent();
+    document.getElementById('lightbox-close').focus();
+    document.addEventListener('keydown', lightboxKeyHandler);
+  }
+  window.openLightbox = openLightbox;
+
+  function closeLightbox(){
+    var overlay = document.getElementById('lightbox-overlay');
+    if (overlay.hidden) return;
+    overlay.hidden = true;
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', lightboxKeyHandler);
+    lightboxItems = [];
+    lightboxIndex = 0;
+    lightboxRequestToken++;
+    if (lightboxReturnFocusTo && typeof lightboxReturnFocusTo.focus === 'function'){
+      try { lightboxReturnFocusTo.focus(); } catch(_e){ /* element may no longer be in the DOM */ }
+    }
+    lightboxReturnFocusTo = null;
+  }
+  window.closeLightbox = closeLightbox;
+
+  var LIGHTBOX_NON_CLOSING_IDS = ['lightbox-img','lightbox-close','lightbox-prev','lightbox-next','lightbox-counter'];
+  var lightboxSuppressNextClick = false; // set right after a swipe/drag navigates, so the trailing click doesn't also close the viewer
+  function closeLightboxOnBackdrop(e){
+    if (lightboxSuppressNextClick){ lightboxSuppressNextClick = false; return; }
+    // .lightbox-content covers the whole overlay (it's what centers the image), so a click on
+    // the dark area around the photo lands on #lightbox-content, #lightbox-overlay, the spinner
+    // or the error message — never on the image itself or one of the controls. Closing on
+    // anything but that short list is exactly "click outside the image".
+    var id = e.target && e.target.id;
+    if (LIGHTBOX_NON_CLOSING_IDS.indexOf(id) === -1) closeLightbox();
+  }
+  window.closeLightboxOnBackdrop = closeLightboxOnBackdrop;
+
+  function lightboxPrev(){
+    if (lightboxItems.length < 2) return;
+    lightboxIndex = (lightboxIndex - 1 + lightboxItems.length) % lightboxItems.length;
+    renderLightboxCurrent();
+  }
+  window.lightboxPrev = lightboxPrev;
+
+  function lightboxNext(){
+    if (lightboxItems.length < 2) return;
+    lightboxIndex = (lightboxIndex + 1) % lightboxItems.length;
+    renderLightboxCurrent();
+  }
+  window.lightboxNext = lightboxNext;
+
+  function lightboxKeyHandler(e){
+    if (e.key === 'Escape'){ e.preventDefault(); closeLightbox(); }
+    else if (e.key === 'ArrowLeft'){ e.preventDefault(); lightboxPrev(); }
+    else if (e.key === 'ArrowRight'){ e.preventDefault(); lightboxNext(); }
+    else if (e.key === 'Tab'){
+      // Simple focus trap so Tab can't escape into the page hiding behind the overlay.
+      var overlay = document.getElementById('lightbox-overlay');
+      var focusables = Array.prototype.slice.call(overlay.querySelectorAll('button')).filter(function(b){ return b.offsetParent !== null; });
+      if (!focusables.length) return;
+      var first = focusables[0], last = focusables[focusables.length-1];
+      if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+    }
+  }
+
+  function renderLightboxCurrent(){
+    var item = lightboxItems[lightboxIndex];
+    if (!item) return;
+    var myToken = ++lightboxRequestToken;
+    var imgEl = document.getElementById('lightbox-img');
+    var spinner = document.getElementById('lightbox-spinner');
+    var errorEl = document.getElementById('lightbox-error');
+    var counter = document.getElementById('lightbox-counter');
+    var prevBtn = document.getElementById('lightbox-prev');
+    var nextBtn = document.getElementById('lightbox-next');
+    var multi = lightboxItems.length > 1;
+    counter.textContent = multi ? (lightboxIndex+1) + ' / ' + lightboxItems.length : '';
+    counter.hidden = !multi;
+    prevBtn.hidden = !multi;
+    nextBtn.hidden = !multi;
+    imgEl.hidden = true;
+    errorEl.hidden = true;
+    spinner.hidden = false;
+    getCachedSignedUrl(item.bucket, item.path, 600).then(function(url){
+      if (myToken !== lightboxRequestToken) return; // navigated away (or closed) before this loaded
+      var probe = new Image();
+      probe.onload = function(){
+        if (myToken !== lightboxRequestToken) return;
+        spinner.hidden = true;
+        imgEl.src = url;
+        imgEl.alt = 'Photo ' + (lightboxIndex+1) + ' of ' + lightboxItems.length;
+        imgEl.hidden = false;
+      };
+      probe.onerror = function(){
+        if (myToken !== lightboxRequestToken) return;
+        spinner.hidden = true;
+        errorEl.hidden = false;
+      };
+      probe.src = url;
+    }).catch(function(){
+      if (myToken !== lightboxRequestToken) return;
+      spinner.hidden = true;
+      errorEl.hidden = false;
+    });
+    // Preload the neighbors so Previous/Next feel instant once the signed URL is already cached.
+    [1,-1].forEach(function(d){
+      var n = lightboxItems[(lightboxIndex + d + lightboxItems.length) % lightboxItems.length];
+      if (n && n !== item) getCachedSignedUrl(n.bucket, n.path, 600).then(function(u){ var pre = new Image(); pre.src = u; }).catch(function(){});
+    });
+  }
+
+  // Pointer-based swipe/drag (covers touch, mouse and pen with one code path): a horizontal
+  // drag past the threshold navigates; anything smaller (or more vertical than horizontal, so a
+  // vertical scroll/flick doesn't get mistaken for a swipe) is ignored.
+  var lightboxPointerStartX = null, lightboxPointerStartY = null, lightboxPointerDown_ = false;
+  function lightboxPointerDown(e){
+    lightboxPointerDown_ = true;
+    lightboxPointerStartX = e.clientX;
+    lightboxPointerStartY = e.clientY;
+  }
+  window.lightboxPointerDown = lightboxPointerDown;
+  function lightboxPointerUp(e){
+    if (!lightboxPointerDown_) return;
+    lightboxPointerDown_ = false;
+    var dx = e.clientX - lightboxPointerStartX;
+    var dy = e.clientY - lightboxPointerStartY;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5){
+      lightboxSuppressNextClick = true; // the browser still fires a trailing click after this pointerup
+      if (dx > 0) lightboxPrev(); else lightboxNext();
+    }
+  }
+  window.lightboxPointerUp = lightboxPointerUp;
   /** Same as render(), but without scrolling back to the top — for actions like changing a
    *  table's sort order or a filter, where the user wants to keep looking at what they were already viewing. */
   function renderPreservingScroll(){
