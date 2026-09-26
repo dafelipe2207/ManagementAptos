@@ -10,6 +10,10 @@ function fromRow(row) {
     amountPaid: Number(row.amount_paid) || 0,
     amountReturned: Number(row.amount_returned) || 0,
     deduction: Number(row.deduction) || 0,
+    // Itemized discounts/deductions applied to this bond (e.g. "Cleaning", "Carpet damage") —
+    // each { label, amount }. `deduction` above is kept in sync as their sum (for anything
+    // that only reads the single total) but discounts is the source of truth.
+    discounts: Array.isArray(row.discounts) ? row.discounts : [],
     status: row.status
   };
 }
@@ -29,6 +33,7 @@ export async function create(b) {
     amount_paid: b.amountPaid,
     amount_returned: b.amountReturned,
     deduction: b.deduction,
+    discounts: b.discounts || [],
     status: b.status
   }).select().single();
   if (error) throw error;
@@ -41,6 +46,7 @@ export async function update(id, b) {
     amount_paid: b.amountPaid,
     amount_returned: b.amountReturned,
     deduction: b.deduction,
+    discounts: b.discounts || [],
     status: b.status
   }).eq('id', id).select().single();
   if (error) throw error;
