@@ -657,6 +657,30 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="inspection-detail-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 id="inspection-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Inspection photos</h2>
+      <div id="inspection-detail-body"></div>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeInspectionDetailModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="inspection-submit-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 id="inspection-submit-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add photos</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Take photos or choose several from your gallery.</p>
+      <div class="form-row"><label for="inspection-submit-photos">Photos</label><input id="inspection-submit-photos" type="file" accept="image/*" multiple /></div>
+      <div class="form-row"><label for="inspection-submit-note">Note (optional)</label><textarea id="inspection-submit-note"></textarea></div>
+      <p id="inspection-submit-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeInspectionSubmitModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveInspectionSubmitForm()">Submit photos</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="room-modal" hidden>
     <div class="card modal-card">
       <h2 id="room-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add room</h2>
