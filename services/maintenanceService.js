@@ -16,6 +16,9 @@ function fromRow(row) {
     category: row.category,
     priority: row.priority,
     photoPath: row.photo_path || null,
+    // Multiple photos, most-recent-last — falls back to the single legacy photo_path (pre
+    // multi-photo support) so old requests still show their one photo.
+    photoPaths: Array.isArray(row.photo_paths) && row.photo_paths.length ? row.photo_paths : (row.photo_path ? [row.photo_path] : []),
     status: row.status,
     assignedTo: row.assigned_to || null,
     createdBy: row.created_by || null,
@@ -33,7 +36,8 @@ function toRow(m) {
     description: m.description || null,
     category: m.category || 'other',
     priority: m.priority || 'normal',
-    photo_path: m.photoPath || null,
+    photo_path: m.photoPath || (m.photoPaths && m.photoPaths[0]) || null,
+    photo_paths: m.photoPaths || [],
     status: m.status || 'open',
     assigned_to: m.assignedTo || null
   };
