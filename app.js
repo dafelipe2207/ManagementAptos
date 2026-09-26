@@ -3626,11 +3626,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     var body = rows.map(function(r){
       var prop = r.tenant ? properties.find(function(p){ return p.id===r.tenant.propertyId; }) : null;
       var itemsHtml = r.items.map(itemRowHtml).join('');
+      var waHtml = r.tenant ? pendingBillsWhatsAppRowHtml(r.tenant, r.items, prop) : '';
       return '<details class="pending-bills-tenant">'+
         '<summary class="field-row" style="cursor:pointer;list-style:none;"><span class="k">'+esc(r.tenant ? r.tenant.fullName : 'Unknown tenant')+
         (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· '+esc(prop.name)+'</span>' : '')+
         '</span><span class="v">'+money(r.amount)+' <span style="color:var(--text-faint);font-weight:400;">('+r.items.length+' bill'+(r.items.length===1?'':'s')+' — tap to see which)</span></span></summary>'+
-        itemsHtml+
+        waHtml+itemsHtml+
         '</details>';
     }).join('');
     return '<div class="card">'+
@@ -4110,6 +4111,38 @@ import * as recurringBillService from './services/recurringBillService.js';
       (bill.dueDate ? ('\nDue date: ' + shortDate(bill.dueDate)) : '') + '\n\n' +
       lines.join('\n') +
       '\n\nPlease confirm payment with your receipt. Thank you!';
+  }
+
+  /** Builds the WhatsApp message + link for a tenant's whole consolidated list of pending bills
+   *  (the "Pending bills by tenant" card in the Bills tab) — one line per bill plus a total,
+   *  instead of sending one WhatsApp message per bill. Bills from a hidden-from-tenant provider
+   *  (isTenantHiddenProvider) are left out of the message, same as everywhere else tenants see
+   *  bill text, even though they still count in the on-screen total for the admin. */
+  function pendingBillsWhatsAppMessage(tenant, items, property){
+    var visibleItems = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); });
+    if (!visibleItems.length) return null;
+    var propertyLabel = property ? (property.address || property.name) : 'the property';
+    var lines = visibleItems.map(function(it){
+      var b = it.bill, a = it.alloc;
+      return '• ' + billTypeLabel(b.billType) + ' (' + b.provider + '): ' + money(a.amount) +
+        (b.dueDate ? (' — due ' + shortDate(b.dueDate)) : '');
+    });
+    var total = round2(visibleItems.reduce(function(s,it){ return s + it.alloc.amount; }, 0));
+    return 'Hi ' + tenant.fullName + ', this is ' + propertyLabel + ' — here are your pending bills:\n\n' +
+      lines.join('\n') +
+      '\n\nTotal owed: ' + money(total) +
+      '\n\nPlease confirm payment with your receipt. Thank you!';
+  }
+  /** The "Send WhatsApp" row shown when a tenant's consolidated pending-bills list is expanded —
+   *  same pattern as whatsAppButtonHtml (one bill at a time), but for the whole list at once. */
+  function pendingBillsWhatsAppRowHtml(tenant, items, property){
+    var message = pendingBillsWhatsAppMessage(tenant, items, property);
+    if (!message) return '';
+    var digits = phoneDigitsForWhatsApp(tenant.phone);
+    var linkOrNote = digits
+      ? '<a class="mini-btn primary" style="padding:2px 8px;font-size:11px;" href="'+whatsAppBusinessLink('https://wa.me/'+digits+'?text='+encodeURIComponent(message))+'" target="_blank" rel="noopener">Send WhatsApp</a>'
+      : '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
+    return '<div class="alloc-summary-row" style="align-items:center;padding-left:10px;justify-content:flex-end;">'+linkOrNote+'</div>';
   }
 
   /** Downloads the bill's original document (saved in the private `receipts` bucket) as a
