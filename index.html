@@ -589,17 +589,18 @@
 
   <div class="modal-overlay" id="cleaning-task-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Schedule cleaning</h2>
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Generate cleaning rotation</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Each week the turn passes to the next room, so with N rooms every room's turn comes back around every N weeks.</p>
       <div class="form-row"><label for="cleaning-task-property">Property</label>
         <select id="cleaning-task-property" onchange="onCleaningTaskPropertyChange()"></select>
       </div>
-      <div class="form-row"><label for="cleaning-task-room">Room</label><select id="cleaning-task-room"></select></div>
-      <div class="form-row"><label for="cleaning-task-date">Date</label><input id="cleaning-task-date" type="date" /></div>
-      <div class="form-row"><label for="cleaning-task-repeat">Repeat weekly for how many weeks</label><input id="cleaning-task-repeat" type="number" min="1" max="52" value="1" /></div>
+      <p id="cleaning-task-periodicity" style="font-size:12px;color:var(--text-faint);margin:-6px 0 10px;"></p>
+      <div class="form-row"><label for="cleaning-task-date">First cleaning date (usually a weekend)</label><input id="cleaning-task-date" type="date" /></div>
+      <div class="form-row"><label for="cleaning-task-repeat">How many weeks to generate</label><input id="cleaning-task-repeat" type="number" min="1" max="52" value="12" /></div>
       <p id="cleaning-task-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeCleaningTaskModal()">Cancel</button>
-        <button class="mini-btn primary" onclick="saveCleaningTaskForm()">Save</button>
+        <button class="mini-btn primary" onclick="saveCleaningTaskForm()">Generate</button>
       </div>
     </div>
   </div>
@@ -634,19 +635,17 @@
 
   <div class="modal-overlay" id="trash-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 id="trash-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add to trash agenda</h2>
-      <div class="form-row"><label for="trash-property">Property</label>
-        <select id="trash-property" onchange="onTrashPropertyChange()"></select>
-      </div>
-      <div class="form-row"><label for="trash-room">Room</label><select id="trash-room"></select></div>
-      <div class="form-row"><label for="trash-day">Day it goes out</label>
-        <select id="trash-day">
-          <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option>
-          <option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option>
-          <option value="6">Saturday</option>
+      <h2 id="trash-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add trash collection</h2>
+      <div class="form-row"><label for="trash-type">Bin / trash type</label>
+        <select id="trash-type" onchange="onTrashTypeChange()">
+          <option value="garbage">Garbage (red bin)</option>
+          <option value="recycling">Recycling (yellow bin)</option>
+          <option value="organic">Organic (green bin)</option>
         </select>
       </div>
-      <div class="form-row"><label for="trash-type">Bin / trash type</label><input id="trash-type" type="text" placeholder="e.g. General waste, Recycling, Green waste" /></div>
+      <div class="form-row"><label for="trash-reference-date">Next pickup date</label><input id="trash-reference-date" type="date" /></div>
+      <div class="form-row"><label for="trash-interval">Repeats every (days)</label><input id="trash-interval" type="number" min="1" max="60" /></div>
+      <p style="font-size:11.5px;color:var(--text-faint);margin:-6px 0 10px;">Typical: organic/green ~8 days, garbage/red and recycling/yellow ~14 days each — set recycling's date a week off garbage's so they alternate.</p>
       <div class="form-row"><label for="trash-notes">Notes (optional)</label><input id="trash-notes" type="text" /></div>
       <p id="trash-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -784,7 +783,21 @@
       </div>
     </div>
   </div>
+
+  <!-- Image lightbox: one reusable overlay for every photo gallery (maintenance/cleaning/inspection).
+       Opened via openLightboxForThumb()/openLightbox() in app.js — never rebuilt by render(). -->
+  <div class="lightbox-overlay" id="lightbox-overlay" role="dialog" aria-modal="true" aria-label="Image viewer" hidden onclick="closeLightboxOnBackdrop(event)">
+    <button class="lightbox-close" id="lightbox-close" type="button" aria-label="Close" onclick="closeLightbox()">&times;</button>
+    <button class="lightbox-nav-btn lightbox-prev" id="lightbox-prev" type="button" aria-label="Previous image" onclick="lightboxPrev()">&#8249;</button>
+    <button class="lightbox-nav-btn lightbox-next" id="lightbox-next" type="button" aria-label="Next image" onclick="lightboxNext()">&#8250;</button>
+    <div class="lightbox-content" id="lightbox-content" onpointerdown="lightboxPointerDown(event)" onpointerup="lightboxPointerUp(event)">
+      <div class="lightbox-spinner" id="lightbox-spinner" hidden></div>
+      <p class="lightbox-error" id="lightbox-error" hidden>Couldn't load this image.</p>
+      <img class="lightbox-img" id="lightbox-img" alt="" hidden />
+    </div>
+    <div class="lightbox-counter" id="lightbox-counter"></div>
+  </div>
 </div>
-<script type="module" src="app.js?v=66"></script>
+<script type="module" src="app.js?v=67"></script>
 </body>
 </html>
