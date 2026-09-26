@@ -3143,13 +3143,17 @@ import * as recurringBillService from './services/recurringBillService.js';
   function billReadyForAdminPayment(b){
     return b.amount > 0 && billOutstandingAmount(b) === 0;
   }
-  async function markBillAdminPaid(billId){
-    var bill = billOf(billId);
-    if (!bill) return;
-    if (!billReadyForAdminPayment(bill)){
-      showToast('Tenants need to finish paying their share before you can pay the provider.', 'error');
-      return;
-    }
+  /** Names (with what they still owe) of every non-admin allocation on a bill that hasn't been
+   *  paid yet — used to spell out exactly who's still outstanding when the admin tries to pay
+   *  the provider ahead of collecting from everyone. */
+  function unpaidTenantAllocationLabels(bill){
+    if (!bill.allocations) return [];
+    return bill.allocations.filter(function(a){ return !a.isAdmin && !a.paid && round2(a.amount) > 0.004; }).map(function(a){
+      var t = tenantOf(a.tenantId);
+      return (t ? t.fullName : 'Unknown tenant') + ' (' + money(a.amount) + ')';
+    });
+  }
+  async function doMarkBillAdminPaid(bill){
     try {
       bill.adminPaid = true;
       bill.adminPaidDate = TODAY;
@@ -3157,8 +3161,27 @@ import * as recurringBillService from './services/recurringBillService.js';
       showToast('Marked as paid to the provider.', 'success');
       render();
     } catch(err){
-      showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
+      return { blocked:true, message: friendlyErrorMessage(err) };
     }
+  }
+  /** Marking the provider paid used to be flatly disabled (a plain `disabled` button, so
+   *  clicking it silently did nothing) until every tenant's share was paid. It's still marked as
+   *  paid to the provider ONLY after this step, but now the admin can go ahead anyway — e.g.
+   *  covering the gap themselves, or the provider needed paying regardless — as long as they've
+   *  seen exactly who's still outstanding and confirm it deliberately. */
+  async function markBillAdminPaid(billId){
+    var bill = billOf(billId);
+    if (!bill) return;
+    if (billReadyForAdminPayment(bill)){
+      var result = await doMarkBillAdminPaid(bill);
+      if (result && result.blocked) showToast(result.message, 'error');
+      return;
+    }
+    var owing = unpaidTenantAllocationLabels(bill);
+    var body = (owing.length ? 'Still unpaid: ' + owing.join(', ') + '.' : 'Some tenants haven\'t paid their share yet.') +
+      ' You can still mark this bill as paid to ' + bill.provider + ' — for example if you\'re covering the difference yourself — but their shares will still show as owed until they pay.';
+    openConfirmModal('Not all tenants have paid yet', body, function(){ return doMarkBillAdminPaid(bill); },
+      { confirmLabel: 'Mark as paid anyway' });
   }
   async function unmarkBillAdminPaid(billId){
     var bill = billOf(billId);
@@ -4030,11 +4053,11 @@ import * as recurringBillService from './services/recurringBillService.js';
       : badge(adminReady ? 'due' : 'neutral', 'Not yet paid');
     var adminActionBtn = b.adminPaid
       ? '<button class="mini-btn" onclick="unmarkBillAdminPaid(\''+b.id+'\')">Mark as unpaid</button>'
-      : '<button class="mini-btn primary" onclick="markBillAdminPaid(\''+b.id+'\')"'+(adminReady?'':' disabled title="Waiting on tenants to pay their share first"')+'>Mark as paid to provider</button>';
+      : '<button class="mini-btn primary" onclick="markBillAdminPaid(\''+b.id+'\')">Mark as paid to provider</button>';
     var adminSectionHtml = '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
       '<h2 style="margin:0;">Payment to provider</h2></div>'+
       '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+
-      (adminReady ? 'All tenants have paid — you can now forward this on to '+esc(b.provider)+'.' : 'Available once every tenant has paid their share.')+
+      (adminReady ? 'All tenants have paid — you can now forward this on to '+esc(b.provider)+'.' : 'Not every tenant has paid their share yet — you can still mark this as paid to '+esc(b.provider)+', but you\'ll be asked to confirm first.')+
       '</p>'+
       '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
       '<div class="who"><div>'+esc(b.provider)+'</div>'+receiptLinkHtml(b.adminReceiptPath, b.id, null)+'</div>'+
