@@ -18,7 +18,11 @@ function fromRow(row) {
     daysOccupied: row.days_occupied,
     paid: !!row.paid,
     paidDate: row.paid_date || null,
-    receiptPath: row.receipt_path || null
+    receiptPath: row.receipt_path || null,
+    // 'cash' (default) is the tenant's own payment; 'bond_deduction' means this share was
+    // instead settled by deducting it from the tenant's bond on move-out — never a separate
+    // payment the tenant made. See processMoveOutBondSettlement in app.js.
+    paidVia: row.paid_via || 'cash'
   };
 }
 
@@ -50,7 +54,8 @@ export async function replaceForBill(billId, rows) {
       days_occupied: typeof r.daysOccupied === 'number' ? r.daysOccupied : null,
       paid: !!r.paid,
       paid_date: r.paidDate || null,
-      receipt_path: r.receiptPath || null
+      receipt_path: r.receiptPath || null,
+      paid_via: r.paidVia || 'cash'
     };
   });
   const { data, error } = await supabase.from('bill_allocations').insert(payload).select();
@@ -58,14 +63,16 @@ export async function replaceForBill(billId, rows) {
   return data.map(fromRow);
 }
 
-export async function markPaid(id, paidDate) {
-  const { data, error } = await supabase.from('bill_allocations').update({ paid: true, paid_date: paidDate }).eq('id', id).select().single();
+export async function markPaid(id, paidDate, paidVia) {
+  const { data, error } = await supabase.from('bill_allocations')
+    .update({ paid: true, paid_date: paidDate, paid_via: paidVia || 'cash' }).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }
 
 export async function unmarkPaid(id) {
-  const { data, error } = await supabase.from('bill_allocations').update({ paid: false, paid_date: null }).eq('id', id).select().single();
+  const { data, error } = await supabase.from('bill_allocations')
+    .update({ paid: false, paid_date: null, paid_via: 'cash' }).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }
