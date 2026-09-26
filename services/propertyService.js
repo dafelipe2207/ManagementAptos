@@ -71,8 +71,15 @@ function toRow(p) {
   };
 }
 
-export async function getAll() {
-  const { data, error } = await supabase.from('properties').select('*').order('created_at', { ascending: true });
+// Columns safe to hand to a tenant session: never the landlord's own lease/bank/bpay details with
+// the real estate agent — a tenant should never see what's paid to the real estate, or how.
+const TENANT_SAFE_COLUMNS = 'id, name, address, bedrooms, bathrooms, notes, whatsapp_group_link, has_parking, parking_cost, parking_tenant_id, created_at';
+
+/** `restricted: true` (pass for a tenant session) fetches only tenant-safe columns from the
+ *  server itself — not just hiding them in the UI — so the real-estate lease/bpay/bank fields
+ *  never reach a tenant's browser at all. */
+export async function getAll(restricted) {
+  const { data, error } = await supabase.from('properties').select(restricted ? TENANT_SAFE_COLUMNS : '*').order('created_at', { ascending: true });
   if (error) throw error;
   return data.map(fromRow);
 }
