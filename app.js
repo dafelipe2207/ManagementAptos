@@ -2803,6 +2803,19 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     return newBill;
   }
+  /** Self-heals a bill that somehow ended up with no allocation at all (bill.allocations missing
+   *  or an empty array) — normally impossible since autoAllocateNewBill runs the moment a bill is
+   *  created, but it's a real dead end if it ever happens: "Mark as paid" for a tenant on an
+   *  unallocated bill would otherwise silently do nothing (see openAllocPaidModal). Splits it by
+   *  days occupied, same as a freshly created bill, and mutates `bill` in place (both `bills` and
+   *  whatever local reference the caller holds see the new allocations). Does nothing if the bill
+   *  is already allocated. */
+  async function ensureBillAllocated(bill){
+    if (bill.allocations && bill.allocations.length) return bill;
+    var updated = await autoAllocateNewBill(bill);
+    Object.assign(bill, updated);
+    return bill;
+  }
 
   /** Checks every active recurring bill and, if its next billing date has already arrived (or
    *  passed), creates the corresponding bill and allocates it automatically — just like rentService
@@ -3182,16 +3195,35 @@ import * as recurringBillService from './services/recurringBillService.js';
 
   /* ---------- Modal: confirm a tenant's bill-share payment with the actual date it was paid ---------- */
   var allocPaidModalTarget = null; // { billId, tenantId }
-  function openAllocPaidModal(billId, tenantId){
+  /** Opens the "mark as paid" modal for one tenant's share of a bill. If the bill somehow has no
+   *  allocation yet (see ensureBillAllocated) it allocates it on the spot instead of doing nothing
+   *  — clicking "Mark as paid" should never be a dead end waiting on a manual "Allocate" first. */
+  async function openAllocPaidModal(billId, tenantId){
     var bill = billOf(billId);
-    var alloc = bill && bill.allocations && bill.allocations.find(function(a){ return a.tenantId===tenantId; });
-    if (!alloc) return;
+    if (!bill) return;
+    var alloc = bill.allocations && bill.allocations.find(function(a){ return a.tenantId===tenantId; });
+    if (!alloc){
+      try {
+        await ensureBillAllocated(bill);
+      } catch(err){
+        showToast('Could not allocate this bill automatically. ' + friendlyErrorMessage(err), 'error');
+        return;
+      }
+      alloc = bill.allocations && bill.allocations.find(function(a){ return a.tenantId===tenantId; });
+    }
+    if (!alloc){
+      // Genuinely nothing to pay — e.g. this tenant didn't overlap with the bill's period, or
+      // is excluded from this bill type, so the split never gave them a share.
+      showToast('This tenant doesn\'t have a share of this bill to mark as paid.', 'error');
+      return;
+    }
     var t = tenantOf(tenantId);
     allocPaidModalTarget = { billId: billId, tenantId: tenantId };
     document.getElementById('alloc-paid-modal-sub').textContent = (t?t.fullName:'') + ' • ' + money(alloc.amount);
     var dateInput = document.getElementById('alloc-paid-modal-date');
     dateInput.value = TODAY; // editable: the tenant may have paid on an earlier day than today
     document.getElementById('alloc-paid-modal').hidden = false;
+    render(); // reflect the freshly created allocations elsewhere on the page (e.g. the Allocation card)
   }
   function closeAllocPaidModal(){
     document.getElementById('alloc-paid-modal').hidden = true;
@@ -3490,7 +3522,7 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  reverses the direction. Persists while navigating between Bills tabs/filters. */
   var billsSortColumn = 'dueDate';
   var billsSortDir = 'desc'; // 'asc' | 'desc'
-  var BILLS_SORT_DEFAULT_DIR = { provider:'asc', property:'asc', issueDate:'desc', dueDate:'desc', tenantPayments:'desc', providerPayment:'desc', status:'asc' };
+  var BILLS_SORT_DEFAULT_DIR = { provider:'asc', property:'asc', issueDate:'desc', dueDate:'desc', amount:'desc', tenantPayments:'desc', providerPayment:'desc', status:'asc' };
   function setBillsSort(col){
     if (billsSortColumn === col) billsSortDir = (billsSortDir === 'asc') ? 'desc' : 'asc';
     else { billsSortColumn = col; billsSortDir = BILLS_SORT_DEFAULT_DIR[col] || 'asc'; }
@@ -3503,6 +3535,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       case 'property': var p = propertyOf(b.propertyId); return (p ? p.name : '').toLowerCase();
       case 'issueDate': return b.issueDate || '';
       case 'dueDate': return b.dueDate || '';
+      case 'amount': return b.amount || 0;
       case 'tenantPayments': return billPaidAmount(b);
       case 'providerPayment': return b.adminPaid ? 1 : 0;
       case 'status': return billEffectiveStatus(b);
@@ -3526,7 +3559,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   function billsTableHtml(list, showPropertyCol){
     var cols = [['provider','Provider']];
     if (showPropertyCol) cols.push(['property','Property']);
-    cols.push(['issueDate','Issue date'], ['dueDate','Due date'], ['tenantPayments','Tenant payments'], ['providerPayment','Payment to provider'], ['status','Status']);
+    cols.push(['issueDate','Issue date'], ['dueDate','Due date'], ['amount','Total'], ['tenantPayments','Tenant payments'], ['providerPayment','Payment to provider'], ['status','Status']);
     var head = '<tr>'+cols.map(function(c){
       return '<th class="sortable-th" onclick="setBillsSort(\''+c[0]+'\')">'+c[1]+billsSortArrow(c[0])+'</th>';
     }).join('')+'</tr>';
@@ -3538,6 +3571,7 @@ import * as recurringBillService from './services/recurringBillService.js';
         (showPropertyCol ? '<td>'+esc(p?p.name:'—')+'</td>' : '')+
         '<td>'+(b.issueDate?shortDate(b.issueDate):'—')+'</td>'+
         '<td>'+(b.dueDate?shortDate(b.dueDate):'—')+'</td>'+
+        '<td style="font-weight:650;">'+money(b.amount)+'</td>'+
         '<td>'+billTenantPaymentsSummary(b)+'</td>'+
         '<td>'+billAdminPaymentSummary(b)+'</td>'+
         '<td>'+billStatusBadge(b)+'</td>'+
