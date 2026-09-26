@@ -3903,56 +3903,44 @@ import * as recurringBillService from './services/recurringBillService.js';
       billAllocationCard(b);
   }
 
-  /** Opens the bill's original document (the photo/PDF attached when it was added) in its own new
-   *  browser tab, sized to fill it — instead of a small in-page modal — so the admin can just look
-   *  at the invoice full-size without it being downloaded to their device. The tab is opened
-   *  synchronously (before the signed URL comes back) so browsers don't treat it as a blocked
-   *  popup; it shows a brief "Loading…" placeholder and then fills itself in once the signed URL
-   *  is ready. There's no stored mime type for the file, so which one to show (image vs PDF) is
-   *  guessed from the saved filename's extension. */
+  /** Shows the bill's original document (the photo/PDF attached when it was added) in a full-screen
+   *  modal sized to the viewer's own screen — an <img> for a photo, an <iframe> for a PDF (most
+   *  browsers render PDFs inline in an iframe just fine) — so the admin can look at the invoice
+   *  right in the app, at a size that fits whatever device they're on, instead of it being
+   *  downloaded or opened in a separate tab (that lost the "back" button on mobile and didn't
+   *  size itself to the screen). There's no stored mime type for the file, so which one to show is
+   *  guessed from the saved filename's extension; a "Open in new tab" link is included too, as a
+   *  fallback and a plain way to download/save the file if that's what's wanted. */
   async function openBillDocumentPreview(billId){
     var bill = billOf(billId);
     if (!bill || !bill.receiptPath) return;
-    var title = esc((bill.provider||'Bill') + ' — ' + billTypeLabel(bill.billType));
-    var tab = window.open('', '_blank');
-    if (tab){
-      tab.document.write('<!doctype html><html><head><meta charset="utf-8"/><title>'+title+'</title>'+
-        '<meta name="viewport" content="width=device-width, initial-scale=1"/></head>'+
-        '<body style="margin:0;background:#1c1c1e;color:#ccc;font:14px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">Loading…</body></html>');
-      tab.document.close();
-    }
+    var modal = document.getElementById('bill-preview-modal');
+    var body = document.getElementById('bill-preview-body');
+    var openLink = document.getElementById('bill-preview-open-link');
+    if (!modal || !body) return;
+    document.getElementById('bill-preview-title').textContent = (bill.provider||'Bill') + ' — ' + billTypeLabel(bill.billType);
+    body.innerHTML = '<p style="font-size:12.5px;color:var(--text-dim);">Loading…</p>';
+    if (openLink) openLink.removeAttribute('href');
+    modal.hidden = false;
     try {
       var url = await storageService.getSignedUrl('receipts', bill.receiptPath, 600);
       var isPdf = /\.pdf(\?|$)/i.test(bill.receiptPath);
-      var bodyHtml = isPdf
-        ? '<iframe src="'+esc(url)+'" style="position:fixed;inset:0;width:100%;height:100%;border:0;"></iframe>'
-        : '<img src="'+esc(url)+'" alt="Bill document" style="display:block;max-width:100vw;max-height:100vh;margin:0 auto;object-fit:contain;" />';
-      var pageHtml = '<!doctype html><html><head><meta charset="utf-8"/><title>'+title+'</title>'+
-        '<meta name="viewport" content="width=device-width, initial-scale=1"/>'+
-        '<style>html,body{margin:0;padding:0;background:#1c1c1e;height:100%;}'+
-        'body{display:flex;align-items:center;justify-content:center;}</style></head>'+
-        '<body>'+bodyHtml+'</body></html>';
-      if (tab && !tab.closed){
-        tab.document.open();
-        tab.document.write(pageHtml);
-        tab.document.close();
-      } else {
-        // Popup was blocked — fall back to just navigating to the file directly.
-        window.open(url, '_blank');
-      }
+      body.innerHTML = isPdf
+        ? '<iframe src="'+esc(url)+'" style="width:100%;height:100%;border:0;background:#fff;"></iframe>'
+        : '<img src="'+esc(url)+'" alt="Bill document" style="max-width:100%;max-height:100%;object-fit:contain;display:block;margin:0 auto;" />';
+      if (openLink) openLink.href = url;
     } catch(err){
-      var message = 'Could not load the bill. ' + friendlyErrorMessage(err);
-      if (tab && !tab.closed){
-        tab.document.open();
-        tab.document.write('<!doctype html><html><head><meta charset="utf-8"/><title>'+title+'</title></head>'+
-          '<body style="font:14px -apple-system,sans-serif;padding:24px;color:#b00;">'+esc(message)+'</body></html>');
-        tab.document.close();
-      } else {
-        showToast(message, 'error');
-      }
+      body.innerHTML = '<p style="font-size:12.5px;color:var(--status-overdue);">Could not load the bill. '+esc(friendlyErrorMessage(err))+'</p>';
     }
   }
+  function closeBillPreviewModal(){
+    var modal = document.getElementById('bill-preview-modal');
+    if (modal) modal.hidden = true;
+    var body = document.getElementById('bill-preview-body');
+    if (body) body.innerHTML = '';
+  }
   window.openBillDocumentPreview = openBillDocumentPreview;
+  window.closeBillPreviewModal = closeBillPreviewModal;
 
   function deleteBillConfirm(billId){
     var b = billOf(billId);
