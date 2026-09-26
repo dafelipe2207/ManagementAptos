@@ -121,17 +121,16 @@ export async function unassignProperty(profileId, propertyId) {
   if (error) throw error;
 }
 
-/** Sends the standard Supabase "reset your password" email to this address. Only works for a
- *  real email inbox — Administrator/Super Admin accounts, not a phone-login Tenant. */
+/** Forgot-password self-service: emails this address a ready-to-use TEMPORARY password (via the
+ *  forgot-password Edge Function) instead of the old reset-link flow — no redirect page involved,
+ *  works even for the Super Admin with no session at all. Only reaches a real email inbox
+ *  (Administrator/Super Admin accounts), not a phone-login Tenant. Always resolves without
+ *  throwing (even for an unknown email) so the UI can show one generic message either way and
+ *  never reveal which emails have accounts. */
 export async function sendPasswordReset(email) {
-  // Without an explicit redirectTo, Supabase sends the user to whatever "Site URL" is configured
-  // in the project's Auth settings (often left at a dev default like localhost) — which is why the
-  // emailed link can land on a page that doesn't exist. Pointing it at wherever this app is
-  // actually running fixes that, as long as this exact URL is also added to the project's
-  // Auth → URL Configuration → Redirect URLs allow list in the Supabase dashboard.
-  const redirectTo = window.location.origin + window.location.pathname;
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-  if (error) throw error;
+  const res = await supabase.functions.invoke('forgot-password', { body: { email } });
+  if (res.error) throw await describeFunctionError(res.error);
+  return res.data;
 }
 
 /** For a phone-login Tenant (no email inbox to send a reset link to): Super Admin sets a new
