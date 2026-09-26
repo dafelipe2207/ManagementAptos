@@ -34,6 +34,35 @@ export async function uploadMaintenancePhoto(file) {
   return path;
 }
 
+/** Uploads several files (a FileList or array — from a multi-select gallery picker or repeated
+ *  camera shots) to `maintenance-photos`, one at a time so a single failure doesn't lose the
+ *  paths of files that already succeeded. Returns the array of storage paths, in order. */
+export async function uploadMaintenancePhotos(files) {
+  const paths = [];
+  for (const file of Array.from(files || [])) {
+    paths.push(await uploadMaintenancePhoto(file));
+  }
+  return paths;
+}
+
+/** Cleaning-check photos (a tenant's "how it looks after cleaning" submission) — same private,
+ *  path-scoped-by-uid pattern as the other buckets. */
+export async function uploadCleaningPhoto(file) {
+  const userId = await getCurrentUserId();
+  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
+  const { error } = await supabase.storage.from('cleaning-photos').upload(path, file, { upsert: false });
+  if (error) throw error;
+  return path;
+}
+
+export async function uploadCleaningPhotos(files) {
+  const paths = [];
+  for (const file of Array.from(files || [])) {
+    paths.push(await uploadCleaningPhoto(file));
+  }
+  return paths;
+}
+
 /** Buckets are private — always use a signed URL (expires after `expiresInSeconds`) to display/open a file. */
 export async function getSignedUrl(bucket, path, expiresInSeconds) {
   const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, expiresInSeconds || 3600);
