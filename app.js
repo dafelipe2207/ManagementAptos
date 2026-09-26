@@ -721,9 +721,9 @@ import * as recurringBillService from './services/recurringBillService.js';
     var month = parseInt(calendarMonth.slice(5,7), 10) - 1;
     var d = new Date(year, month + delta, 1);
     calendarMonth = d.getFullYear() + '-' + pad2(d.getMonth()+1);
-    render();
+    renderPreservingScroll();
   }
-  function calendarGoToday(){ calendarMonth = TODAY.slice(0,7); render(); }
+  function calendarGoToday(){ calendarMonth = TODAY.slice(0,7); renderPreservingScroll(); }
   window.calendarShiftMonth = calendarShiftMonth;
   window.calendarGoToday = calendarGoToday;
 
@@ -868,18 +868,19 @@ import * as recurringBillService from './services/recurringBillService.js';
     var upcoming = getUpcomingEvents();
 
     var stats = [
-      ['Properties', String(s.totalProperties), false],
-      ['Occupied rooms', String(s.occupiedRooms), false],
-      ['Vacant rooms', String(s.vacantRooms), false],
-      ['Overdue payments', String(s.overduePaymentsCount), s.overduePaymentsCount>0],
-      ['Rent expected', money(s.totalRentExpected), false],
-      ['Rent received', money(s.totalRentReceived), false],
-      ['Total outstanding', money(s.totalOutstanding), s.totalOutstanding>0],
-      ['Bills pending', String(s.billsPendingCount), false]
+      ['Properties', String(s.totalProperties), false, 'goToDashboardStat(\'properties\')'],
+      ['Occupied rooms', String(s.occupiedRooms), false, 'goToDashboardStat(\'properties\')'],
+      ['Vacant rooms', String(s.vacantRooms), false, 'goToDashboardStat(\'properties\')'],
+      ['Overdue payments', String(s.overduePaymentsCount), s.overduePaymentsCount>0, 'goToDashboardStat(\'overdue\')'],
+      ['Rent expected', money(s.totalRentExpected), false, 'goToDashboardStat(\'rent-all\')'],
+      ['Rent received', money(s.totalRentReceived), false, 'goToDashboardStat(\'rent-paid\')'],
+      ['Total outstanding', money(s.totalOutstanding), s.totalOutstanding>0, 'goToDashboardStat(\'rent-due\')'],
+      ['Bills pending', String(s.billsPendingCount), false, 'goToDashboardStat(\'bills-pending\')']
     ];
 
     var statHtml = '<div class="stat-grid">' + stats.map(function(st){
-      return '<div class="stat"><div class="label">'+st[0]+'</div><div class="value'+(st[2]?' warn':'')+'">'+st[1]+'</div></div>';
+      return '<div class="stat stat-clickable" role="button" tabindex="0" onclick="'+st[3]+'" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();'+st[3]+';}" style="cursor:pointer;">'+
+        '<div class="label">'+st[0]+'</div><div class="value'+(st[2]?' warn':'')+'">'+st[1]+'</div></div>';
     }).join('') + '</div>';
 
     var needsHtml = '<div class="card"><h2>Needs attention</h2>' +
@@ -930,6 +931,31 @@ import * as recurringBillService from './services/recurringBillService.js';
 
     return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + statHtml + needsHtml + upcomingHtml;
   }
+
+  /** Makes the Dashboard's summary tiles clickable: each one jumps to the page (and filter) that
+   *  explains the number shown, instead of doing nothing. */
+  function goToDashboardStat(kind){
+    if (kind === 'properties'){
+      location.hash = '#/properties';
+      return;
+    }
+    if (kind === 'bills-pending'){
+      billsFilter = 'pending';
+      billsViewTab = 'list';
+      billsPropertyFilter = 'all';
+      location.hash = '#/bills';
+      render();
+      return;
+    }
+    // Everything else is a Payments filter: 'overdue', 'rent-all' -> 'all', 'rent-paid' -> 'paid', 'rent-due' -> 'due'.
+    var map = { overdue:'overdue', 'rent-all':'all', 'rent-paid':'paid', 'rent-due':'due' };
+    paymentsFilter = map[kind] || 'all';
+    paymentsPropertyFilter = 'all';
+    paymentsTenantFilter = 'all';
+    location.hash = '#/payments';
+    render();
+  }
+  window.goToDashboardStat = goToDashboardStat;
 
   function roomsOf(propertyId){ return rooms.filter(function(r){ return r.propertyId===propertyId; }); }
   function currentTenantOf(roomId){ return tenants.find(function(t){ return t.roomId===roomId; }); }
@@ -1129,6 +1155,19 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="openLeasePaymentModal(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
   }
 
+  /** Short "Parking" line for the property detail page: "No" when the property has none, plus the
+   *  cost and charged-to tenant when set (tracking info only — this doesn't generate a bill/charge). */
+  function parkingSummary(p){
+    if (!p.hasParking) return 'No';
+    var parts = ['Yes'];
+    if (p.parkingCost != null) parts.push(money(p.parkingCost));
+    if (p.parkingTenantId){
+      var t = tenantOf(p.parkingTenantId);
+      parts.push('charged to ' + (t ? esc(t.fullName) : 'a former tenant'));
+    }
+    return parts.join(' · ');
+  }
+
   function renderPropertyDetail(id){
     var p = propertyOf(id);
     if (!p){ return pageHeader('Property not found', '') + notFoundState('Property', '#/properties', 'Back to properties'); }
@@ -1153,6 +1192,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="card"><div class="field-list">'+
       '<div class="field-row"><span class="k">Bedrooms</span><span class="v">'+p.bedrooms+'</span></div>'+
       '<div class="field-row"><span class="k">Bathrooms</span><span class="v">'+p.bathrooms+'</span></div>'+
+      '<div class="field-row"><span class="k">Parking</span><span class="v" style="font-weight:400;">'+parkingSummary(p)+'</span></div>'+
       (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
       '</div></div>'+
       leasePaymentCardHtml(p)+
@@ -2848,7 +2888,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       var tpl = recurringBills.find(function(r){ return r.id===id; });
       if (tpl) Object.assign(tpl, saved);
       showToast(nextActive ? 'Recurring bill resumed.' : 'Recurring bill paused.', 'success');
-      render();
+      renderPreservingScroll();
     } catch(err){
       showToast('Could not update this recurring bill. ' + friendlyErrorMessage(err), 'error');
     }
@@ -3448,21 +3488,37 @@ import * as recurringBillService from './services/recurringBillService.js';
     return '<div class="card"><div class="report-table-wrap"><table class="report-table bills-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
   }
 
-  var billsViewTab = 'list'; // 'list' | 'missing'
+  var billsViewTab = 'list'; // 'list' | 'missing' | 'recurring'
   function setBillsViewTab(tab){
     billsViewTab = tab;
-    render();
+    renderPreservingScroll();
   }
   window.setBillsViewTab = setBillsViewTab;
   function billsViewTabsHtml(){
     return '<div class="filter-chips" style="margin-bottom:10px;">'+
       '<button class="chip'+(billsViewTab==='list'?' active':'')+'" onclick="setBillsViewTab(\'list\')">Bills</button>'+
       '<button class="chip'+(billsViewTab==='missing'?' active':'')+'" onclick="setBillsViewTab(\'missing\')">Missing invoices</button>'+
+      '<button class="chip'+(billsViewTab==='recurring'?' active':'')+'" onclick="setBillsViewTab(\'recurring\')">Recurring bills</button>'+
       '</div>';
   }
 
   function renderBills(){
-    return billsViewTabsHtml() + (billsViewTab==='missing' ? renderMissingInvoicesTab() : renderBillsListTab());
+    var tabBody = billsViewTab==='missing' ? renderMissingInvoicesTab()
+      : billsViewTab==='recurring' ? renderRecurringBillsTab()
+      : renderBillsListTab();
+    return billsViewTabsHtml() + tabBody;
+  }
+
+  /** Its own top-level Bills tab (moved out of the main bills list, which was getting crowded) —
+   *  reuses the same property chips filter as the list tab. */
+  function renderRecurringBillsTab(){
+    var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
+      '<button class="chip'+(billsPropertyFilter==='all'?' active':'')+'" onclick="setBillsPropertyFilter(\'all\')">All properties</button>'+
+      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
+        return '<button class="chip'+(billsPropertyFilter===p.id?' active':'')+'" onclick="setBillsPropertyFilter(\''+p.id+'\')">'+esc(p.name)+'</button>';
+      }).join('') + '</div>';
+    return pageHeader('Recurring bills', 'Bills that repeat every month, generated automatically when they come due.') +
+      propertyTabsHtml + recurringBillsCardHtml(billsPropertyFilter);
   }
 
   /** Consolidates, per tenant, how much they still owe across all the (non-admin) bill shares
@@ -3548,7 +3604,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
       '</div></div>'+
-      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + recurringBillsCardHtml(billsPropertyFilter) + statHtml +
+      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + statHtml +
       pendingBillsByTenantHtml(propertyScoped) + chipsHtml + rows;
   }
 
@@ -3847,42 +3903,56 @@ import * as recurringBillService from './services/recurringBillService.js';
       billAllocationCard(b);
   }
 
-  /** Shows the bill's original document (the photo/PDF attached when it was added) right in
-   *  the app — an <img> for a photo, an <iframe> for a PDF (most browsers render PDFs inline in
-   *  an iframe just fine) — so the admin can just look at the invoice instead of it being
-   *  downloaded to their device. There's no stored mime type for the file, so which one to show
-   *  is guessed from the saved filename's extension; a "Open in new tab" link is always included
-   *  too, both as a fallback for the rare browser that won't render a PDF inline and as a plain
-   *  way to actually download/save it if that's what's wanted. */
+  /** Opens the bill's original document (the photo/PDF attached when it was added) in its own new
+   *  browser tab, sized to fill it — instead of a small in-page modal — so the admin can just look
+   *  at the invoice full-size without it being downloaded to their device. The tab is opened
+   *  synchronously (before the signed URL comes back) so browsers don't treat it as a blocked
+   *  popup; it shows a brief "Loading…" placeholder and then fills itself in once the signed URL
+   *  is ready. There's no stored mime type for the file, so which one to show (image vs PDF) is
+   *  guessed from the saved filename's extension. */
   async function openBillDocumentPreview(billId){
     var bill = billOf(billId);
     if (!bill || !bill.receiptPath) return;
-    var modal = document.getElementById('bill-preview-modal');
-    var body = document.getElementById('bill-preview-body');
-    var openLink = document.getElementById('bill-preview-open-link');
-    if (!modal || !body) return;
-    body.innerHTML = '<p style="font-size:12.5px;color:var(--text-dim);">Loading…</p>';
-    if (openLink) openLink.removeAttribute('href');
-    modal.hidden = false;
+    var title = esc((bill.provider||'Bill') + ' — ' + billTypeLabel(bill.billType));
+    var tab = window.open('', '_blank');
+    if (tab){
+      tab.document.write('<!doctype html><html><head><meta charset="utf-8"/><title>'+title+'</title>'+
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/></head>'+
+        '<body style="margin:0;background:#1c1c1e;color:#ccc;font:14px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">Loading…</body></html>');
+      tab.document.close();
+    }
     try {
       var url = await storageService.getSignedUrl('receipts', bill.receiptPath, 600);
       var isPdf = /\.pdf(\?|$)/i.test(bill.receiptPath);
-      body.innerHTML = isPdf
-        ? '<iframe src="'+esc(url)+'" style="width:100%;height:65vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></iframe>'
-        : '<img src="'+esc(url)+'" alt="Bill document" style="width:100%;max-height:65vh;object-fit:contain;border-radius:8px;display:block;" />';
-      if (openLink) openLink.href = url;
+      var bodyHtml = isPdf
+        ? '<iframe src="'+esc(url)+'" style="position:fixed;inset:0;width:100%;height:100%;border:0;"></iframe>'
+        : '<img src="'+esc(url)+'" alt="Bill document" style="display:block;max-width:100vw;max-height:100vh;margin:0 auto;object-fit:contain;" />';
+      var pageHtml = '<!doctype html><html><head><meta charset="utf-8"/><title>'+title+'</title>'+
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>'+
+        '<style>html,body{margin:0;padding:0;background:#1c1c1e;height:100%;}'+
+        'body{display:flex;align-items:center;justify-content:center;}</style></head>'+
+        '<body>'+bodyHtml+'</body></html>';
+      if (tab && !tab.closed){
+        tab.document.open();
+        tab.document.write(pageHtml);
+        tab.document.close();
+      } else {
+        // Popup was blocked — fall back to just navigating to the file directly.
+        window.open(url, '_blank');
+      }
     } catch(err){
-      body.innerHTML = '<p style="font-size:12.5px;color:var(--status-overdue);">Could not load the bill. '+esc(friendlyErrorMessage(err))+'</p>';
+      var message = 'Could not load the bill. ' + friendlyErrorMessage(err);
+      if (tab && !tab.closed){
+        tab.document.open();
+        tab.document.write('<!doctype html><html><head><meta charset="utf-8"/><title>'+title+'</title></head>'+
+          '<body style="font:14px -apple-system,sans-serif;padding:24px;color:#b00;">'+esc(message)+'</body></html>');
+        tab.document.close();
+      } else {
+        showToast(message, 'error');
+      }
     }
   }
-  function closeBillPreviewModal(){
-    var modal = document.getElementById('bill-preview-modal');
-    if (modal) modal.hidden = true;
-    var body = document.getElementById('bill-preview-body');
-    if (body) body.innerHTML = '';
-  }
   window.openBillDocumentPreview = openBillDocumentPreview;
-  window.closeBillPreviewModal = closeBillPreviewModal;
 
   function deleteBillConfirm(billId){
     var b = billOf(billId);
@@ -4312,7 +4382,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var idx = notifReadIds.indexOf(id);
     if (idx > -1) notifReadIds.splice(idx, 1); else notifReadIds.push(id);
     saveNotifRead(notifReadIds);
-    render();
+    renderPreservingScroll();
   }
   window.toggleNotifRead = toggleNotifRead;
   function relativeDateLabel(dateIso){
@@ -4907,7 +4977,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       var saved = await profileService.setActive(profileId, nextActive);
       Object.assign(allProfiles.find(function(p){ return p.id===profileId; }), saved);
       showToast(nextActive ? 'User activated.' : 'User deactivated.', 'success');
-      render();
+      renderPreservingScroll();
     } catch(err){
       showToast('Could not update this user. ' + friendlyErrorMessage(err), 'error');
     }
@@ -5437,6 +5507,12 @@ import * as recurringBillService from './services/recurringBillService.js';
   }
   window.onPropertyLeaseFrequencyChange = onPropertyLeaseFrequencyChange;
 
+  function onPropertyParkingChange(){
+    var checked = document.getElementById('property-has-parking').checked;
+    document.getElementById('property-parking-fields').hidden = !checked;
+  }
+  window.onPropertyParkingChange = onPropertyParkingChange;
+
   function openPropertyModal(propertyId){
     propertyModalEditId = propertyId || null;
     var p = propertyId ? propertyOf(propertyId) : null;
@@ -5447,6 +5523,14 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
     document.getElementById('property-notes').value = p ? (p.notes||'') : '';
     document.getElementById('property-whatsapp-group').value = p ? (p.whatsappGroupLink||'') : '';
+    var parkingTenantSelect = document.getElementById('property-parking-tenant');
+    var propertyTenants = p ? roomsOf(p.id).map(function(r){ return currentTenantOf(r.id); }).filter(Boolean) : [];
+    parkingTenantSelect.innerHTML = '<option value="">— Not charged to anyone —</option>' +
+      propertyTenants.map(function(t){ return '<option value="'+t.id+'">'+esc(t.fullName)+'</option>'; }).join('');
+    document.getElementById('property-has-parking').checked = !!(p && p.hasParking);
+    document.getElementById('property-parking-cost').value = (p && p.parkingCost != null) ? p.parkingCost : '';
+    parkingTenantSelect.value = (p && p.parkingTenantId) ? p.parkingTenantId : '';
+    onPropertyParkingChange();
     document.getElementById('property-lease-frequency').value = (p && p.leasePaymentFrequency==='fortnightly') ? 'fortnightly' : 'monthly';
     document.getElementById('property-lease-day').value = (p && p.leasePaymentDay) ? p.leasePaymentDay : '';
     document.getElementById('property-lease-amount').value = (p && p.leasePaymentAmount != null) ? p.leasePaymentAmount : '';
@@ -5474,6 +5558,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     var bathrooms = parseInt(document.getElementById('property-bathrooms').value, 10);
     var notes = document.getElementById('property-notes').value.trim();
     var whatsappGroupLink = document.getElementById('property-whatsapp-group').value.trim();
+    var hasParking = document.getElementById('property-has-parking').checked;
+    var parkingCostRaw = document.getElementById('property-parking-cost').value;
+    var parkingCost = parkingCostRaw ? parseFloat(parkingCostRaw) : null;
+    var parkingTenantId = document.getElementById('property-parking-tenant').value || null;
     var errorEl = document.getElementById('property-modal-error');
     if (!name || !address || !isFinite(bedrooms) || bedrooms<0 || !isFinite(bathrooms) || bathrooms<0){
       errorEl.textContent = 'Add a name, address, and bedrooms/bathrooms as whole numbers of 0 or more.';
@@ -5482,6 +5570,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
     if (whatsappGroupLink && whatsappGroupLink.indexOf('chat.whatsapp.com') === -1){
       errorEl.textContent = 'The WhatsApp group link should look like https://chat.whatsapp.com/... — copy it from the group\'s "Invite to group via link" option.';
+      errorEl.hidden = false;
+      return;
+    }
+    if (hasParking && parkingCostRaw && (!isFinite(parkingCost) || parkingCost < 0)){
+      errorEl.textContent = 'The parking cost must be a valid number of 0 or more.';
       errorEl.hidden = false;
       return;
     }
@@ -5531,6 +5624,7 @@ import * as recurringBillService from './services/recurringBillService.js';
       var existingForEdit = propertyModalEditId ? propertyOf(propertyModalEditId) : null;
       var draft = { name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes,
         whatsappGroupLink:whatsappGroupLink,
+        hasParking:hasParking, parkingCost:hasParking?parkingCost:null, parkingTenantId:hasParking?parkingTenantId:null,
         leasePaymentDay:leasePaymentDay, leasePaymentAmount:leasePaymentAmount, leaseEndDate:leaseEndDate,
         leasePaymentFrequency:leasePaymentFrequency, nextInspectionDate:nextInspectionDate,
         // last_lease_payment_date is only changed via the "Mark lease payment as paid" button —
