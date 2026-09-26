@@ -3816,12 +3816,50 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div class="field-row"><span class="k">Status</span><span class="v">'+billStatusBadge(b)+'</span></div>'+
       (b.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(b.notes)+'</span></div>' : '')+
       '</div></div>'+
-      '<div style="display:flex;gap:8px;margin-bottom:12px;">'+
+      '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">'+
+      (b.receiptPath ? '<button class="mini-btn" onclick="openBillDocumentPreview(\''+b.id+'\')">View bill</button>' : '')+
       '<button class="mini-btn" onclick="openEditBillModal(\''+b.id+'\')">Edit bill</button>'+
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
       '</div>'+
       billAllocationCard(b);
   }
+
+  /** Shows the bill's original document (the photo/PDF attached when it was added) right in
+   *  the app — an <img> for a photo, an <iframe> for a PDF (most browsers render PDFs inline in
+   *  an iframe just fine) — so the admin can just look at the invoice instead of it being
+   *  downloaded to their device. There's no stored mime type for the file, so which one to show
+   *  is guessed from the saved filename's extension; a "Open in new tab" link is always included
+   *  too, both as a fallback for the rare browser that won't render a PDF inline and as a plain
+   *  way to actually download/save it if that's what's wanted. */
+  async function openBillDocumentPreview(billId){
+    var bill = billOf(billId);
+    if (!bill || !bill.receiptPath) return;
+    var modal = document.getElementById('bill-preview-modal');
+    var body = document.getElementById('bill-preview-body');
+    var openLink = document.getElementById('bill-preview-open-link');
+    if (!modal || !body) return;
+    body.innerHTML = '<p style="font-size:12.5px;color:var(--text-dim);">Loading…</p>';
+    if (openLink) openLink.removeAttribute('href');
+    modal.hidden = false;
+    try {
+      var url = await storageService.getSignedUrl('receipts', bill.receiptPath, 600);
+      var isPdf = /\.pdf(\?|$)/i.test(bill.receiptPath);
+      body.innerHTML = isPdf
+        ? '<iframe src="'+esc(url)+'" style="width:100%;height:65vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></iframe>'
+        : '<img src="'+esc(url)+'" alt="Bill document" style="width:100%;max-height:65vh;object-fit:contain;border-radius:8px;display:block;" />';
+      if (openLink) openLink.href = url;
+    } catch(err){
+      body.innerHTML = '<p style="font-size:12.5px;color:var(--status-overdue);">Could not load the bill. '+esc(friendlyErrorMessage(err))+'</p>';
+    }
+  }
+  function closeBillPreviewModal(){
+    var modal = document.getElementById('bill-preview-modal');
+    if (modal) modal.hidden = true;
+    var body = document.getElementById('bill-preview-body');
+    if (body) body.innerHTML = '';
+  }
+  window.openBillDocumentPreview = openBillDocumentPreview;
+  window.closeBillPreviewModal = closeBillPreviewModal;
 
   function deleteBillConfirm(billId){
     var b = billOf(billId);
