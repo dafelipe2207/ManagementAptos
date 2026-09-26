@@ -3442,6 +3442,45 @@ import * as recurringBillService from './services/recurringBillService.js';
     return billsViewTabsHtml() + (billsViewTab==='missing' ? renderMissingInvoicesTab() : renderBillsListTab());
   }
 
+  /** Consolidates, per tenant, how much they still owe across all the (non-admin) bill shares
+   *  assigned to them within `scopedBills` — e.g. "Ana owes $340 across 3 unpaid bill shares".
+   *  Mirrors the same allocation-sum logic Payments uses (unpaidBillAllocationsFor), just
+   *  grouped by tenant and totalled instead of listed bill-by-bill. Tenants with nothing
+   *  outstanding are left out entirely — this is a "who still owes on bills" view, not a
+   *  roster of every tenant. */
+  function pendingBillsByTenantHtml(scopedBills){
+    var totals = {}; // tenantId -> { amount, count }
+    scopedBills.forEach(function(b){
+      if (!b.allocations) return;
+      b.allocations.forEach(function(a){
+        if (a.isAdmin || a.paid || !a.tenantId) return;
+        var entry = totals[a.tenantId] || { amount: 0, count: 0 };
+        entry.amount += a.amount;
+        entry.count += 1;
+        totals[a.tenantId] = entry;
+      });
+    });
+    var rows = Object.keys(totals).map(function(tenantId){
+      var t = tenantOf(tenantId);
+      return { tenant: t, tenantId: tenantId, amount: round2(totals[tenantId].amount), count: totals[tenantId].count };
+    }).filter(function(r){ return r.amount > 0.004; })
+      .sort(function(a,b){ return b.amount - a.amount; });
+    if (!rows.length) return '';
+    var grandTotal = rows.reduce(function(s,r){ return s+r.amount; }, 0);
+    var body = rows.map(function(r){
+      var prop = r.tenant ? properties.find(function(p){ return p.id===r.tenant.propertyId; }) : null;
+      return '<div class="field-row"><span class="k">'+esc(r.tenant ? r.tenant.fullName : 'Unknown tenant')+
+        (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· '+esc(prop.name)+'</span>' : '')+
+        '</span><span class="v">'+money(r.amount)+' <span style="color:var(--text-faint);font-weight:400;">('+r.count+' bill'+(r.count===1?'':'s')+')</span></span></div>';
+    }).join('');
+    return '<div class="card">'+
+      '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">Pending bills by tenant</h2></div>'+
+      '<div class="field-list">'+body+'</div>'+
+      '<div class="field-row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">'+
+      '<span class="k" style="font-weight:600;">Total</span><span class="v" style="font-weight:600;">'+money(grandTotal)+'</span></div>'+
+      '</div>';
+  }
+
   function renderBillsListTab(){
     // Property tab — "All properties" or a specific one; the status filter (chips)
     // and the stats are computed AFTER applying this, so each tab shows its own
@@ -3486,7 +3525,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
       '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
       '</div></div>'+
-      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + recurringBillsCardHtml(billsPropertyFilter) + statHtml + chipsHtml + rows;
+      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + recurringBillsCardHtml(billsPropertyFilter) + statHtml +
+      pendingBillsByTenantHtml(propertyScoped) + chipsHtml + rows;
   }
 
   /* ============ "Missing invoices" tab — local calculation based on the average of past invoices ============
