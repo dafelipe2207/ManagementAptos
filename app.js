@@ -526,6 +526,28 @@ import * as recurringBillService from './services/recurringBillService.js';
       return movedIn && !movedOut;
     });
   }
+  /** The date this (currently vacant) room has been empty since — the most recent move-out
+   *  date among tenants who used to live there, or null if it's never had a tenant (in which
+   *  case it's treated as vacant since before any move-out on record, i.e. the longest-vacant
+   *  case — see vacantRoomsOldestFirst). */
+  function roomVacantSinceDate(room){
+    var moveOuts = tenants
+      .filter(function(t){ return t.roomId === room.id && t.actualMoveOutDate && t.actualMoveOutDate <= TODAY; })
+      .map(function(t){ return t.actualMoveOutDate; });
+    return moveOuts.length ? moveOuts.sort().pop() : null;
+  }
+  /** Every vacant room across all properties, oldest vacancy first (a room that's never had a
+   *  tenant counts as the longest-vacant, since there's no move-out date to say otherwise). */
+  function vacantRoomsOldestFirst(){
+    return rooms.filter(function(r){ return !isRoomOccupied(r); })
+      .map(function(r){ return { room:r, since: roomVacantSinceDate(r) }; })
+      .sort(function(a,b){
+        if (!a.since && !b.since) return 0;
+        if (!a.since) return -1;
+        if (!b.since) return 1;
+        return a.since.localeCompare(b.since);
+      });
+  }
   function getDashboardSummary(){
     var occupied = rooms.filter(isRoomOccupied).length;
     var expected = rentCharges.reduce(function(s,c){ return s+c.amountDue; },0);
@@ -870,7 +892,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     var stats = [
       ['Properties', String(s.totalProperties), false, 'goToDashboardStat(\'properties\')'],
       ['Occupied rooms', String(s.occupiedRooms), false, 'goToDashboardStat(\'properties\')'],
-      ['Vacant rooms', String(s.vacantRooms), false, 'goToDashboardStat(\'properties\')'],
+      ['Vacant rooms', String(s.vacantRooms), false, 'goToDashboardStat(\'vacant\')'],
       ['Overdue payments', String(s.overduePaymentsCount), s.overduePaymentsCount>0, 'goToDashboardStat(\'overdue\')'],
       ['Rent expected', money(s.totalRentExpected), false, 'goToDashboardStat(\'rent-all\')'],
       ['Rent received', money(s.totalRentReceived), false, 'goToDashboardStat(\'rent-paid\')'],
@@ -937,6 +959,13 @@ import * as recurringBillService from './services/recurringBillService.js';
   function goToDashboardStat(kind){
     if (kind === 'properties'){
       location.hash = '#/properties';
+      return;
+    }
+    if (kind === 'vacant'){
+      // Straight to the property with the longest-standing vacancy, instead of the general
+      // properties list — with 2+ vacant rooms, the oldest one wins.
+      var oldest = vacantRoomsOldestFirst()[0];
+      location.hash = oldest ? '#/properties/'+oldest.room.propertyId : '#/properties';
       return;
     }
     if (kind === 'bills-pending'){
@@ -1400,6 +1429,11 @@ import * as recurringBillService from './services/recurringBillService.js';
     var bondRows = bond ? (
       '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
       '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
+      ((bond.discounts && bond.discounts.length)
+        ? bond.discounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label||'Discount')+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('') +
+          '<div class="field-row"><span class="k">Total deduction</span><span class="v">'+money(bond.deduction)+'</span></div>'
+        : '') +
+      '<div class="field-row"><span class="k">Amount returned</span><span class="v">'+money(bond.amountReturned)+'</span></div>'+
       '<div class="field-row"><span class="k">Status</span><span class="v">'+esc(BOND_STATUS_LABEL[bond.status]||bond.status)+'</span></div>'
     ) : '';
 
@@ -1735,13 +1769,19 @@ import * as recurringBillService from './services/recurringBillService.js';
      *  shows no "Upcoming" line at all, while one who isn't paid that far ahead still has an
      *  unpaid future period to show — which looked like an inconsistency between tenants,
      *  but was really just "already paid ahead" vs "not yet". */
-    function dueSectionHtml(list, nextCharge){
+    /** `upcomingCharges` is the tenant's next N generated periods (paid ahead) — one for
+     *  fortnightly/monthly, two for weekly, matching how far ahead rentService itself looks
+     *  (futureLookahead) — so a weekly tenant who's paid ahead sees both of their next two
+     *  upcoming weeks listed here, not just the first one. */
+    function dueSectionHtml(list, upcomingCharges){
       if (list.length) return '<div class="field-list">'+list.map(pendingRow).join('')+'</div>';
-      var note = 'Nothing due right now.';
-      if (nextCharge){
-        note += ' Next: '+shortDate(nextCharge.periodStart)+' – '+shortDate(nextCharge.periodEnd)+' · '+money(nextCharge.amountDue)+
-          ' (due '+shortDate(nextCharge.dueDate)+' — already paid)';
+      if (!upcomingCharges || !upcomingCharges.length){
+        return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>';
       }
+      var lines = upcomingCharges.map(function(c){
+        return shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+' · '+money(c.amountDue)+' (due '+shortDate(c.dueDate)+' — already paid)';
+      });
+      var note = 'Nothing due right now. ' + (lines.length > 1 ? 'Next ' + lines.length + ': ' : 'Next: ') + lines.join('; ');
       return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+note+'</p>';
     }
     /** Trims a list to the first N and, if more remain, adds a note + the link that
@@ -1796,12 +1836,16 @@ import * as recurringBillService from './services/recurringBillService.js';
           // a bill has no real "next period" — their last generated charge is history, not
           // upcoming — so it's left out for them.
           var allTenantCharges = rentCharges.filter(function(c){ return c.tenantId===t.id; });
-          var nextCharge = (!tenantHasMovedOut(t) && allTenantCharges.length) ? allTenantCharges[0] : null;
+          var upcomingCount = t.rentFrequency === 'weekly' ? 2 : 1;
+          // allTenantCharges is sorted most-future-first (see recomputeRentCharges), so the
+          // first `upcomingCount` entries are the tenant's next period(s) — reversed here so
+          // they display in chronological order (earliest upcoming period first).
+          var upcomingCharges = (!tenantHasMovedOut(t) && allTenantCharges.length) ? allTenantCharges.slice(0, upcomingCount).reverse() : [];
           return '<div class="card">'+
             '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
-            dueSectionHtml(pending, nextCharge)+
+            dueSectionHtml(pending, upcomingCharges)+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+') · '+money(paidTotal)+'</h3>'+
             limitedSection(paid, paidRow, 'No payments recorded yet.', 'Paid', t.id)+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
@@ -3647,7 +3691,15 @@ import * as recurringBillService from './services/recurringBillService.js';
         estimatedAmount: estimatedAmount, sampleCount: list.length, avgInterval: avgInterval
       });
     });
-    return predictions.sort(function(a,b){ return b.daysOverdue - a.daysOverdue; });
+    // Sorted by how FREQUENTLY the bill recurs (its own average interval), not by raw days
+    // overdue — a bill that comes every ~30 days (monthly) is a much stronger, more likely-
+    // to-be-real signal of "this one's about to arrive" than one that comes every ~60 days
+    // (bimonthly) but happens to look more overdue in absolute days. Same-frequency ties fall
+    // back to days overdue, most overdue first.
+    return predictions.sort(function(a,b){
+      if (a.avgInterval !== b.avgInterval) return a.avgInterval - b.avgInterval;
+      return b.daysOverdue - a.daysOverdue;
+    });
   }
 
   function missingInvoiceRowHtml(pred){
@@ -4853,9 +4905,19 @@ import * as recurringBillService from './services/recurringBillService.js';
   /* ============ Users (Super Admin only) ============ */
   var ROLE_LABEL = { super_admin:'Super Admin', administrator:'Administrator', tenant:'Tenant' };
 
+  var usersViewTab = 'administrator'; // 'administrator' | 'super_admin' | 'tenant'
+  function setUsersViewTab(tab){ usersViewTab = tab; renderPreservingScroll(); }
+  window.setUsersViewTab = setUsersViewTab;
+
   function renderUsers(){
     if (!isSuperAdmin()) return accessDeniedPage();
-    var rows = allProfiles.map(function(p){
+    var USERS_TABS = [['administrator','Admins'],['super_admin','Super Admins'],['tenant','Tenants']];
+    var tabsHtml = '<div class="filter-chips" style="margin-bottom:10px;">' + USERS_TABS.map(function(tb){
+      var count = allProfiles.filter(function(p){ return p.role===tb[0]; }).length;
+      return '<button class="chip'+(usersViewTab===tb[0]?' active':'')+'" onclick="setUsersViewTab(\''+tb[0]+'\')">'+tb[1]+' ('+count+')</button>';
+    }).join('') + '</div>';
+    var scopedProfiles = allProfiles.filter(function(p){ return p.role === usersViewTab; });
+    var rows = scopedProfiles.map(function(p){
       var phoneLogin = isPhoneLoginProfile(p);
       var identityLine = phoneLogin ? ('Logs in with: '+esc(p.phone||'—')) : (esc(p.email)+(p.phone?' · '+esc(p.phone):''));
       var assignHtml = '';
@@ -4897,7 +4959,8 @@ import * as recurringBillService from './services/recurringBillService.js';
     }).join('');
     return pageHeader('Users', 'Every account and its role. Only a Super Admin sees this page.') +
       '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openUserModal()">Create user</button>'+
-      (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No users yet.</p></div>');
+      tabsHtml +
+      (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No '+ (USERS_TABS.find(function(tb){return tb[0]===usersViewTab;})||['','users'])[1].toLowerCase() +' yet.</p></div>');
   }
 
   async function togglePropertyAdmin(profileId, propertyId, assign){
@@ -5226,6 +5289,8 @@ import * as recurringBillService from './services/recurringBillService.js';
       } else if (!isTenant && email){
         showToast('User created. Opening email to send their login…', 'success');
         offerNewUserEmailShare(email, (firstName + ' ' + lastName).trim(), password);
+      } else if (isTenant){
+        showToast('Tenant login created, deactivated — activate it in Users when you\'re ready for them to get notifications.', 'success');
       } else {
         showToast('User created. Share the login and password with them directly.', 'success');
       }
@@ -6007,6 +6072,50 @@ import * as recurringBillService from './services/recurringBillService.js';
 
   /* ---------- Bond form (accessible from Tenant detail) ---------- */
   var bondModalTenantId = null;
+  var bondDiscountRowSeq = 0;
+  /** One row of the dynamic discounts list: a description + an amount, removable — used to build
+   *  up an itemized breakdown of what's being deducted from the bond (cleaning, damage, etc.)
+   *  instead of a single unlabeled number. */
+  function bondDiscountRowHtml(rowId, label, amount){
+    return '<div class="form-row form-row-2" id="'+rowId+'" style="align-items:flex-end;gap:8px;margin-bottom:6px;">'+
+      '<div style="flex:2;"><input type="text" class="bond-discount-label" placeholder="Reason (e.g. Cleaning)" value="'+esc(label||'')+'" /></div>'+
+      '<div style="flex:1;display:flex;gap:6px;align-items:center;">'+
+      '<input type="number" min="0" step="0.01" class="bond-discount-amount" placeholder="0.00" value="'+(amount||amount===0?amount:'')+'" oninput="recomputeBondDiscountTotal()" style="flex:1;" />'+
+      '<button type="button" class="icon-mini-btn danger" title="Remove" onclick="removeBondDiscountRow(\''+rowId+'\')">✕</button>'+
+      '</div></div>';
+  }
+  function addBondDiscountRow(label, amount){
+    var rowId = 'bond-discount-row-' + (++bondDiscountRowSeq);
+    var container = document.getElementById('bond-discount-rows');
+    container.insertAdjacentHTML('beforeend', bondDiscountRowHtml(rowId, label, amount));
+    recomputeBondDiscountTotal();
+  }
+  window.addBondDiscountRow = addBondDiscountRow;
+  function removeBondDiscountRow(rowId){
+    var row = document.getElementById(rowId);
+    if (row) row.remove();
+    recomputeBondDiscountTotal();
+  }
+  window.removeBondDiscountRow = removeBondDiscountRow;
+  function readBondDiscountRows(){
+    var rows = document.querySelectorAll('#bond-discount-rows > div');
+    var discounts = [];
+    rows.forEach(function(row){
+      var label = row.querySelector('.bond-discount-label').value.trim();
+      var amount = parseFloat(row.querySelector('.bond-discount-amount').value);
+      if (!isFinite(amount) || amount <= 0) return; // skip empty/blank rows rather than erroring
+      discounts.push({ label: label || 'Discount', amount: round2(amount) });
+    });
+    return discounts;
+  }
+  function recomputeBondDiscountTotal(){
+    var discounts = readBondDiscountRows();
+    var total = round2(discounts.reduce(function(s,d){ return s+d.amount; }, 0));
+    document.getElementById('bond-deduction-total').value = total;
+    document.getElementById('bond-discount-empty').hidden = document.querySelectorAll('#bond-discount-rows > div').length > 0;
+  }
+  window.recomputeBondDiscountTotal = recomputeBondDiscountTotal;
+
   function openBondModal(tenantId){
     bondModalTenantId = tenantId;
     var b = bondOf(tenantId);
@@ -6014,8 +6123,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('bond-required').value = b ? b.amountRequired : '';
     document.getElementById('bond-paid').value = b ? b.amountPaid : 0;
     document.getElementById('bond-returned').value = b ? b.amountReturned : 0;
-    document.getElementById('bond-deduction').value = b ? b.deduction : 0;
     document.getElementById('bond-status').value = b ? b.status : 'pending';
+    document.getElementById('bond-discount-rows').innerHTML = '';
+    var existingDiscounts = (b && b.discounts && b.discounts.length) ? b.discounts
+      : (b && b.deduction > 0 ? [{ label:'Deduction', amount:b.deduction }] : []); // migrate an old single-number deduction into the list, the first time it's opened
+    existingDiscounts.forEach(function(d){ addBondDiscountRow(d.label, d.amount); });
+    recomputeBondDiscountTotal();
     document.getElementById('bond-modal-error').hidden = true;
     document.getElementById('bond-modal').hidden = false;
   }
@@ -6027,18 +6140,18 @@ import * as recurringBillService from './services/recurringBillService.js';
     var required = parseFloat(document.getElementById('bond-required').value);
     var paid = parseFloat(document.getElementById('bond-paid').value);
     var returned = parseFloat(document.getElementById('bond-returned').value);
-    var deduction = parseFloat(document.getElementById('bond-deduction').value);
+    var discounts = readBondDiscountRows();
+    var deduction = round2(discounts.reduce(function(s,d){ return s+d.amount; }, 0));
     if (!isFinite(paid)) paid = 0;
     if (!isFinite(returned)) returned = 0;
-    if (!isFinite(deduction)) deduction = 0;
     var status = document.getElementById('bond-status').value;
     var errorEl = document.getElementById('bond-modal-error');
-    if (!isFinite(required) || required<0 || !isFinite(paid) || paid<0 || returned<0 || deduction<0){
+    if (!isFinite(required) || required<0 || !isFinite(paid) || paid<0 || returned<0){
       errorEl.textContent = 'All amounts must be 0 or more.';
       errorEl.hidden = false;
       return;
     }
-    var draft = { tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid, amountReturned:returned, deduction:deduction, status:status };
+    var draft = { tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid, amountReturned:returned, deduction:deduction, discounts:discounts, status:status };
     var saveBtn = document.querySelector('#bond-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
