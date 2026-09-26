@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manager</title>
-<link rel="stylesheet" href="styles.css?v=12">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css?v=13">
 </head>
 <body>
 <div id="app">
@@ -797,7 +800,63 @@
     </div>
     <div class="lightbox-counter" id="lightbox-counter"></div>
   </div>
+
+  <!-- PDF viewer: a real, professional viewer built on pdf.js (pagination, zoom, continuous
+       scroll, thumbnails, real-text search, rotation, fullscreen, download/open/print) — replaces
+       the old bare <iframe>. One reusable overlay, opened via openPdfViewer(url, fileName) in
+       app.js. Never rebuilt by render(). -->
+  <div class="pdfv-overlay" id="pdfv-overlay" role="dialog" aria-modal="true" aria-label="PDF viewer" hidden onclick="pdfvBackdropClick(event)">
+    <div class="pdfv-toolbar" id="pdfv-toolbar" onclick="event.stopPropagation()">
+      <div class="pdfv-toolbar-group pdfv-toolbar-left">
+        <button type="button" class="pdfv-icon-btn" id="pdfv-thumbs-toggle" aria-label="Show thumbnails" aria-pressed="false" onclick="pdfvToggleThumbs()">&#9776;</button>
+        <span class="pdfv-title" id="pdfv-title"></span>
+      </div>
+      <div class="pdfv-toolbar-group pdfv-toolbar-center">
+        <button type="button" class="pdfv-icon-btn" id="pdfv-prev" aria-label="Previous page" onclick="pdfvPrevPage()">&#8249;</button>
+        <input type="text" inputmode="numeric" class="pdfv-page-input" id="pdfv-page-input" aria-label="Current page" onchange="pdfvGoToPageInput()" onkeydown="pdfvPageInputKeydown(event)" />
+        <span class="pdfv-page-of" id="pdfv-page-of">/ &mdash;</span>
+        <button type="button" class="pdfv-icon-btn" id="pdfv-next" aria-label="Next page" onclick="pdfvNextPage()">&#8250;</button>
+      </div>
+      <div class="pdfv-toolbar-group pdfv-toolbar-zoom">
+        <button type="button" class="pdfv-icon-btn" id="pdfv-zoom-out" aria-label="Zoom out" onclick="pdfvZoomOut()">&minus;</button>
+        <button type="button" class="pdfv-zoom-pct" id="pdfv-zoom-pct" aria-label="Zoom options" aria-haspopup="true" aria-expanded="false" onclick="pdfvToggleZoomMenu()">100%</button>
+        <button type="button" class="pdfv-icon-btn" id="pdfv-zoom-in" aria-label="Zoom in" onclick="pdfvZoomIn()">+</button>
+        <div class="pdfv-zoom-menu" id="pdfv-zoom-menu" hidden>
+          <button type="button" onclick="pdfvSetFit('width')">Fit width</button>
+          <button type="button" onclick="pdfvSetFit('page')">Fit page</button>
+          <button type="button" onclick="pdfvSetActualSize()">Actual size (100%)</button>
+        </div>
+      </div>
+      <div class="pdfv-toolbar-group pdfv-toolbar-right">
+        <button type="button" class="pdfv-icon-btn" id="pdfv-search-toggle" aria-label="Search in document" aria-pressed="false" onclick="pdfvToggleSearch()">&#128269;</button>
+        <button type="button" class="pdfv-icon-btn" id="pdfv-rotate-left" aria-label="Rotate left" onclick="pdfvRotate(-90)">&#8634;</button>
+        <button type="button" class="pdfv-icon-btn" id="pdfv-rotate-right" aria-label="Rotate right" onclick="pdfvRotate(90)">&#8635;</button>
+        <button type="button" class="pdfv-icon-btn" id="pdfv-fullscreen" aria-label="Full screen" onclick="pdfvToggleFullscreen()">&#9974;</button>
+        <button type="button" class="pdfv-icon-btn" id="pdfv-print" aria-label="Print" onclick="pdfvPrint()">&#128438;</button>
+        <button type="button" class="pdfv-icon-btn" id="pdfv-download" aria-label="Download PDF" onclick="pdfvDownload()">&#11015;</button>
+        <a class="pdfv-icon-btn" id="pdfv-open-tab" aria-label="Open in new tab" target="_blank" rel="noopener" href="#">&#8599;</a>
+        <button type="button" class="pdfv-icon-btn pdfv-close" id="pdfv-close" aria-label="Close viewer" onclick="closePdfViewer()">&times;</button>
+      </div>
+    </div>
+    <div class="pdfv-search-bar" id="pdfv-search-bar" hidden onclick="event.stopPropagation()">
+      <input type="text" id="pdfv-search-input" placeholder="Search in document…" oninput="pdfvSearchInput()" onkeydown="pdfvSearchKeydown(event)" aria-label="Search text in document" />
+      <span class="pdfv-search-count" id="pdfv-search-count"></span>
+      <button type="button" class="pdfv-icon-btn" id="pdfv-search-prev" aria-label="Previous result" onclick="pdfvSearchPrev()">&#8593;</button>
+      <button type="button" class="pdfv-icon-btn" id="pdfv-search-next" aria-label="Next result" onclick="pdfvSearchNext()">&#8595;</button>
+      <button type="button" class="pdfv-icon-btn" id="pdfv-search-close" aria-label="Close search" onclick="pdfvCloseSearch()">&times;</button>
+    </div>
+    <div class="pdfv-body" id="pdfv-body">
+      <div class="pdfv-thumbs-backdrop" id="pdfv-thumbs-backdrop" hidden onclick="event.stopPropagation(); pdfvToggleThumbs()"></div>
+      <div class="pdfv-thumbs" id="pdfv-thumbs" hidden onclick="event.stopPropagation()"></div>
+      <div class="pdfv-pages-scroll" id="pdfv-pages-scroll" onpointerdown="pdfvPointerDown(event)" onpointerup="pdfvPointerUp(event)">
+        <div class="pdfv-pages-inner" id="pdfv-pages-inner"></div>
+      </div>
+    </div>
+    <div class="pdfv-loading" id="pdfv-loading" hidden><div class="lightbox-spinner"></div><span id="pdfv-loading-text">Loading PDF…</span></div>
+    <p class="pdfv-error" id="pdfv-error" hidden></p>
+  </div>
 </div>
-<script type="module" src="app.js?v=68"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
+<script type="module" src="app.js?v=69"></script>
 </body>
 </html>
