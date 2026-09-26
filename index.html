@@ -121,6 +121,17 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="bill-preview-modal" hidden>
+    <div class="card modal-card" style="max-width:520px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Bill</h2>
+      <div id="bill-preview-body"></div>
+      <div class="modal-actions" style="justify-content:space-between;">
+        <a id="bill-preview-open-link" href="#" target="_blank" rel="noopener" class="text-link" style="font-size:12.5px;">Open in new tab</a>
+        <button class="mini-btn" onclick="closeBillPreviewModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="import-modal" hidden>
     <div class="card modal-card" style="max-width:340px;">
       <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add bill</h2>
