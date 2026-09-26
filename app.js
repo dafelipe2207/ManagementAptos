@@ -7320,13 +7320,18 @@ import * as inspectionService from './services/inspectionService.js';
       errorEl.hidden = false;
       return;
     }
+    var btn = document.getElementById('auth-toggle-link');
+    var originalLabel = btn ? btn.textContent : '';
+    if (btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
     try {
       await profileService.sendPasswordReset(rawInput);
-      errorEl.textContent = 'Check your email for a link to reset your password.';
+      errorEl.textContent = "If that email has an account, we've sent a temporary password to it — check your inbox, sign in with it, then change your password from Settings.";
       errorEl.hidden = false;
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
       errorEl.hidden = false;
+    } finally {
+      if (btn){ btn.disabled = false; btn.textContent = originalLabel; }
     }
   }
   window.requestAuthPasswordReset = requestAuthPasswordReset;
