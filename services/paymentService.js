@@ -3,7 +3,16 @@ import { supabase } from '../lib/supabaseClient.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
 function fromRow(row) {
-  return { id: row.id, tenantId: row.tenant_id, amount: Number(row.amount) || 0, date: row.payment_date };
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    amount: Number(row.amount) || 0,
+    date: row.payment_date,
+    // 'cash' (default) is a real payment the tenant made; 'bond_deduction' means this rent
+    // charge was instead settled by deducting the amount from the tenant's bond on move-out —
+    // see processMoveOutBondSettlement in app.js. Never a payment the tenant actually made.
+    method: row.method || 'cash'
+  };
 }
 
 export async function getAll() {
@@ -18,7 +27,8 @@ export async function create(p) {
     user_id: userId,
     tenant_id: p.tenantId,
     amount: p.amount,
-    payment_date: p.date
+    payment_date: p.date,
+    method: p.method || 'cash'
   }).select().single();
   if (error) throw error;
   return fromRow(data);
