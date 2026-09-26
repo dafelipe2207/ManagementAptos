@@ -1,4 +1,4 @@
-  :root{
+:root{
     color-scheme: light dark;
     --bg: #f6f7f5;
     --bg-elevated: #ffffff;
@@ -332,6 +332,17 @@
   .alloc-summary-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
     padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
   .alloc-summary-row:last-child{border-bottom:none;}
+
+  /* "Pending bills by tenant" (Bills tab) — each tenant's row expands to show the individual
+     bills behind the total, with a marker replacing the default <details> triangle. */
+  .pending-bills-tenant summary::-webkit-details-marker{display:none;}
+  .pending-bills-tenant summary{position:relative;padding-right:16px;}
+  .pending-bills-tenant summary::after{content:'▸';position:absolute;right:0;top:10px;
+    color:var(--text-faint);font-size:11px;transition:transform .15s ease;}
+  .pending-bills-tenant[open] summary::after{transform:rotate(90deg);}
+  .pending-bills-tenant{border-bottom:1px solid var(--border);}
+  .pending-bills-tenant:last-child{border-bottom:none;}
+  .pending-bills-tenant summary{border-bottom:none;}
 
   .modal-overlay{
     position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
