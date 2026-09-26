@@ -1426,16 +1426,25 @@ import * as recurringBillService from './services/recurringBillService.js';
       ((t.excludedBillTypes && t.excludedBillTypes.length) ? '<div class="field-row"><span class="k">Doesn\'t pay for</span><span class="v">'+esc(t.excludedBillTypes.map(billTypeLabel).join(', '))+'</span></div>' : '')
     ) : '';
 
-    var bondRows = bond ? (
-      '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
+    var bondRows = bond ? (function(){
+      // A bond saved before the itemized discounts list existed only has the old single
+      // `deduction` number, with an empty discounts array — show that as one unlabeled
+      // line rather than silently dropping it (that's what was happening for tenants like
+      // Daniel, whose $200 deduction wasn't showing up anywhere).
+      var effectiveDiscounts = (bond.discounts && bond.discounts.length) ? bond.discounts
+        : (bond.deduction > 0 ? [{ label:'Deduction', amount:bond.deduction }] : []);
+      var totalDeduction = round2(effectiveDiscounts.reduce(function(s,d){ return s+(d.amount||0); }, 0));
+      var toReturn = round2(bond.amountPaid - totalDeduction);
+      return '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
       '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
-      ((bond.discounts && bond.discounts.length)
-        ? bond.discounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label||'Discount')+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('') +
-          '<div class="field-row"><span class="k">Total deduction</span><span class="v">'+money(bond.deduction)+'</span></div>'
+      (effectiveDiscounts.length
+        ? effectiveDiscounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label||'Discount')+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('') +
+          '<div class="field-row"><span class="k">Total deduction</span><span class="v">-'+money(totalDeduction)+'</span></div>'+
+          '<div class="field-row"><span class="k" style="font-weight:650;">Amount to return</span><span class="v" style="font-weight:650;">'+money(toReturn)+'</span></div>'
         : '') +
       '<div class="field-row"><span class="k">Amount returned</span><span class="v">'+money(bond.amountReturned)+'</span></div>'+
-      '<div class="field-row"><span class="k">Status</span><span class="v">'+esc(BOND_STATUS_LABEL[bond.status]||bond.status)+'</span></div>'
-    ) : '';
+      '<div class="field-row"><span class="k">Status</span><span class="v">'+esc(BOND_STATUS_LABEL[bond.status]||bond.status)+'</span></div>';
+    })() : '';
 
     return backLink('#/tenants', 'Tenants') +
       '<div class="detail-head"><div><h1 class="page-title">'+esc(t.fullName)+'</h1>'+
@@ -1460,14 +1469,17 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  be refunded: it takes their average daily rate from bills already invoiced (allocated amount
    *  / occupied days in those same bills) and projects it over the days between the last
    *  already-invoiced period and the move-out date — which don't yet have a real bill. It adds
-   *  whatever is already invoiced and unpaid (that IS a real amount, not an estimate) and subtracts
-   *  all of that from the paid bond. It never replaces the real bill once it arrives: it's only a
-   *  projection to guide the administrator in the meantime. */
+   *  whatever is already invoiced and unpaid (that IS a real amount, not an estimate), any rent
+   *  still owed (unpaid/overdue/partially-paid rent periods), and any bond discounts/deductions
+   *  already recorded (cleaning, damage, etc.) — and subtracts all of that from the paid bond. It
+   *  never replaces the real bill once it arrives: it's only a projection to guide the
+   *  administrator in the meantime, only shown once there's a move-out date (actual or expected). */
   function computeMoveOutEstimate(t){
     var moveOutDate = t.actualMoveOutDate || t.expectedMoveOutDate;
     if (!moveOutDate) return null;
     var bond = bondOf(t.id);
     var bondPaid = bond ? bond.amountPaid : 0;
+    var bondDeduction = bond ? bond.deduction : 0;
 
     // Grouped by service TYPE (electricity, gas, internet, etc.) — each one has its
     // own billing cycle, so the "not-yet-billed gap" and the average rate are
@@ -1505,17 +1517,19 @@ import * as recurringBillService from './services/recurringBillService.js';
     });
 
     var totalEstimatedOwed = round2(totalUnpaid + totalEstimatedGap);
-    var estimatedReturn = round2(bondPaid - totalEstimatedOwed);
-    var outstandingRent = rentCharges
+    var outstandingRent = round2(rentCharges
       .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004; })
-      .reduce(function(s,c){ return s + c.remaining; }, 0);
+      .reduce(function(s,c){ return s + c.remaining; }, 0));
+    // The full picture: bond paid, minus whatever's still owed on rent, minus whatever's still
+    // owed on bills (real + estimated), minus any discount/deduction already applied to the bond.
+    var estimatedReturn = round2(bondPaid - outstandingRent - totalEstimatedOwed - bondDeduction);
 
     return {
       moveOutDate: moveOutDate, isActual: !!t.actualMoveOutDate, hasBond: !!bond,
-      bondPaid: bondPaid, lines: lines,
+      bondPaid: bondPaid, bondDeduction: round2(bondDeduction), lines: lines,
       totalUnpaid: round2(totalUnpaid), totalEstimatedGap: round2(totalEstimatedGap),
       totalEstimatedOwed: totalEstimatedOwed, estimatedReturn: estimatedReturn,
-      outstandingRent: round2(outstandingRent)
+      outstandingRent: outstandingRent
     };
   }
 
@@ -1542,11 +1556,11 @@ import * as recurringBillService from './services/recurringBillService.js';
       : '<div class="field-row"><span class="k">Bills</span><span class="v">Nothing charged or estimated</span></div>';
     rows +=
       '<div class="field-row"><span class="k">Estimated total owed on bills</span><span class="v">'+money(est.totalEstimatedOwed)+'</span></div>'+
+      (est.outstandingRent > 0 ? '<div class="field-row"><span class="k">Still owed on rent</span><span class="v" style="color:var(--status-overdue);">-'+money(est.outstandingRent)+'</span></div>' : '')+
+      (est.bondDeduction > 0 ? '<div class="field-row"><span class="k">Bond deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(est.bondDeduction)+'</span></div>' : '')+
       '<div class="field-row"><span class="k" style="font-weight:650;">Estimated bond to return</span><span class="v" style="font-weight:650;">'+money(est.estimatedReturn)+'</span></div>';
     return '<div class="card"><h2>Move-out settlement</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Below, each service shows what\'s already charged and unpaid (a real amount) separately from what\'s estimated from the average for days not billed yet. Update it once the real bills for the final days arrive.'+
-      (est.outstandingRent > 0 ? ' Doesn\'t include the '+money(est.outstandingRent)+' still owed on rent — that\'s separate from this bond/bills estimate.' : '')+
-      '</p>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Below, each service shows what\'s already charged and unpaid (a real amount) separately from what\'s estimated from the average for days not billed yet. Update it once the real bills for the final days arrive. "Estimated bond to return" already subtracts unpaid rent and any bond deductions, along with the bills above.</p>'+
       '<div class="field-list">'+rows+'</div></div>';
   }
 
@@ -3572,29 +3586,52 @@ import * as recurringBillService from './services/recurringBillService.js';
    *  outstanding are left out entirely — this is a "who still owes on bills" view, not a
    *  roster of every tenant. */
   function pendingBillsByTenantHtml(scopedBills){
-    var totals = {}; // tenantId -> { amount, count }
+    var byTenant = {}; // tenantId -> { amount, items: [{bill, alloc}] }
     scopedBills.forEach(function(b){
       if (!b.allocations) return;
       b.allocations.forEach(function(a){
         if (a.isAdmin || a.paid || !a.tenantId) return;
-        var entry = totals[a.tenantId] || { amount: 0, count: 0 };
+        var entry = byTenant[a.tenantId] || { amount: 0, items: [] };
         entry.amount += a.amount;
-        entry.count += 1;
-        totals[a.tenantId] = entry;
+        entry.items.push({ bill:b, alloc:a });
+        byTenant[a.tenantId] = entry;
       });
     });
-    var rows = Object.keys(totals).map(function(tenantId){
+    var rows = Object.keys(byTenant).map(function(tenantId){
       var t = tenantOf(tenantId);
-      return { tenant: t, tenantId: tenantId, amount: round2(totals[tenantId].amount), count: totals[tenantId].count };
+      var items = byTenant[tenantId].items.slice().sort(function(x,y){
+        // Overdue/soonest-due first — the ones the tenant should pay first show at the top.
+        return (x.bill.dueDate||'9999-99-99').localeCompare(y.bill.dueDate||'9999-99-99');
+      });
+      return { tenant: t, tenantId: tenantId, amount: round2(byTenant[tenantId].amount), items: items };
     }).filter(function(r){ return r.amount > 0.004; })
       .sort(function(a,b){ return b.amount - a.amount; });
     if (!rows.length) return '';
     var grandTotal = rows.reduce(function(s,r){ return s+r.amount; }, 0);
+    /** One unpaid bill share under a tenant's row — same info + action as the Payments tab's
+     *  own "Bills" section, so the admin can mark it paid right from this consolidated view
+     *  without having to go find the tenant in Payments. */
+    function itemRowHtml(item){
+      var b = item.bill, a = item.alloc;
+      var overdue = b.dueDate && b.dueDate < TODAY;
+      return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;padding-left:10px;">'+
+        '<div class="who"><div style="font-weight:400;">'+esc(billTypeLabel(b.billType))+' — '+esc(b.provider)+'</div>'+
+        '<div class="meta">'+(b.dueDate?('Due '+shortDate(b.dueDate)):'No due date')+'</div></div>'+
+        '<div style="display:flex;align-items:center;gap:8px;">'+
+        (overdue ? badge('overdue','Overdue') : badge('due','Unpaid'))+
+        '<b>'+money(a.amount)+'</b>'+
+        '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openAllocPaidModal(\''+b.id+'\',\''+item.alloc.tenantId+'\')">Mark as paid</button>'+
+        '</div></div>';
+    }
     var body = rows.map(function(r){
       var prop = r.tenant ? properties.find(function(p){ return p.id===r.tenant.propertyId; }) : null;
-      return '<div class="field-row"><span class="k">'+esc(r.tenant ? r.tenant.fullName : 'Unknown tenant')+
+      var itemsHtml = r.items.map(itemRowHtml).join('');
+      return '<details class="pending-bills-tenant">'+
+        '<summary class="field-row" style="cursor:pointer;list-style:none;"><span class="k">'+esc(r.tenant ? r.tenant.fullName : 'Unknown tenant')+
         (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· '+esc(prop.name)+'</span>' : '')+
-        '</span><span class="v">'+money(r.amount)+' <span style="color:var(--text-faint);font-weight:400;">('+r.count+' bill'+(r.count===1?'':'s')+')</span></span></div>';
+        '</span><span class="v">'+money(r.amount)+' <span style="color:var(--text-faint);font-weight:400;">('+r.items.length+' bill'+(r.items.length===1?'':'s')+' — tap to see which)</span></span></summary>'+
+        itemsHtml+
+        '</details>';
     }).join('');
     return '<div class="card">'+
       '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">Pending bills by tenant</h2></div>'+
