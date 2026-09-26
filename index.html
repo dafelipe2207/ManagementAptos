@@ -663,7 +663,15 @@
       </div>
       <div class="form-row form-row-2">
         <div><label for="bond-returned">Amount returned</label><input id="bond-returned" type="number" min="0" step="0.01" /></div>
-        <div><label for="bond-deduction">Deduction</label><input id="bond-deduction" type="number" min="0" step="0.01" /></div>
+        <div><label for="bond-deduction-total">Total deduction</label><input id="bond-deduction-total" type="number" step="0.01" disabled /></div>
+      </div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span>Discounts / deductions</span>
+          <button type="button" class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="addBondDiscountRow()">+ Add discount</button>
+        </label>
+        <div id="bond-discount-rows"></div>
+        <p id="bond-discount-empty" style="font-size:11.5px;color:var(--text-faint);margin:4px 0 0;">No discounts added — the bond is returned in full.</p>
       </div>
       <div class="form-row"><label for="bond-status">Status</label>
         <select id="bond-status">
