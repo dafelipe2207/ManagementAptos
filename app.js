@@ -29,6 +29,12 @@ import * as inspectionService from './services/inspectionService.js';
 (function(){
   "use strict";
 
+  // pdf.js (loaded as a plain global script in index.html, before this module) needs to know
+  // where its worker script lives — same CDN build/version, so it always matches this pdfjsLib.
+  if (typeof pdfjsLib !== 'undefined'){
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.worker.min.js';
+  }
+
   /* ============ "Today" — the real current date, computed once at load ============ */
   var TODAY = toIsoLocal(new Date());
 
@@ -274,14 +280,20 @@ import * as inspectionService from './services/inspectionService.js';
    *  saved payment on success, or null on failure. `date` defaults to today but can be set to whenever the tenant
    *  actually paid (may be earlier than today). The success toast offers an immediate "Undo" — for when the admin
    *  picked the wrong date, or confirmed a payment that hadn't actually happened. */
-  async function recordPayment(tenantId, amount, date){
+  async function recordPayment(tenantId, amount, date, method){
     amount = Math.round(amount*100)/100;
     if (!(amount > 0)) return null;
     try {
-      var saved = await paymentService.create({ tenantId:tenantId, amount:amount, date: date || TODAY });
+      var saved = await paymentService.create({ tenantId:tenantId, amount:amount, date: date || TODAY, method: method || 'cash' });
       paymentRecords.push(saved);
       recomputeRentCharges();
-      showToast('Payment recorded.', 'success', { label:'Undo', onClick: function(){ undoRecordedPayment(saved.id); } });
+      // A bond-deduction "payment" isn't something the admin can undo the same way (it's part of
+      // a move-out settlement, not a mistaken entry) — no undo toast for those.
+      if (saved.method === 'bond_deduction'){
+        showToast('Outstanding rent settled from the bond.', 'success');
+      } else {
+        showToast('Payment recorded.', 'success', { label:'Undo', onClick: function(){ undoRecordedPayment(saved.id); } });
+      }
       return saved;
     } catch(err){
       showToast('Could not record the payment. ' + friendlyErrorMessage(err), 'error');
@@ -408,6 +420,13 @@ import * as inspectionService from './services/inspectionService.js';
           '<button class="mini-btn primary" onclick="saveEditedPayment(\''+p.id+'\')">Save</button>'+
         '</span>'+
       '</div>';
+    }
+    // Bond-deduction entries were never a payment the tenant made — labeled clearly instead of
+    // edit/remove controls that imply a normal, correctable cash entry (see move-out settlement).
+    if (p.method === 'bond_deduction'){
+      return '<div class="history-row"><span>'+fullDate(p.date)+'</span>'+
+        '<span style="display:flex;align-items:center;gap:8px;font-weight:600;">'+money(p.amount)+
+        badge('neutral','Bond deduction')+'</span></div>';
     }
     return '<div class="history-row"><span>'+fullDate(p.date)+'</span>'+
       '<span style="display:flex;align-items:center;gap:6px;font-weight:600;">'+money(p.amount)+
@@ -1496,6 +1515,12 @@ import * as inspectionService from './services/inspectionService.js';
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
       inspectionSectionHtml(t.id, 'move_in', false) +
       inspectionSectionHtml(t.id, 'move_out', false) +
+      (tenantHasMovedOut(t) && !t.moveOutSettledAt
+        ? '<div class="card"><h2>Bond settlement</h2>'+
+          '<p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">This tenant has moved out. Outstanding rent and unpaid bills haven\'t been deducted from the bond yet.</p>'+
+          '<button class="mini-btn primary" onclick="confirmSettleBondNow(\''+t.id+'\')">Settle bond now</button></div>'
+        : '') +
+      bondSettlementSummaryHtml(t) +
       moveOutSettlementHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
   }
@@ -1569,6 +1594,7 @@ import * as inspectionService from './services/inspectionService.js';
   }
 
   function moveOutSettlementHtml(t){
+    if (t.moveOutSettledAt) return ''; // already settled for real — see bondSettlementSummaryHtml
     var est = computeMoveOutEstimate(t);
     if (!est) return '';
     /** One row per service type, showing the FIXED part (already billed, unpaid — a
@@ -1598,6 +1624,154 @@ import * as inspectionService from './services/inspectionService.js';
       '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Below, each service shows what\'s already charged and unpaid (a real amount) separately from what\'s estimated from the average for days not billed yet. Update it once the real bills for the final days arrive. "Estimated bond to return" already subtracts unpaid rent and any bond deductions, along with the bills above.</p>'+
       '<div class="field-list">'+rows+'</div></div>';
   }
+
+  /* ============ Move-out bond settlement ============
+   * Once a tenant has actually moved out (actualMoveOutDate reached), any rent still owed and
+   * any unpaid bill shares are automatically settled by deducting them from the bond — never
+   * left as if the tenant still had to pay them separately. This runs once per tenant
+   * (guarded by tenant.moveOutSettledAt): automatically right after saveTenantForm crosses a
+   * tenant into "moved out", and manually from the "Settle bond now" button below for tenants
+   * who were already moved out before this existed, or to re-run after correcting a bill.
+   * It only ever marks things paid and records bond deductions — the actual bond REFUND (giving
+   * money back) stays a deliberate manual step via "Edit bond", exactly as before. */
+  function bondSettlementSummaryHtml(t){
+    if (!t.moveOutSettledAt) return '';
+    var bond = bondOf(t.id);
+    if (!bond){
+      return '<div class="card"><h2>Bond settlement</h2>'+
+        '<p style="font-size:13px;color:var(--text-dim);margin:0;">This tenant moved out with no bond on file — outstanding rent/bills couldn\'t be deducted from anything.</p></div>';
+    }
+    var discounts = bond.discounts || [];
+    var rentLine = round2(discounts.filter(function(d){ return d.label==='Outstanding Rent'; }).reduce(function(s,d){ return s+(d.amount||0); }, 0));
+    var billsLine = round2(discounts.filter(function(d){ return /^Outstanding .+ Bill$/.test(d.label||''); }).reduce(function(s,d){ return s+(d.amount||0); }, 0));
+    var settlementTotal = round2(rentLine + billsLine);
+    var totalDeducted = round2(bond.deduction || 0);
+    var otherDeductions = round2(totalDeducted - settlementTotal);
+    var refund = round2(bond.amountPaid - totalDeducted);
+    var owed = refund < 0 ? round2(-refund) : 0;
+    if (refund < 0) refund = 0;
+    var rows =
+      '<div class="field-row"><span class="k">Bond</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
+      (rentLine > 0 ? '<div class="field-row"><span class="k">Rent deducted</span><span class="v" style="color:var(--status-overdue);">-'+money(rentLine)+'</span></div>' : '')+
+      (billsLine > 0 ? '<div class="field-row"><span class="k">Bills deducted</span><span class="v" style="color:var(--status-overdue);">-'+money(billsLine)+'</span></div>' : '')+
+      (otherDeductions > 0.004 ? '<div class="field-row"><span class="k">Other deductions on this bond</span><span class="v" style="color:var(--status-overdue);">-'+money(otherDeductions)+'</span></div>' : '')+
+      '<div class="field-row"><span class="k">Total deducted</span><span class="v">'+money(totalDeducted)+'</span></div>'+
+      (owed > 0
+        ? '<div class="field-row"><span class="k" style="font-weight:650;">Still owed by tenant</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(owed)+'</span></div>'
+        : '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(refund)+'</span></div>');
+    return '<div class="card"><h2>Bond settlement</h2>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Outstanding rent and bills were settled by deducting them from the bond on move-out — see payment history and each bill\'s allocation for the individual entries. Actually returning a refund is still a manual step, from "Edit bond" below.</p>'+
+      '<div class="field-list">'+rows+'</div>'+
+      '<button class="text-link" onclick="confirmSettleBondNow(\''+t.id+'\')">Re-run settlement (e.g. after correcting a bill)</button>'+
+      '</div>';
+  }
+
+  /** Runs the move-out bond settlement for one tenant: settles outstanding rent (as a
+   *  bond-deduction "payment") and every unpaid bill share (marked paid, via bond deduction),
+   *  records one bond-discount line per reason, and marks the tenant settled so this never
+   *  runs again on its own. Safe to call manually more than once (e.g. after fixing a bill) —
+   *  it only ever acts on rent/bills still outstanding AT THE TIME it runs. */
+  async function processMoveOutBondSettlement(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    var settleDate = (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY) ? t.actualMoveOutDate : TODAY;
+    var bond = bondOf(t.id);
+
+    try {
+      if (!bond){
+        var settledTenant0 = await tenantService.markMoveOutSettled(t.id, new Date().toISOString());
+        t.moveOutSettledAt = settledTenant0.moveOutSettledAt;
+        showToast('Tenant moved out, but there\'s no bond on file — nothing to deduct.', 'info');
+        render();
+        return;
+      }
+
+      // 1) Outstanding rent -> one bond-deduction "payment" that settles it via the same FIFO
+      // allocation a real payment would go through (see rentService), just tagged differently.
+      // Calls paymentService directly (not recordPayment) so this whole batch only toasts/renders
+      // once, at the very end, instead of once per item.
+      var outstandingRent = round2(rentCharges
+        .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004; })
+        .reduce(function(s,c){ return s + c.remaining; }, 0));
+      if (outstandingRent > 0){
+        var savedPayment = await paymentService.create({ tenantId:t.id, amount:outstandingRent, date:settleDate, method:'bond_deduction' });
+        paymentRecords.push(savedPayment);
+        recomputeRentCharges();
+      }
+
+      // 2) Every unpaid bill share, grouped by service type (Electricity, Water, Gas, Internet,
+      // Hot water, Other) so each gets its own labeled bond-deduction line, per type. Calls
+      // billAllocationService directly for the same reason as above.
+      var unpaidByType = {};
+      bills.forEach(function(b){
+        (b.allocations || []).forEach(function(a){
+          if (a.tenantId !== t.id || a.paid || round2(a.amount) <= 0) return;
+          var bt = b.billType || 'other';
+          (unpaidByType[bt] || (unpaidByType[bt] = [])).push({ bill:b, alloc:a });
+        });
+      });
+      var touchedBills = {};
+      var billTypeTotals = {};
+      for (var bt in unpaidByType){
+        var items = unpaidByType[bt];
+        var total = 0;
+        for (var i=0; i<items.length; i++){
+          var bill = items[i].bill, alloc = items[i].alloc;
+          var savedAlloc = await billAllocationService.markPaid(alloc.id, settleDate, 'bond_deduction');
+          alloc.paid = true; alloc.paidDate = settleDate; alloc.paidVia = savedAlloc.paidVia;
+          total += round2(alloc.amount);
+          touchedBills[bill.id] = bill;
+        }
+        billTypeTotals[bt] = round2(total);
+      }
+      for (var billId in touchedBills){
+        var touchedBill = touchedBills[billId];
+        recomputeBillStatus(touchedBill);
+        var keepAllocations = touchedBill.allocations;
+        await persistBill(touchedBill);
+        touchedBill.allocations = keepAllocations;
+      }
+
+      // 3) Record one bond-discount line per reason (kept alongside any manual ones already
+      // there, e.g. "Cleaning") and recompute the bond's total deduction as their sum.
+      var newLines = [];
+      if (outstandingRent > 0) newLines.push({ label:'Outstanding Rent', amount: outstandingRent });
+      Object.keys(billTypeTotals).sort(function(a,b){ return billTypeLabel(a).localeCompare(billTypeLabel(b)); }).forEach(function(bt){
+        newLines.push({ label:'Outstanding '+billTypeLabel(bt)+' Bill', amount: billTypeTotals[bt] });
+      });
+      if (newLines.length){
+        var mergedDiscounts = (bond.discounts || []).concat(newLines);
+        var newDeduction = round2(mergedDiscounts.reduce(function(s,d){ return s + (d.amount||0); }, 0));
+        var savedBond = await bondService.update(bond.id, {
+          amountRequired: bond.amountRequired, amountPaid: bond.amountPaid, amountReturned: bond.amountReturned,
+          deduction: newDeduction, discounts: mergedDiscounts, status: bond.status
+        });
+        Object.assign(bond, savedBond);
+      }
+
+      var settledTenant = await tenantService.markMoveOutSettled(t.id, new Date().toISOString());
+      t.moveOutSettledAt = settledTenant.moveOutSettledAt;
+
+      var totalNow = round2(newLines.reduce(function(s,l){ return s+l.amount; }, 0));
+      showToast(totalNow > 0
+        ? ('Move-out settled: '+money(totalNow)+' deducted from the bond.')
+        : 'Move-out settled — no outstanding rent or bills to deduct.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not settle the move-out. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.processMoveOutBondSettlement = processMoveOutBondSettlement;
+
+  function confirmSettleBondNow(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t) return;
+    openConfirmModal('Settle bond now',
+      'Deduct any outstanding rent and unpaid bills for ' + t.fullName + ' from their bond, and mark them as paid? This can\'t be undone from here — correct it from the bond\'s discounts instead if needed.',
+      function(){ processMoveOutBondSettlement(tenantId); },
+      { confirmLabel: 'Settle now' });
+  }
+  window.confirmSettleBondNow = confirmSettleBondNow;
 
   /** "Rent history" card for a tenant's profile: which weeks/periods are already paid, and
    *  which are still due, overdue or upcoming — split into two lists so what still needs
@@ -3182,21 +3356,26 @@ import * as inspectionService from './services/inspectionService.js';
   }
   /** Marks a tenant's share of a bill as paid (with the actual date the admin specifies,
    *  not always today), and recomputes the bill's overall status. */
-  async function markAllocationPaid(billId, tenantId, date){
+  async function markAllocationPaid(billId, tenantId, date, paidVia){
     var bill = billOf(billId);
     if (!bill || !bill.allocations) return;
     var alloc = bill.allocations.find(function(a){ return a.tenantId===tenantId; });
     if (!alloc) return;
     var paidDate = date || TODAY;
     try {
-      await billAllocationService.markPaid(alloc.id, paidDate);
+      var savedAlloc = await billAllocationService.markPaid(alloc.id, paidDate, paidVia);
       alloc.paid = true;
       alloc.paidDate = paidDate;
+      alloc.paidVia = savedAlloc.paidVia;
       recomputeBillStatus(bill);
       var savedAllocations = bill.allocations;
       await persistBill(bill);
       bill.allocations = savedAllocations;
-      showToast('Marked as paid.', 'success', { label:'Undo', onClick: function(){ unmarkAllocationPaid(billId, tenantId); } });
+      if (alloc.paidVia === 'bond_deduction'){
+        showToast('Bill share settled from the bond.', 'success');
+      } else {
+        showToast('Marked as paid.', 'success', { label:'Undo', onClick: function(){ unmarkAllocationPaid(billId, tenantId); } });
+      }
       render();
     } catch(err){
       showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
@@ -4062,17 +4241,24 @@ import * as inspectionService from './services/inspectionService.js';
       billAllocationCard(b);
   }
 
-  /** Shows the bill's original document (the photo/PDF attached when it was added) in a full-screen
-   *  modal sized to the viewer's own screen — an <img> for a photo, an <iframe> for a PDF (most
-   *  browsers render PDFs inline in an iframe just fine) — so the admin can look at the invoice
-   *  right in the app, at a size that fits whatever device they're on, instead of it being
-   *  downloaded or opened in a separate tab (that lost the "back" button on mobile and didn't
-   *  size itself to the screen). There's no stored mime type for the file, so which one to show is
-   *  guessed from the saved filename's extension; a "Open in new tab" link is included too, as a
-   *  fallback and a plain way to download/save the file if that's what's wanted. */
+  /** Shows the bill's original document (the photo/PDF attached when it was added). A PDF opens
+   *  in the full PDF viewer (openPdfViewer — pagination, zoom, search, thumbnails, etc.); a photo
+   *  still uses this simpler image-only modal, sized to the viewer's own screen. There's no stored
+   *  mime type for the file, so which one it is is guessed from the saved filename's extension. */
   async function openBillDocumentPreview(billId){
     var bill = billOf(billId);
     if (!bill || !bill.receiptPath) return;
+    var isPdf = /\.pdf(\?|$)/i.test(bill.receiptPath);
+    if (isPdf){
+      try {
+        var pdfUrl = await storageService.getSignedUrl('receipts', bill.receiptPath, 600);
+        var pdfName = (bill.provider || 'bill') + ' - ' + billTypeLabel(bill.billType) + '.pdf';
+        openPdfViewer(pdfUrl, pdfName);
+      } catch(err){
+        showToast("Couldn't load the bill. " + friendlyErrorMessage(err), 'error');
+      }
+      return;
+    }
     var modal = document.getElementById('bill-preview-modal');
     var body = document.getElementById('bill-preview-body');
     var openLink = document.getElementById('bill-preview-open-link');
@@ -4083,10 +4269,7 @@ import * as inspectionService from './services/inspectionService.js';
     modal.hidden = false;
     try {
       var url = await storageService.getSignedUrl('receipts', bill.receiptPath, 600);
-      var isPdf = /\.pdf(\?|$)/i.test(bill.receiptPath);
-      body.innerHTML = isPdf
-        ? '<iframe src="'+esc(url)+'" style="width:100%;height:100%;border:0;background:#fff;"></iframe>'
-        : '<img src="'+esc(url)+'" alt="Bill document" style="max-width:100%;max-height:100%;object-fit:contain;display:block;margin:0 auto;" />';
+      body.innerHTML = '<img src="'+esc(url)+'" alt="Bill document" style="max-width:100%;max-height:100%;object-fit:contain;display:block;margin:0 auto;" />';
       if (openLink) openLink.href = url;
     } catch(err){
       body.innerHTML = '<p style="font-size:12.5px;color:var(--status-overdue);">Could not load the bill. '+esc(friendlyErrorMessage(err))+'</p>';
@@ -4336,7 +4519,7 @@ import * as inspectionService from './services/inspectionService.js';
         // as paid something that doesn't apply.
         if (owesNothing || notRelevant) return '';
         var paidBit = a.paid
-          ? badge('paid', 'Paid'+(a.paidDate ? ' ' + shortDate(a.paidDate) : ''))
+          ? badge('paid', 'Paid'+(a.paidDate ? ' ' + shortDate(a.paidDate) : '')+(a.paidVia==='bond_deduction' ? ' · Bond deduction' : ''))
           : badge('due', 'Unpaid');
         var actionBtn = a.paid
           ? '<button class="mini-btn" onclick="unmarkAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as unpaid</button>'
@@ -6637,9 +6820,17 @@ import * as inspectionService from './services/inspectionService.js';
       recomputeRentCharges();
       refreshStaticSelects();
       closeTenantModal();
-      showToast('Tenant saved successfully.', 'success');
       location.hash = '#/tenants/' + tenantObj.id;
-      render();
+
+      // Tenant just crossed into "moved out" for the first time (or was moved out already and
+      // this is the first save since the feature shipped) -> settle outstanding rent/bills from
+      // the bond automatically. processMoveOutBondSettlement shows its own, more specific toast.
+      if (tenantHasMovedOut(tenantObj) && !tenantObj.moveOutSettledAt){
+        await processMoveOutBondSettlement(tenantObj.id);
+      } else {
+        showToast('Tenant saved successfully.', 'success');
+        render();
+      }
     } catch(err){
       errorEl.textContent = 'Could not save this tenant. ' + friendlyErrorMessage(err);
       errorEl.hidden = false;
@@ -7129,6 +7320,843 @@ import * as inspectionService from './services/inspectionService.js';
     }
   }
   window.lightboxPointerUp = lightboxPointerUp;
+
+  /* ============ PDF viewer ============
+   * A real toolbar-driven viewer built on pdf.js (loaded in index.html as the global
+   * `pdfjsLib`), replacing the old bare <iframe>. One reusable overlay — openPdfViewer(url,
+   * fileName) opens it from anywhere a PDF is shown (currently openBillDocumentPreview).
+   *
+   * Layout: a continuous vertical scroll of all pages (like Drive/Acrobat), virtualized — only
+   * pages near the viewport actually have pixels drawn to their <canvas> (via
+   * IntersectionObserver); pages that scroll far away have their canvas cleared to free memory.
+   * Each page also gets a pdf.js "text layer" (invisible, selectable text positioned exactly over
+   * the canvas) built lazily on first render — this is what makes search real (matches PDF text,
+   * never a fake image-based search) and gives native text selection for free.
+   */
+  var PDFV_MIN_SCALE = 0.25, PDFV_MAX_SCALE = 5;
+  var pdfv = {
+    doc: null, url: '', fileName: '', numPages: 0, currentPage: 1,
+    scale: 1, baseWidth: 0, baseHeight: 0, rotation: 0, fitMode: 'width',
+    pages: [], visiblePages: new Set(), observer: null,
+    thumbEls: null, thumbsBuilt: false, thumbsOpen: false, thumbObserver: null,
+    searchOpen: false, searchQuery: '', searchMatches: [], searchIndex: -1, searchGen: 0,
+    pageTextCache: {}, loadToken: 0, fullscreen: false
+  };
+  var pdfvReturnFocusTo = null;
+  var pdfvRerenderTimer = null;
+  var pdfvSearchDebounce = null;
+
+  async function openPdfViewer(url, fileName){
+    var overlay = document.getElementById('pdfv-overlay');
+    if (!overlay) return;
+    if (typeof pdfjsLib === 'undefined'){
+      // pdf.js didn't load (CDN blocked/offline) — fall back to a plain new tab instead of
+      // showing a broken, uncloseable viewer.
+      window.open(url, '_blank', 'noopener');
+      if (typeof showToast === 'function') showToast("Couldn't load the PDF viewer — opened the file in a new tab instead.", 'error');
+      return;
+    }
+    pdfvReturnFocusTo = document.activeElement;
+    pdfv.url = url;
+    pdfv.fileName = fileName || 'document.pdf';
+    pdfv.numPages = 0; pdfv.currentPage = 1; pdfv.scale = 1; pdfv.rotation = 0; pdfv.fitMode = 'width';
+    pdfv.pages = []; pdfv.visiblePages = new Set(); pdfv.pageTextCache = {};
+    pdfv.searchQuery = ''; pdfv.searchMatches = []; pdfv.searchIndex = -1;
+    pdfv.thumbsBuilt = false; pdfv.thumbsOpen = false; pdfv.thumbEls = null; pdfv.doc = null;
+
+    document.getElementById('pdfv-title').textContent = pdfv.fileName;
+    document.getElementById('pdfv-page-of').textContent = '/ —';
+    document.getElementById('pdfv-page-input').value = '';
+    document.getElementById('pdfv-pages-inner').innerHTML = '';
+    var thumbsPanel = document.getElementById('pdfv-thumbs');
+    thumbsPanel.innerHTML = ''; thumbsPanel.hidden = true; thumbsPanel.classList.remove('open');
+    var thumbsBackdrop = document.getElementById('pdfv-thumbs-backdrop');
+    thumbsBackdrop.hidden = true; thumbsBackdrop.classList.remove('open');
+    document.getElementById('pdfv-thumbs-toggle').setAttribute('aria-pressed', 'false');
+    pdfvCloseSearch(true);
+    document.getElementById('pdfv-error').hidden = true;
+    document.getElementById('pdfv-loading-text').textContent = 'Loading PDF…';
+    document.getElementById('pdfv-loading').hidden = false;
+    document.getElementById('pdfv-zoom-pct').textContent = '100%';
+    document.getElementById('pdfv-open-tab').href = url;
+
+    overlay.hidden = false;
+    document.body.style.overflow = 'hidden';
+    // Defensive: remove before adding, in case a previous open's listeners were somehow never
+    // cleaned up (e.g. openPdfViewer called again without an intervening close) — keeps these
+    // singular instead of silently stacking duplicate handlers.
+    document.removeEventListener('keydown', pdfvKeyHandler);
+    document.addEventListener('keydown', pdfvKeyHandler);
+    var scrollElForWheel = document.getElementById('pdfv-pages-scroll');
+    scrollElForWheel.removeEventListener('wheel', pdfvWheelHandler);
+    scrollElForWheel.addEventListener('wheel', pdfvWheelHandler, { passive: false });
+    document.removeEventListener('fullscreenchange', pdfvFullscreenChangeHandler);
+    document.addEventListener('fullscreenchange', pdfvFullscreenChangeHandler);
+    window.removeEventListener('resize', pdfvResizeHandler);
+    window.addEventListener('resize', pdfvResizeHandler);
+    document.getElementById('pdfv-close').focus();
+
+    var myToken = ++pdfv.loadToken;
+    try {
+      var doc = await pdfjsLib.getDocument({ url: url }).promise;
+      if (myToken !== pdfv.loadToken){ try { doc.destroy(); } catch(_e){} return; }
+      pdfv.doc = doc;
+      pdfv.numPages = doc.numPages;
+      var page1 = await doc.getPage(1);
+      if (myToken !== pdfv.loadToken) return;
+      var base = page1.getViewport({ scale: 1, rotation: 0 });
+      pdfv.baseWidth = base.width;
+      pdfv.baseHeight = base.height;
+      document.getElementById('pdfv-loading').hidden = true;
+      pdfvBuildPages();
+      pdfv.scale = pdfvComputeFitScale('width');
+      pdfv.fitMode = 'width';
+      pdfvRecalcPagesLayout();
+      pdfvUpdateZoomLabel();
+      document.getElementById('pdfv-page-of').textContent = '/ ' + pdfv.numPages;
+      document.getElementById('pdfv-page-input').value = '1';
+      // One frame so the scroller has real, laid-out page heights before the observer starts
+      // measuring intersections against it (otherwise the first read can be against a 0-height box).
+      requestAnimationFrame(function(){ if (myToken === pdfv.loadToken) pdfvSetupObserver(); });
+    } catch(err){
+      if (myToken !== pdfv.loadToken) return;
+      console.error('PDF load failed:', err);
+      document.getElementById('pdfv-loading').hidden = true;
+      var errEl = document.getElementById('pdfv-error');
+      errEl.hidden = false;
+      errEl.textContent = "Couldn't load this PDF. " + friendlyErrorMessage(err);
+    }
+  }
+  window.openPdfViewer = openPdfViewer;
+
+  function closePdfViewer(){
+    var overlay = document.getElementById('pdfv-overlay');
+    if (!overlay || overlay.hidden) return;
+    pdfv.loadToken++; // invalidates any load/search still in flight
+    pdfv.searchGen++;
+    overlay.hidden = true;
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', pdfvKeyHandler);
+    var scrollEl = document.getElementById('pdfv-pages-scroll');
+    if (scrollEl) scrollEl.removeEventListener('wheel', pdfvWheelHandler);
+    document.removeEventListener('fullscreenchange', pdfvFullscreenChangeHandler);
+    window.removeEventListener('resize', pdfvResizeHandler);
+    if (document.fullscreenElement && document.exitFullscreen){
+      try { document.exitFullscreen(); } catch(_e){}
+    }
+    if (pdfv.observer){ pdfv.observer.disconnect(); pdfv.observer = null; }
+    if (pdfv.currentPageObserver){ pdfv.currentPageObserver.disconnect(); pdfv.currentPageObserver = null; }
+    if (pdfv.thumbObserver){ pdfv.thumbObserver.disconnect(); pdfv.thumbObserver = null; }
+    pdfv.pages.forEach(function(entry){
+      if (entry.renderTask){ try { entry.renderTask.cancel(); } catch(_e){} }
+    });
+    if (pdfv.doc){ try { pdfv.doc.destroy(); } catch(_e){} pdfv.doc = null; }
+    pdfv.pages = [];
+    var frame = document.getElementById('pdfv-print-frame');
+    if (frame) frame.remove();
+    document.getElementById('pdfv-pages-inner').innerHTML = '';
+    document.getElementById('pdfv-thumbs').innerHTML = '';
+    clearTimeout(pdfvRerenderTimer);
+    clearTimeout(pdfvSearchDebounce);
+    clearTimeout(pdfvResizeDebounce);
+    if (pdfvReturnFocusTo && typeof pdfvReturnFocusTo.focus === 'function'){
+      try { pdfvReturnFocusTo.focus(); } catch(_e){}
+    }
+    pdfvReturnFocusTo = null;
+  }
+  window.closePdfViewer = closePdfViewer;
+
+  function pdfvBackdropClick(e){
+    var t = e.target;
+    // Clicking the actual page (to select text, etc.) or any toolbar/search/thumbnail control
+    // must never close the viewer — only the dark area around the document counts as "outside".
+    if (t.closest && (t.closest('.pdfv-page') || t.closest('.pdfv-toolbar') || t.closest('.pdfv-search-bar') || t.closest('.pdfv-thumbs'))) return;
+    closePdfViewer();
+  }
+  window.pdfvBackdropClick = pdfvBackdropClick;
+
+  function pdfvKeyHandler(e){
+    var overlay = document.getElementById('pdfv-overlay');
+    if (!overlay || overlay.hidden) return;
+    var active = document.activeElement;
+    var inSearchInput = active && active.id === 'pdfv-search-input';
+    var inPageInput = active && active.id === 'pdfv-page-input';
+    if (e.key === 'Escape'){
+      e.preventDefault();
+      // Layered, like a real app: fullscreen first, then search, then a mobile thumbnails
+      // overlay, and only THEN the viewer itself — so "Esc to exit fullscreen" (its own listed
+      // requirement) doesn't also blow away the whole viewer in one keystroke.
+      if (document.fullscreenElement){
+        var exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) exit.call(document);
+        return;
+      }
+      if (pdfv.searchOpen){ pdfvCloseSearch(); return; }
+      if (pdfv.thumbsOpen && window.innerWidth <= 820){ pdfvToggleThumbs(); return; }
+      closePdfViewer();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')){ e.preventDefault(); pdfvOpenSearch(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')){ e.preventDefault(); pdfvSetScale(pdfv.scale * 1.2); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === '-'){ e.preventDefault(); pdfvSetScale(pdfv.scale / 1.2); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === '0'){ e.preventDefault(); pdfvSetActualSize(); return; }
+    if (e.key === 'Tab'){
+      var focusables = Array.prototype.slice.call(overlay.querySelectorAll('button, [href], input, [tabindex]:not([tabindex="-1"])'))
+        .filter(function(el){ return el.offsetParent !== null && !el.disabled; });
+      if (!focusables.length) return;
+      var first = focusables[0], last = focusables[focusables.length - 1];
+      if (e.shiftKey && active === first){ e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && active === last){ e.preventDefault(); first.focus(); }
+      return;
+    }
+    if (inSearchInput || inPageInput) return; // let normal typing/cursor movement happen
+    if (e.key === 'ArrowLeft'){ e.preventDefault(); pdfvPrevPage(); }
+    else if (e.key === 'ArrowRight'){ e.preventDefault(); pdfvNextPage(); }
+  }
+
+  /* ---- pages: build, layout, render, release (virtualized) ---- */
+  function pdfvBuildPages(){
+    var inner = document.getElementById('pdfv-pages-inner');
+    inner.innerHTML = '';
+    pdfv.pages = [];
+    for (var n = 1; n <= pdfv.numPages; n++){
+      var container = document.createElement('div');
+      container.className = 'pdfv-page';
+      container.dataset.page = String(n);
+      var canvas = document.createElement('canvas');
+      container.appendChild(canvas);
+      var spinnerWrap = document.createElement('div');
+      spinnerWrap.className = 'pdfv-page-spinner-wrap';
+      spinnerWrap.innerHTML = '<div class="lightbox-spinner"></div>';
+      container.appendChild(spinnerWrap);
+      var badge = document.createElement('div');
+      badge.className = 'pdfv-page-num-badge';
+      badge.textContent = String(n);
+      container.appendChild(badge);
+      inner.appendChild(container);
+      pdfv.pages.push({
+        num: n, container: container, canvas: canvas, spinnerWrap: spinnerWrap,
+        gen: 0, rendered: false, rendering: false, renderTask: null, renderKey: null,
+        textLayerEl: null, textDivs: null, textLayerKey: null
+      });
+    }
+  }
+
+  /** Sizes every page's placeholder box from the shared page-1 dimensions (the common case: a
+   *  uniform page size throughout). A page whose real size turns out to differ gets corrected to
+   *  its own exact size the moment it actually renders (pdfvRenderPage) — an accepted, minor,
+   *  one-time layout nudge for the rare mixed-page-size document, in exchange for never having to
+   *  fetch every single page's real dimensions up front (which would defeat the point of not
+   *  loading a big PDF's pages all at once). */
+  function pdfvRecalcPagesLayout(){
+    var rotated = (pdfv.rotation % 180) !== 0;
+    var w = Math.round((rotated ? pdfv.baseHeight : pdfv.baseWidth) * pdfv.scale);
+    var h = Math.round((rotated ? pdfv.baseWidth : pdfv.baseHeight) * pdfv.scale);
+    pdfv.pages.forEach(function(entry){
+      entry.container.style.width = w + 'px';
+      entry.container.style.height = h + 'px';
+    });
+  }
+
+  /** Two separate observers, deliberately not one: the render/pre-load observer uses a generous
+   *  600px rootMargin so nearby pages are already drawn before they scroll into view — but that
+   *  same generous margin makes its intersectionRatio numbers useless for deciding which page is
+   *  the "current" one (a page sitting entirely in the 600px buffer above the real viewport can
+   *  register a higher ratio, against its enlarged root, than the page actually on screen). A
+   *  second observer with NO margin, watching real on-screen visibility only, drives the page
+   *  indicator/thumbnail-selection instead — keeping "Page X of Y" accurate while scrolling. */
+  function pdfvSetupObserver(){
+    if (pdfv.observer) pdfv.observer.disconnect();
+    if (pdfv.currentPageObserver) pdfv.currentPageObserver.disconnect();
+    var root = document.getElementById('pdfv-pages-scroll');
+    pdfv.observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        var n = parseInt(e.target.getAttribute('data-page'), 10);
+        if (e.isIntersecting){
+          pdfv.visiblePages.add(n);
+          pdfvRenderPage(n);
+        } else {
+          pdfv.visiblePages.delete(n);
+          if (Math.abs(n - pdfv.currentPage) > 4) pdfvReleasePage(n);
+        }
+      });
+    }, { root: root, rootMargin: '600px 0px 600px 0px', threshold: [0] });
+
+    pdfv.currentPageObserver = new IntersectionObserver(function(entries){
+      var bestPage = null, bestRatio = 0;
+      entries.forEach(function(e){
+        var n = parseInt(e.target.getAttribute('data-page'), 10);
+        if (e.isIntersecting && e.intersectionRatio > bestRatio){ bestRatio = e.intersectionRatio; bestPage = n; }
+      });
+      if (bestPage && bestPage !== pdfv.currentPage){
+        pdfv.currentPage = bestPage;
+        pdfvUpdatePageIndicator();
+        pdfvUpdateThumbSelection();
+      }
+    }, { root: root, rootMargin: '0px', threshold: [0.1, 0.25, 0.5, 0.75, 0.9] });
+
+    pdfv.pages.forEach(function(entry){
+      pdfv.observer.observe(entry.container);
+      pdfv.currentPageObserver.observe(entry.container);
+    });
+  }
+
+  /** Renders (or re-renders, if the scale/rotation changed since last time) one page's canvas,
+   *  plus its text layer. Safe to call repeatedly — a no-op if already rendered at the current
+   *  scale/rotation. Returns a promise so callers (like search, jumping to a page) can wait for it. */
+  function pdfvRenderPage(n){
+    var entry = pdfv.pages[n - 1];
+    if (!entry) return Promise.resolve();
+    var key = pdfv.scale + '@' + pdfv.rotation;
+    if (entry.rendered && entry.renderKey === key) return Promise.resolve();
+    if (entry.renderTask){ try { entry.renderTask.cancel(); } catch(_e){} entry.renderTask = null; }
+    entry.rendering = true;
+    var myGen = ++entry.gen;
+    var ownerDoc = pdfv.doc;
+    return pdfv.doc.getPage(n).then(function(page){
+      if (myGen !== entry.gen || pdfv.doc !== ownerDoc) return;
+      var viewport = page.getViewport({ scale: pdfv.scale, rotation: pdfv.rotation });
+      // Correct this page's box if its real size differs from the shared placeholder assumption.
+      entry.container.style.width = Math.round(viewport.width) + 'px';
+      entry.container.style.height = Math.round(viewport.height) + 'px';
+      var outputScale = window.devicePixelRatio || 1;
+      var canvas = entry.canvas;
+      canvas.width = Math.floor(viewport.width * outputScale);
+      canvas.height = Math.floor(viewport.height * outputScale);
+      canvas.style.width = Math.floor(viewport.width) + 'px';
+      canvas.style.height = Math.floor(viewport.height) + 'px';
+      var ctx = canvas.getContext('2d');
+      var transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+      var task = page.render({ canvasContext: ctx, transform: transform, viewport: viewport });
+      entry.renderTask = task;
+      return task.promise.then(function(){
+        if (myGen !== entry.gen) return;
+        entry.renderTask = null;
+        entry.rendered = true;
+        entry.rendering = false;
+        entry.renderKey = key;
+        entry.spinnerWrap.hidden = true;
+        return pdfvEnsureTextLayer(entry, page, viewport);
+      });
+    }).catch(function(err){
+      entry.rendering = false;
+      if (err && err.name === 'RenderingCancelledException') return;
+      console.error('PDF page render failed (page ' + n + '):', err);
+    });
+  }
+
+  function pdfvEnsureTextLayer(entry, page, viewport){
+    var key = Math.round(viewport.width) + 'x' + Math.round(viewport.height) + '@' + pdfv.rotation;
+    if (entry.textLayerEl && entry.textLayerKey === key) return pdfvHighlightPage(entry);
+    if (entry.textLayerEl){ entry.textLayerEl.remove(); entry.textLayerEl = null; entry.textDivs = null; }
+    return page.getTextContent().then(function(textContent){
+      var div = document.createElement('div');
+      div.className = 'textLayer';
+      div.style.width = viewport.width + 'px';
+      div.style.height = viewport.height + 'px';
+      entry.container.appendChild(div);
+      entry.textLayerEl = div;
+      entry.textLayerKey = key;
+      var task = pdfjsLib.renderTextLayer({ textContentSource: textContent, container: div, viewport: viewport });
+      return task.promise.then(function(){
+        entry.textDivs = Array.prototype.slice.call(div.querySelectorAll('span'));
+        return pdfvHighlightPage(entry);
+      });
+    }).catch(function(err){ console.error('PDF text layer failed (page ' + entry.num + '):', err); });
+  }
+
+  /** Frees a far-away page's rendered pixels (and text layer) to keep memory bounded on large
+   *  PDFs — it re-renders automatically the moment it scrolls back into range. Also cancels a
+   *  page that's still MID-render when it leaves range (fast scrolling through a big PDF) —
+   *  without this, a page could finish rendering (and stay fully allocated) long after nobody's
+   *  looking at it, because the earlier `!entry.rendered` guard skipped it while `rendering` but
+   *  not yet `rendered`. */
+  function pdfvReleasePage(n){
+    var entry = pdfv.pages[n - 1];
+    if (!entry || (!entry.rendered && !entry.rendering)) return;
+    if (entry.renderTask){ try { entry.renderTask.cancel(); } catch(_e){} entry.renderTask = null; }
+    entry.canvas.width = 0;
+    entry.canvas.height = 0;
+    entry.rendered = false;
+    entry.rendering = false;
+    entry.renderKey = null;
+    entry.gen++; // belt-and-suspenders: even if cancel() doesn't reject promptly, stale gen checks bail out
+    if (entry.textLayerEl){ entry.textLayerEl.remove(); entry.textLayerEl = null; entry.textDivs = null; entry.textLayerKey = null; }
+    entry.spinnerWrap.hidden = false;
+  }
+
+  function pdfvScheduleRerenderVisible(){
+    clearTimeout(pdfvRerenderTimer);
+    pdfvRerenderTimer = setTimeout(function(){
+      pdfv.pages.forEach(function(entry){
+        if (pdfv.visiblePages.has(entry.num) || Math.abs(entry.num - pdfv.currentPage) <= 1){
+          pdfvRenderPage(entry.num);
+        }
+      });
+    }, 180);
+  }
+
+  /* ---- page navigation ---- */
+  function pdfvUpdatePageIndicator(){
+    var input = document.getElementById('pdfv-page-input');
+    if (input && document.activeElement !== input) input.value = String(pdfv.currentPage);
+    var prevBtn = document.getElementById('pdfv-prev'), nextBtn = document.getElementById('pdfv-next');
+    if (prevBtn) prevBtn.disabled = pdfv.currentPage <= 1;
+    if (nextBtn) nextBtn.disabled = pdfv.currentPage >= pdfv.numPages;
+  }
+  function pdfvGoToPage(n){
+    n = Math.max(1, Math.min(pdfv.numPages, n));
+    var entry = pdfv.pages[n - 1];
+    if (entry) entry.container.scrollIntoView({ block: 'start' });
+    pdfv.currentPage = n;
+    pdfvUpdatePageIndicator();
+    pdfvUpdateThumbSelection();
+    if (pdfv.thumbsOpen) pdfvScrollThumbIntoView(n);
+    return pdfvRenderPage(n);
+  }
+  window.pdfvPrevPage = function pdfvPrevPage(){ pdfvGoToPage(pdfv.currentPage - 1); };
+  window.pdfvNextPage = function pdfvNextPage(){ pdfvGoToPage(pdfv.currentPage + 1); };
+  window.pdfvGoToPageInput = function pdfvGoToPageInput(){
+    var input = document.getElementById('pdfv-page-input');
+    var n = parseInt(input.value, 10);
+    if (!n || n < 1 || n > pdfv.numPages){ input.value = String(pdfv.currentPage); return; }
+    pdfvGoToPage(n);
+  };
+  window.pdfvPageInputKeydown = function pdfvPageInputKeydown(e){
+    if (e.key === 'Enter'){ e.preventDefault(); window.pdfvGoToPageInput(); e.target.blur(); }
+  };
+
+  /* ---- zoom ---- */
+  function pdfvComputeFitScale(mode){
+    var scrollEl = document.getElementById('pdfv-pages-scroll');
+    var availW = Math.max(50, scrollEl.clientWidth - 24);
+    var availH = Math.max(50, scrollEl.clientHeight - 40);
+    var rotated = (pdfv.rotation % 180) !== 0;
+    var w = rotated ? pdfv.baseHeight : pdfv.baseWidth;
+    var h = rotated ? pdfv.baseWidth : pdfv.baseHeight;
+    if (mode === 'width') return availW / w;
+    return Math.min(availW / w, availH / h);
+  }
+  function pdfvUpdateZoomLabel(){
+    var el = document.getElementById('pdfv-zoom-pct');
+    if (el) el.textContent = Math.round(pdfv.scale * 100) + '%';
+  }
+  /** Zoom that keeps a specific screen point (the cursor, for +/-/Ctrl+wheel) anchored to the
+   *  same content underneath it — the page you're looking at never jumps. */
+  function pdfvSetScale(newScale, anchorClientX, anchorClientY){
+    newScale = Math.max(PDFV_MIN_SCALE, Math.min(PDFV_MAX_SCALE, newScale));
+    if (Math.abs(newScale - pdfv.scale) < 0.001) return;
+    var scrollEl = document.getElementById('pdfv-pages-scroll');
+    var rect = scrollEl.getBoundingClientRect();
+    var ax = anchorClientX != null ? anchorClientX : rect.left + rect.width / 2;
+    var ay = anchorClientY != null ? anchorClientY : rect.top + rect.height / 2;
+    var contentX = (ax - rect.left) + scrollEl.scrollLeft;
+    var contentY = (ay - rect.top) + scrollEl.scrollTop;
+    var ratio = newScale / pdfv.scale;
+    pdfv.scale = newScale;
+    pdfv.fitMode = 'custom';
+    pdfvRecalcPagesLayout();
+    scrollEl.scrollLeft = contentX * ratio - (ax - rect.left);
+    scrollEl.scrollTop = contentY * ratio - (ay - rect.top);
+    pdfvUpdateZoomLabel();
+    pdfvScheduleRerenderVisible();
+  }
+  /** Zoom triggered from a button/menu/keyboard shortcut (no cursor position involved) — keeps
+   *  the current PAGE in view (scrolled to its top) rather than anchoring to an arbitrary point. */
+  function pdfvApplyScaleKeepingCurrentPage(newScale){
+    var pageToKeep = pdfv.currentPage;
+    pdfv.scale = Math.max(PDFV_MIN_SCALE, Math.min(PDFV_MAX_SCALE, newScale));
+    pdfvRecalcPagesLayout();
+    pdfvUpdateZoomLabel();
+    var entry = pdfv.pages[pageToKeep - 1];
+    if (entry) entry.container.scrollIntoView({ block: 'start' });
+    pdfvScheduleRerenderVisible();
+  }
+  window.pdfvZoomIn = function pdfvZoomIn(){ pdfvSetScale(pdfv.scale * 1.2); };
+  window.pdfvZoomOut = function pdfvZoomOut(){ pdfvSetScale(pdfv.scale / 1.2); };
+  window.pdfvSetFit = function pdfvSetFit(mode){
+    pdfv.fitMode = mode;
+    pdfvApplyScaleKeepingCurrentPage(pdfvComputeFitScale(mode));
+    pdfvCloseZoomMenu();
+  };
+  window.pdfvSetActualSize = function pdfvSetActualSize(){
+    pdfv.fitMode = 'custom';
+    pdfvApplyScaleKeepingCurrentPage(1);
+    pdfvCloseZoomMenu();
+  };
+  window.pdfvToggleZoomMenu = function pdfvToggleZoomMenu(){
+    var menu = document.getElementById('pdfv-zoom-menu');
+    var btn = document.getElementById('pdfv-zoom-pct');
+    var open = menu.hidden;
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    if (open){
+      setTimeout(function(){ document.addEventListener('click', pdfvZoomMenuOutsideClick); }, 0);
+    }
+  };
+  function pdfvCloseZoomMenu(){
+    var menu = document.getElementById('pdfv-zoom-menu');
+    if (menu) menu.hidden = true;
+    var btn = document.getElementById('pdfv-zoom-pct');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', pdfvZoomMenuOutsideClick);
+  }
+  function pdfvZoomMenuOutsideClick(e){
+    var menu = document.getElementById('pdfv-zoom-menu');
+    var btn = document.getElementById('pdfv-zoom-pct');
+    if (menu && !menu.contains(e.target) && e.target !== btn) pdfvCloseZoomMenu();
+  }
+  function pdfvWheelHandler(e){
+    if (!e.ctrlKey && !e.metaKey) return; // plain wheel/trackpad scroll passes through untouched
+    e.preventDefault();
+    var factor = e.deltaY < 0 ? 1.1 : (1 / 1.1);
+    pdfvSetScale(pdfv.scale * factor, e.clientX, e.clientY);
+  }
+  /** Window resize / orientation change (rotating a tablet, resizing the browser): if the user is
+   *  on "Fit width" or "Fit page" (not a manual zoom level), re-fit to the new size so the layout
+   *  never ends up too big/small or cut off. A manual zoom ('custom') is left alone — resizing the
+   *  window shouldn't silently change a zoom level the user picked on purpose. */
+  var pdfvResizeDebounce = null;
+  function pdfvResizeHandler(){
+    clearTimeout(pdfvResizeDebounce);
+    pdfvResizeDebounce = setTimeout(function(){
+      if (!pdfv.doc) return;
+      if (pdfv.fitMode === 'width' || pdfv.fitMode === 'page'){
+        pdfvApplyScaleKeepingCurrentPage(pdfvComputeFitScale(pdfv.fitMode));
+      }
+    }, 200);
+  }
+
+  /* ---- rotation ---- */
+  window.pdfvRotate = function pdfvRotate(delta){
+    pdfv.rotation = ((pdfv.rotation + delta) % 360 + 360) % 360;
+    var pageToKeep = pdfv.currentPage;
+    pdfvRecalcPagesLayout();
+    pdfv.pages.forEach(function(entry){
+      entry.rendered = false; entry.renderKey = null;
+      if (entry.textLayerEl){ entry.textLayerEl.remove(); entry.textLayerEl = null; entry.textDivs = null; entry.textLayerKey = null; }
+    });
+    var entry = pdfv.pages[pageToKeep - 1];
+    if (entry) entry.container.scrollIntoView({ block: 'start' });
+    pdfvScheduleRerenderVisible();
+    if (pdfv.thumbsBuilt) pdfvBuildThumbs();
+  };
+
+  /* ---- thumbnails (lazy, own IntersectionObserver on the side panel) ---- */
+  window.pdfvToggleThumbs = function pdfvToggleThumbs(){
+    pdfv.thumbsOpen = !pdfv.thumbsOpen;
+    var panel = document.getElementById('pdfv-thumbs');
+    var backdrop = document.getElementById('pdfv-thumbs-backdrop');
+    var btn = document.getElementById('pdfv-thumbs-toggle');
+    panel.hidden = !pdfv.thumbsOpen;
+    panel.classList.toggle('open', pdfv.thumbsOpen);
+    backdrop.hidden = !pdfv.thumbsOpen;
+    backdrop.classList.toggle('open', pdfv.thumbsOpen);
+    btn.setAttribute('aria-pressed', String(pdfv.thumbsOpen));
+    if (pdfv.thumbsOpen){
+      if (!pdfv.thumbsBuilt) pdfvBuildThumbs();
+      pdfvScrollThumbIntoView(pdfv.currentPage);
+    }
+  };
+  function pdfvBuildThumbs(){
+    pdfv.thumbsBuilt = true;
+    var panel = document.getElementById('pdfv-thumbs');
+    panel.innerHTML = '';
+    pdfv.thumbEls = [];
+    for (var n = 1; n <= pdfv.numPages; n++){
+      (function(n){
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'pdfv-thumb';
+        btn.setAttribute('aria-label', 'Go to page ' + n);
+        var ph = document.createElement('div');
+        ph.className = 'pdfv-thumb-placeholder';
+        btn.appendChild(ph);
+        var label = document.createElement('div');
+        label.className = 'pdfv-thumb-num';
+        label.textContent = String(n);
+        btn.appendChild(label);
+        btn.addEventListener('click', function(){
+          pdfvGoToPage(n);
+          if (window.innerWidth <= 820) window.pdfvToggleThumbs();
+        });
+        panel.appendChild(btn);
+        pdfv.thumbEls.push({ num: n, btn: btn, placeholder: ph, canvas: null, rendered: false, rendering: false });
+      })(n);
+    }
+    pdfvUpdateThumbSelection();
+    if (pdfv.thumbObserver) pdfv.thumbObserver.disconnect();
+    pdfv.thumbObserver = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) pdfvRenderThumb(parseInt(e.target.getAttribute('data-thumb-page'), 10));
+      });
+    }, { root: panel, rootMargin: '300px 0px 300px 0px' });
+    pdfv.thumbEls.forEach(function(t){ t.btn.setAttribute('data-thumb-page', String(t.num)); pdfv.thumbObserver.observe(t.btn); });
+  }
+  function pdfvRenderThumb(n){
+    var t = pdfv.thumbEls && pdfv.thumbEls[n - 1];
+    if (!t || t.rendered || t.rendering || !pdfv.doc) return;
+    t.rendering = true;
+    var ownerDoc = pdfv.doc;
+    pdfv.doc.getPage(n).then(function(page){
+      if (pdfv.doc !== ownerDoc) return;
+      var targetW = 118;
+      var baseViewport = page.getViewport({ scale: 1, rotation: pdfv.rotation });
+      var scale = targetW / baseViewport.width;
+      var viewport = page.getViewport({ scale: scale, rotation: pdfv.rotation });
+      var canvas = document.createElement('canvas');
+      var outputScale = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(viewport.width * outputScale);
+      canvas.height = Math.floor(viewport.height * outputScale);
+      canvas.style.width = Math.floor(viewport.width) + 'px';
+      canvas.style.height = Math.floor(viewport.height) + 'px';
+      var ctx = canvas.getContext('2d');
+      var transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+      return page.render({ canvasContext: ctx, transform: transform, viewport: viewport }).promise.then(function(){
+        if (pdfv.doc !== ownerDoc || !t.placeholder.parentNode) return;
+        t.placeholder.replaceWith(canvas);
+        t.canvas = canvas;
+        t.rendered = true;
+        t.rendering = false;
+      });
+    }).catch(function(){ t.rendering = false; });
+  }
+  function pdfvUpdateThumbSelection(){
+    if (!pdfv.thumbEls) return;
+    pdfv.thumbEls.forEach(function(t){ t.btn.classList.toggle('current', t.num === pdfv.currentPage); });
+  }
+  function pdfvScrollThumbIntoView(n){
+    var t = pdfv.thumbEls && pdfv.thumbEls[n - 1];
+    if (t) t.btn.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* ---- search (real PDF text via pdf.js text content — never image/OCR-based) ---- */
+  window.pdfvToggleSearch = function pdfvToggleSearch(){
+    if (pdfv.searchOpen) pdfvCloseSearch(); else pdfvOpenSearch();
+  };
+  function pdfvOpenSearch(){
+    pdfv.searchOpen = true;
+    document.getElementById('pdfv-search-bar').hidden = false;
+    document.getElementById('pdfv-search-toggle').setAttribute('aria-pressed', 'true');
+    var input = document.getElementById('pdfv-search-input');
+    input.focus();
+    input.select();
+  }
+  function pdfvCloseSearch(silent){
+    pdfv.searchOpen = false;
+    pdfv.searchGen++;
+    var bar = document.getElementById('pdfv-search-bar');
+    if (bar) bar.hidden = true;
+    var toggle = document.getElementById('pdfv-search-toggle');
+    if (toggle) toggle.setAttribute('aria-pressed', 'false');
+    var input = document.getElementById('pdfv-search-input');
+    if (input) input.value = '';
+    pdfv.searchQuery = ''; pdfv.searchMatches = []; pdfv.searchIndex = -1;
+    pdfvUpdateSearchCount('');
+    pdfvHighlightAllRendered();
+    if (!silent){
+      var closeBtn = document.getElementById('pdfv-close');
+      if (closeBtn) closeBtn.focus();
+    }
+  }
+  window.pdfvCloseSearch = pdfvCloseSearch;
+  function pdfvUpdateSearchCount(text){
+    var el = document.getElementById('pdfv-search-count');
+    if (el) el.textContent = text;
+  }
+  window.pdfvSearchInput = function pdfvSearchInput(){
+    var q = document.getElementById('pdfv-search-input').value;
+    clearTimeout(pdfvSearchDebounce);
+    pdfvSearchDebounce = setTimeout(function(){ pdfvRunSearch(q.trim()); }, 300);
+  };
+  window.pdfvSearchKeydown = function pdfvSearchKeydown(e){
+    if (e.key === 'Enter'){
+      e.preventDefault();
+      clearTimeout(pdfvSearchDebounce);
+      var q = document.getElementById('pdfv-search-input').value.trim();
+      if (q === pdfv.searchQuery && pdfv.searchMatches.length){
+        if (e.shiftKey) pdfvSearchPrev(); else pdfvSearchNext();
+      } else {
+        pdfvRunSearch(q);
+      }
+    }
+  };
+  function pdfvSearchPrev(){ if (pdfv.searchMatches.length) pdfvGoToMatch(pdfv.searchIndex - 1); }
+  function pdfvSearchNext(){ if (pdfv.searchMatches.length) pdfvGoToMatch(pdfv.searchIndex + 1); }
+  window.pdfvSearchPrev = pdfvSearchPrev;
+  window.pdfvSearchNext = pdfvSearchNext;
+
+  async function pdfvRunSearch(query){
+    var myGen = ++pdfv.searchGen;
+    pdfv.searchQuery = query;
+    if (!query){
+      pdfv.searchMatches = []; pdfv.searchIndex = -1;
+      pdfvUpdateSearchCount('');
+      pdfvHighlightAllRendered();
+      return;
+    }
+    pdfvUpdateSearchCount('Searching…');
+    var needle = query.toLowerCase();
+    var matches = [];
+    var anyText = false;
+    for (var n = 1; n <= pdfv.numPages; n++){
+      if (myGen !== pdfv.searchGen) return;
+      var text = pdfv.pageTextCache[n];
+      if (text === undefined){
+        try {
+          var page = await pdfv.doc.getPage(n);
+          var tc = await page.getTextContent();
+          text = tc.items.map(function(it){ return it.str; }).join(' ');
+        } catch(_e){ text = ''; }
+        pdfv.pageTextCache[n] = text;
+      }
+      if (myGen !== pdfv.searchGen) return;
+      if (text && text.trim()) anyText = true;
+      var lower = text.toLowerCase();
+      var idx = 0, k = 0;
+      while (true){
+        var found = lower.indexOf(needle, idx);
+        if (found === -1) break;
+        matches.push({ page: n, occurrence: k });
+        k++;
+        idx = found + needle.length;
+      }
+      if (n % 20 === 0) pdfvUpdateSearchCount(matches.length + ' results so far…');
+    }
+    if (myGen !== pdfv.searchGen) return;
+    pdfv.searchMatches = matches;
+    pdfvHighlightAllRendered();
+    if (matches.length === 0){
+      pdfv.searchIndex = -1;
+      pdfvUpdateSearchCount(anyText ? '0 results' : 'No searchable text — this looks like a scanned document');
+      return;
+    }
+    pdfvGoToMatch(0);
+  }
+  function pdfvGoToMatch(idx){
+    if (!pdfv.searchMatches.length) return;
+    idx = ((idx % pdfv.searchMatches.length) + pdfv.searchMatches.length) % pdfv.searchMatches.length;
+    pdfv.searchIndex = idx;
+    var m = pdfv.searchMatches[idx];
+    pdfvUpdateSearchCount((idx + 1) + ' of ' + pdfv.searchMatches.length);
+    pdfv.currentPage = m.page;
+    pdfvUpdatePageIndicator();
+    pdfvUpdateThumbSelection();
+    var entry = pdfv.pages[m.page - 1];
+    if (entry) entry.container.scrollIntoView({ block: 'start' });
+    pdfvRenderPage(m.page).then(function(){ pdfvScrollToOccurrence(m.page, m.occurrence); });
+  }
+  function pdfvScrollToOccurrence(pageNum, occurrence){
+    var entry = pdfv.pages[pageNum - 1];
+    if (!entry || !entry.textLayerEl) return;
+    document.querySelectorAll('.pdfv-hit-current').forEach(function(el){ el.classList.remove('pdfv-hit-current'); });
+    var marks = entry.textLayerEl.querySelectorAll('mark.pdfv-hit');
+    var mark = marks[occurrence];
+    if (mark){ mark.classList.add('pdfv-hit-current'); mark.scrollIntoView({ block: 'center' }); }
+  }
+  function pdfvHighlightAllRendered(){
+    pdfv.pages.forEach(function(entry){ if (entry.textDivs) pdfvHighlightPage(entry); });
+  }
+  function pdfvHighlightPage(entry){
+    if (!entry.textDivs) return;
+    var q = pdfv.searchQuery;
+    var needle = q ? q.toLowerCase() : '';
+    entry.textDivs.forEach(function(span){
+      if (span.dataset.orig === undefined) span.dataset.orig = span.textContent;
+      var orig = span.dataset.orig;
+      if (!needle){ span.textContent = orig; return; }
+      var lower = orig.toLowerCase();
+      if (lower.indexOf(needle) === -1){ span.textContent = orig; return; }
+      var out = '', i = 0;
+      while (true){
+        var idx = lower.indexOf(needle, i);
+        if (idx === -1){ out += esc(orig.slice(i)); break; }
+        out += esc(orig.slice(i, idx)) + '<mark class="pdfv-hit">' + esc(orig.slice(idx, idx + needle.length)) + '</mark>';
+        i = idx + needle.length;
+      }
+      span.innerHTML = out;
+    });
+    // Re-mark whichever occurrence is "current" if it happens to be on this page.
+    if (pdfv.searchIndex >= 0){
+      var m = pdfv.searchMatches[pdfv.searchIndex];
+      if (m && m.page === entry.num){
+        var marks = entry.textLayerEl.querySelectorAll('mark.pdfv-hit');
+        var mark = marks[m.occurrence];
+        if (mark) mark.classList.add('pdfv-hit-current');
+      }
+    }
+  }
+
+  /* ---- fullscreen, download, print ---- */
+  window.pdfvToggleFullscreen = function pdfvToggleFullscreen(){
+    var el = document.getElementById('pdfv-overlay');
+    if (!document.fullscreenElement){
+      var req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) req.call(el);
+    } else {
+      var exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document);
+    }
+  };
+  function pdfvFullscreenChangeHandler(){
+    pdfv.fullscreen = !!document.fullscreenElement;
+    var btn = document.getElementById('pdfv-fullscreen');
+    if (btn) btn.setAttribute('aria-pressed', String(pdfv.fullscreen));
+  }
+  window.pdfvDownload = async function pdfvDownload(){
+    try {
+      var resp = await fetch(pdfv.url);
+      var blob = await resp.blob();
+      var blobUrl = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = pdfv.fileName || 'document.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 4000);
+    } catch(_err){
+      // Cross-origin fetch blocked or offline — falling back still gets the file in front of them.
+      window.open(pdfv.url, '_blank', 'noopener');
+    }
+  };
+  window.pdfvPrint = function pdfvPrint(){
+    var existing = document.getElementById('pdfv-print-frame');
+    if (existing) existing.remove();
+    var frame = document.createElement('iframe');
+    frame.id = 'pdfv-print-frame';
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    frame.src = pdfv.url;
+    document.body.appendChild(frame);
+    frame.onload = function(){
+      try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+      catch(_e){ window.open(pdfv.url, '_blank', 'noopener'); }
+    };
+  };
+
+  /* ---- mobile swipe-to-change-page (touch only; mouse/trackpad keep native scroll + Ctrl+wheel zoom) ---- */
+  var pdfvPointerStartX = null, pdfvPointerStartY = null, pdfvPointerActive = false, pdfvPointerId = null;
+  window.pdfvPointerDown = function pdfvPointerDown(e){
+    if (e.pointerType !== 'touch' || e.isPrimary === false) return;
+    pdfvPointerActive = true;
+    pdfvPointerId = e.pointerId;
+    pdfvPointerStartX = e.clientX;
+    pdfvPointerStartY = e.clientY;
+  };
+  window.pdfvPointerUp = function pdfvPointerUp(e){
+    if (!pdfvPointerActive || e.pointerId !== pdfvPointerId) return;
+    pdfvPointerActive = false;
+    // Only swipe-navigate when not zoomed in past fit-width — otherwise a horizontal drag is for
+    // panning around a zoomed page, which the container's native touch-scroll already handles.
+    var fitW = pdfvComputeFitScale('width');
+    if (pdfv.scale > fitW * 1.05) return;
+    var dx = e.clientX - pdfvPointerStartX;
+    var dy = e.clientY - pdfvPointerStartY;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.8){
+      if (dx > 0) window.pdfvPrevPage(); else window.pdfvNextPage();
+    }
+  };
+
   /** Same as render(), but without scrolling back to the top — for actions like changing a
    *  table's sort order or a filter, where the user wants to keep looking at what they were already viewing. */
   function renderPreservingScroll(){
