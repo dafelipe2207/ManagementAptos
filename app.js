@@ -22,6 +22,8 @@ import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
+import * as cleaningService from './services/cleaningService.js';
+import * as trashService from './services/trashService.js';
 
 (function(){
   "use strict";
@@ -43,6 +45,12 @@ import * as recurringBillService from './services/recurringBillService.js';
   var propertyAssignments = []; // [{id, propertyId, profileId}] — which Administrator sees which property (super_admin only, loaded in bootstrapData)
   var maintenanceRequests = [];
   var notificationsList = [];
+  var cleaningTasks = [];
+  var cleaningSubmissions = [];
+  var cleaningComments = [];
+  var trashSchedule = [];
+  var WEEKDAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var signedUrlCache = {}; // "bucket|path" -> { url, expiresAt }
   var PHONE_LOGIN_SUFFIX = '@tenant.belmontmanager.internal'; // must match the create-user Edge Function exactly
   function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
   function phoneDigitsOnly(raw){ return (raw || '').replace(/[^0-9]/g, ''); }
@@ -664,6 +672,11 @@ import * as recurringBillService from './services/recurringBillService.js';
    */
   function buildCalendarEvents(){
     var events = [];
+    // A tenant has no access to the bill/tenant/property detail pages (router blocks them — see
+    // render()), and must never see anything about the landlord's own lease with the real estate
+    // agent — so notification links point at pages a tenant can actually open, and real-estate
+    // lease/inspection events are skipped for them entirely.
+    var tenantMode = isTenantRole();
     rentCharges.forEach(function(c){
       if (c.status === 'paid') return; // already resolved, doesn't contribute to the calendar
       var t = tenantOf(c.tenantId);
@@ -689,7 +702,7 @@ import * as recurringBillService from './services/recurringBillService.js';
             date: b.dueDate,
             kind: kind,
             title: t.fullName + ' owes ' + money(a.amount) + ' — ' + b.provider,
-            href: '#/bills/' + b.id
+            href: tenantMode ? '#/bills' : ('#/bills/' + b.id)
           });
         });
       } else {
@@ -697,30 +710,34 @@ import * as recurringBillService from './services/recurringBillService.js';
           date: b.dueDate,
           kind: kind,
           title: b.provider + ' — Bill due',
-          href: '#/bills/' + b.id
+          href: tenantMode ? '#/bills' : ('#/bills/' + b.id)
         });
       }
     });
     tenants.forEach(function(t){
       if (t.rentAmount <= 0) return; // owner: doesn't generate tenancy events
-      events.push({ date: t.moveInDate, kind: 'move', title: t.fullName + ' — Move-in', href: '#/tenants/' + t.id });
+      events.push({ date: t.moveInDate, kind: 'move', title: t.fullName + ' — Move-in', href: tenantMode ? '#/payments' : ('#/tenants/' + t.id) });
       var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
-      if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: '#/tenants/' + t.id });
+      if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: tenantMode ? '#/payments' : ('#/tenants/' + t.id) });
     });
-    properties.forEach(function(p){
-      var nextDue = nextLeaseDueDate(p, TODAY);
-      if (nextDue){
-        events.push({
-          date: nextDue,
-          kind: daysBetween(TODAY, nextDue) <= 2 ? 'overdue' : 'due',
-          title: p.name + ' — Rent due to real estate' + (p.leasePaymentAmount!=null ? ' (' + money(p.leasePaymentAmount) + ')' : ''),
-          href: '#/properties/' + p.id
-        });
-      }
-      if (p.nextInspectionDate){
-        events.push({ date: p.nextInspectionDate, kind: 'move', title: p.name + ' — Real estate inspection', href: '#/properties/' + p.id });
-      }
-    });
+    if (!tenantMode){
+      // The landlord's own lease payments/inspections with the real estate agent — never a
+      // tenant concern, and never something a tenant should see the numbers for.
+      properties.forEach(function(p){
+        var nextDue = nextLeaseDueDate(p, TODAY);
+        if (nextDue){
+          events.push({
+            date: nextDue,
+            kind: daysBetween(TODAY, nextDue) <= 2 ? 'overdue' : 'due',
+            title: p.name + ' — Rent due to real estate' + (p.leasePaymentAmount!=null ? ' (' + money(p.leasePaymentAmount) + ')' : ''),
+            href: '#/properties/' + p.id
+          });
+        }
+        if (p.nextInspectionDate){
+          events.push({ date: p.nextInspectionDate, kind: 'move', title: p.name + ' — Real estate inspection', href: '#/properties/' + p.id });
+        }
+      });
+    }
     return events;
   }
   function pad2(n){ return n < 10 ? '0'+n : ''+n; }
@@ -791,6 +808,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     { hash:'#/profits', label:'Profits', icon:'chart', primary:false },
     { hash:'#/properties', label:'Properties', icon:'building', primary:false },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
+    { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
     { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
     { hash:'#/documents', label:'Documents', icon:'document', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
@@ -804,6 +822,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
     { hash:'#/documents', label:'Documents', icon:'document', primary:true },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
+    { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
   ];
@@ -4565,11 +4584,12 @@ import * as recurringBillService from './services/recurringBillService.js';
     var dbNotifHtml = notificationsList.length === 0 ? '' :
       '<div class="card" style="margin-bottom:14px;"><h2 style="text-transform:none;letter-spacing:0;">Updates</h2>' +
       notificationsList.slice(0, 20).map(function(n){
-        return '<div class="notif-row'+(n.isRead?' read':'')+'" style="padding:8px 0;">'+
+        var clickAttr = notifDetailClickAttr(n);
+        return '<div class="notif-row'+(n.isRead?' read':'')+'"'+clickAttr+' style="padding:8px 0;'+(clickAttr?'cursor:pointer;':'')+'">'+
           '<span style="min-width:0;flex:1;"><div style="font-weight:600;font-size:13.5px;">'+esc(n.title)+'</div>'+
           (n.body ? '<div class="meta" style="font-size:12px;color:var(--text-dim);">'+esc(n.body)+'</div>' : '')+
           '<div class="meta" style="font-size:11px;color:var(--text-faint);">'+shortDate((n.createdAt||'').slice(0,10))+'</div></span>'+
-          (n.isRead ? '' : '<button class="notif-dot-btn" title="Mark as read" onclick="markDbNotifRead(\''+n.id+'\')"><span class="notif-dot unread"></span></button>')+
+          (n.isRead ? '' : '<button class="notif-dot-btn" title="Mark as read" onclick="event.stopPropagation();markDbNotifRead(\''+n.id+'\')"><span class="notif-dot unread"></span></button>')+
           '</div>';
       }).join('') + '</div>';
 
@@ -4579,6 +4599,24 @@ import * as recurringBillService from './services/recurringBillService.js';
       rows +
       '<div class="card" style="margin-top:14px;"><h2 style="text-transform:none;letter-spacing:0;">About notifications</h2>'+
       "<p style=\"font-size:13px;color:var(--text-dim);margin:0;\">This is an in-app notification centre — check this screen when you open the app. Real push notifications (system alerts even when the app is closed) need a backend and browser permissions, and aren't available yet.</p></div>";
+  }
+
+  /** Returns a ready-to-splice ` onclick="..."` attribute that opens whatever this DB notification
+   *  is actually about (so selecting it shows the real detail, not the dashboard) — or '' when
+   *  there's nothing to open. Marks it read at the same time, same as the dot button does. */
+  function notifDetailClickAttr(n){
+    var openCall = null;
+    if (n.relatedTable === 'maintenance_requests' && n.relatedId){
+      openCall = 'openMaintenanceModal(\''+n.relatedId+'\')';
+    } else if (n.relatedTable === 'bills' && n.relatedId){
+      openCall = isTenantRole() ? 'location.hash=\'#/bills\'' : ('location.hash=\'#/bills/'+n.relatedId+'\'');
+    } else if (n.relatedTable === 'tenants' && n.relatedId){
+      openCall = isTenantRole() ? 'location.hash=\'#/\'' : ('location.hash=\'#/tenants/'+n.relatedId+'\'');
+    } else if (n.relatedTable === 'cleaning_tasks' && n.relatedId){
+      openCall = 'location.hash=\'#/cleaning\'';
+    }
+    if (!openCall) return '';
+    return ' onclick="markDbNotifRead(\''+n.id+'\');'+openCall+'"';
   }
 
   async function markDbNotifRead(id){
@@ -4745,6 +4783,14 @@ import * as recurringBillService from './services/recurringBillService.js';
   window.runLocalMigration = runLocalMigration;
 
   function renderSettings(){
+    if (isTenantRole()){
+      return pageHeader('Settings', '') +
+        '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Account</h2>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+        '<button class="mini-btn" onclick="openChangePasswordModal()">Change password</button>'+
+        '<button class="mini-btn" onclick="signOutAndReload()">Sign out</button>'+
+        '</div></div>';
+    }
     var pin = getAppPin();
     var hasLocalData = migrationService.hasLocalData();
     var migrationCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Migrate local data to cloud</h2>'+
@@ -4872,6 +4918,7 @@ import * as recurringBillService from './services/recurringBillService.js';
             '</p>'+
             '<p style="font-size:11.5px;color:var(--text-faint);margin:0;">'+
             (MAINTENANCE_CATEGORY_LABEL[m.category]||m.category) + ' · Priority: ' + m.priority + ' · ' + shortDate((m.createdAt||'').slice(0,10)) +
+            ((m.photoPaths||[]).length ? ' · 📷 '+m.photoPaths.length : '') +
             '</p>'+
             '</div>';
         }).join('');
@@ -4916,13 +4963,32 @@ import * as recurringBillService from './services/recurringBillService.js';
     document.getElementById('maintenance-status').value = m ? m.status : 'open';
     document.getElementById('maintenance-photo').value = '';
     var photoRow = document.getElementById('maintenance-photo').closest('.form-row');
-    if (photoRow) photoRow.hidden = !!(m && !staff);
+    if (photoRow) photoRow.hidden = false;
     document.getElementById('maintenance-modal-error').hidden = true;
     document.getElementById('maintenance-modal').hidden = false;
     var saveBtn = document.querySelector('#maintenance-modal .mini-btn.primary');
-    if (saveBtn) saveBtn.hidden = !!(m && !staff);
+    if (saveBtn) saveBtn.hidden = false;
+    renderMaintenancePhotosPreview(m ? (m.photoPaths||[]) : []);
   }
   window.openMaintenanceModal = openMaintenanceModal;
+
+  /** Shows the request's already-uploaded photos as small thumbnails (signed URLs, loaded
+   *  async) above the file picker, so re-opening a request doesn't look like it lost its photos. */
+  function renderMaintenancePhotosPreview(existingPaths){
+    var box = document.getElementById('maintenance-photos-preview');
+    if (!box) return;
+    box.innerHTML = '';
+    (existingPaths||[]).forEach(function(path){
+      var img = document.createElement('img');
+      img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;';
+      img.title = 'Open photo';
+      storageService.getSignedUrl('maintenance-photos', path, 600).then(function(url){
+        img.src = url;
+        img.onclick = function(){ window.open(url, '_blank', 'noopener'); };
+      }).catch(function(){ /* ignore a single broken thumbnail */ });
+      box.appendChild(img);
+    });
+  }
 
   function closeMaintenanceModal(){
     document.getElementById('maintenance-modal').hidden = true;
@@ -4966,18 +5032,19 @@ import * as recurringBillService from './services/recurringBillService.js';
       tenantId = myTenant.id;
     }
 
-    var photoFile = document.getElementById('maintenance-photo').files[0];
+    var photoFiles = document.getElementById('maintenance-photo').files;
     var saveBtn = document.querySelector('#maintenance-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
     errorEl.hidden = true;
     try {
-      var photoPath = existing ? existing.photoPath : null;
-      if (photoFile){
-        photoPath = await storageService.uploadMaintenancePhoto(photoFile);
+      var photoPaths = existing ? (existing.photoPaths || []).slice() : [];
+      if (photoFiles && photoFiles.length){
+        var uploaded = await storageService.uploadMaintenancePhotos(photoFiles);
+        photoPaths = photoPaths.concat(uploaded);
       }
       var draft = { propertyId:propertyId, roomId:roomId, tenantId:tenantId, title:title, description:description,
-        category:category, priority:priority, photoPath:photoPath, status: existing ? status : 'open',
+        category:category, priority:priority, photoPaths:photoPaths, status: existing ? status : 'open',
         assignedTo: existing ? existing.assignedTo : null };
       if (existing){
         var saved = await maintenanceService.update(existing.id, draft);
@@ -5005,6 +5072,343 @@ import * as recurringBillService from './services/recurringBillService.js';
     }
   }
   window.saveMaintenanceForm = saveMaintenanceForm;
+
+  /* ============ Cleaning organizer + trash agenda ============
+   * cleaningTasks: one row per (room, scheduled date) — "it's this room's turn on this date".
+   * cleaningSubmissions: the tenant's photos of how it turned out (a task can have more than one,
+   * if they add photos more than once). cleaningComments: the admin's observations on those
+   * photos. trashSchedule: which room takes which bin out on which day of the week — a separate,
+   * simpler weekly agenda (not tied to specific dates). */
+  function cleaningTaskSubmissions(taskId){ return cleaningSubmissions.filter(function(s){ return s.taskId===taskId; }); }
+  function cleaningTaskComments(taskId){ return cleaningComments.filter(function(c){ return c.taskId===taskId; }); }
+  function cleaningPhotoThumbsHtml(photoPaths){
+    return (photoPaths||[]).map(function(path){
+      return '<img class="lazy-thumb" data-bucket="cleaning-photos" data-path="'+esc(path)+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);" />';
+    }).join('');
+  }
+
+  function renderCleaning(){
+    return isStaff() ? renderCleaningStaff() : renderCleaningTenant();
+  }
+
+  function renderCleaningStaff(){
+    var sorted = cleaningTasks.slice().sort(function(a,b){ return a.scheduledDate.localeCompare(b.scheduledDate); });
+    var upcoming = sorted.filter(function(t){ return t.scheduledDate >= TODAY; });
+    var past = sorted.filter(function(t){ return t.scheduledDate < TODAY; }).reverse().slice(0, 20);
+    function taskRow(t){
+      var p = propertyOf(t.propertyId), r = roomOf(t.roomId);
+      var subs = cleaningTaskSubmissions(t.id);
+      var statusBadge = t.status==='reviewed' ? badge('paid','Reviewed') : (subs.length ? badge('overdue','Needs review') : badge('neutral','Pending'));
+      return '<div class="card" style="cursor:pointer;" onclick="openCleaningDetailModal(\''+t.id+'\')">'+
+        '<div class="detail-head" style="margin-top:0;align-items:center;">'+
+        '<h2 style="margin:0;font-size:14px;">'+esc(r?r.name:'—')+' · '+esc(p?p.name:'—')+'</h2>'+statusBadge+
+        '</div>'+
+        '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+shortDate(t.scheduledDate)+
+        (subs.length ? ' · '+subs.length+' photo submission'+(subs.length>1?'s':'') : ' · no photos yet')+
+        '</p></div>';
+    }
+    var taskListHtml = sorted.length===0
+      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No cleaning tasks scheduled yet.</p></div>'
+      : upcoming.map(taskRow).join('') +
+        (past.length ? '<h3 style="margin:18px 0 8px;font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+past.map(taskRow).join('') : '');
+
+    var trashSorted = trashSchedule.slice().sort(function(a,b){ return a.dayOfWeek-b.dayOfWeek; });
+    var trashListHtml = trashSorted.length===0
+      ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No trash agenda set up yet.</p>'
+      : trashSorted.map(function(x){
+          var p = propertyOf(x.propertyId), r = roomOf(x.roomId);
+          return '<div class="field-row" style="cursor:pointer;" onclick="openTrashModal(\''+x.id+'\')">'+
+            '<span class="k">'+WEEKDAY_NAMES[x.dayOfWeek]+'</span>'+
+            '<span class="v" style="font-weight:400;">'+esc(r?r.name:'—')+' · '+esc(p?p.name:'—')+' — '+esc(x.trashType)+(x.notes?' ('+esc(x.notes)+')':'')+'</span>'+
+            '</div>';
+        }).join('');
+
+    return pageHeader('Cleaning', "Who cleans which room and when, plus the trash agenda.") +
+      '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Cleaning schedule</h2>'+
+      '<button class="mini-btn primary" onclick="openCleaningTaskModal()">+ Schedule cleaning</button></div>'+
+      taskListHtml +
+      '<div class="detail-head" style="margin-top:22px;align-items:center;"><h2 style="margin:0;">Trash agenda</h2>'+
+      '<button class="mini-btn primary" onclick="openTrashModal()">+ Add to trash agenda</button></div>'+
+      '<div class="card">'+trashListHtml+'</div>';
+  }
+
+  function renderCleaningTenant(){
+    var t = myTenantRecord();
+    if (!t || !t.roomId){
+      return pageHeader('Cleaning', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
+    }
+    var myTasks = cleaningTasks.filter(function(x){ return x.roomId===t.roomId; }).sort(function(a,b){ return b.scheduledDate.localeCompare(a.scheduledDate); });
+    var taskHtml = myTasks.length===0
+      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No cleaning turns scheduled for your room yet.</p></div>'
+      : myTasks.map(function(task){
+          var subs = cleaningTaskSubmissions(task.id);
+          var comments = cleaningTaskComments(task.id);
+          var statusBadge = task.status==='reviewed' ? badge('paid','Reviewed') : (subs.length ? badge('overdue','Awaiting review') : badge('neutral','Pending'));
+          var photosHtml = subs.length===0 ? '' :
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'+subs.map(function(s){ return cleaningPhotoThumbsHtml(s.photoPaths); }).join('')+'</div>';
+          var commentsHtml = comments.length===0 ? '' :
+            '<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">'+comments.map(function(c){
+              return '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">💬 '+esc(c.comment)+'</p>';
+            }).join('')+'</div>';
+          return '<div class="card">'+
+            '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+shortDate(task.scheduledDate)+'</h2>'+statusBadge+'</div>'+
+            photosHtml + commentsHtml +
+            '<button class="mini-btn primary" style="margin-top:10px;" onclick="openCleaningSubmitModal(\''+task.id+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>'+
+            '</div>';
+        }).join('');
+
+    var myTrash = trashSchedule.filter(function(x){ return x.roomId===t.roomId; }).sort(function(a,b){ return a.dayOfWeek-b.dayOfWeek; });
+    var trashHtml = myTrash.length===0
+      ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No trash schedule set for your room yet.</p>'
+      : myTrash.map(function(x){
+          return '<div class="field-row"><span class="k">'+WEEKDAY_NAMES[x.dayOfWeek]+'</span><span class="v" style="font-weight:400;">'+esc(x.trashType)+(x.notes?' · '+esc(x.notes):'')+'</span></div>';
+        }).join('');
+
+    return pageHeader('Cleaning', "Your room's cleaning turn and trash day.") +
+      '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:0 0 8px;">Cleaning schedule</h2>'+
+      taskHtml +
+      '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">Trash day</h2>'+
+      '<div class="card">'+trashHtml+'</div>';
+  }
+
+  /* ---- Staff: schedule a cleaning task ---- */
+  function onCleaningTaskPropertyChange(){
+    var propId = document.getElementById('cleaning-task-property').value;
+    var roomSelect = document.getElementById('cleaning-task-room');
+    roomSelect.innerHTML = roomsOf(propId).map(function(r){ return '<option value="'+r.id+'">'+esc(r.name)+'</option>'; }).join('');
+  }
+  window.onCleaningTaskPropertyChange = onCleaningTaskPropertyChange;
+
+  function openCleaningTaskModal(){
+    var propSelect = document.getElementById('cleaning-task-property');
+    propSelect.innerHTML = properties.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
+    propSelect.value = properties[0] ? properties[0].id : '';
+    onCleaningTaskPropertyChange();
+    document.getElementById('cleaning-task-date').value = TODAY;
+    document.getElementById('cleaning-task-repeat').value = '1';
+    document.getElementById('cleaning-task-modal-error').hidden = true;
+    document.getElementById('cleaning-task-modal').hidden = false;
+  }
+  window.openCleaningTaskModal = openCleaningTaskModal;
+
+  function closeCleaningTaskModal(){ document.getElementById('cleaning-task-modal').hidden = true; }
+  window.closeCleaningTaskModal = closeCleaningTaskModal;
+
+  async function saveCleaningTaskForm(){
+    var propertyId = document.getElementById('cleaning-task-property').value;
+    var roomId = document.getElementById('cleaning-task-room').value;
+    var date = document.getElementById('cleaning-task-date').value;
+    var weeks = parseInt(document.getElementById('cleaning-task-repeat').value, 10) || 1;
+    var errorEl = document.getElementById('cleaning-task-modal-error');
+    if (!propertyId || !roomId || !date){
+      errorEl.textContent = 'Choose a property, room and date.';
+      errorEl.hidden = false;
+      return;
+    }
+    var dates = [];
+    for (var i=0; i<Math.max(1, Math.min(52, weeks)); i++){ dates.push(stepDateIso(date, i*7)); }
+    try {
+      var created = await cleaningService.createTasks(propertyId, roomId, dates);
+      cleaningTasks = cleaningTasks.concat(created);
+      closeCleaningTaskModal();
+      showToast('Cleaning schedule updated.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.saveCleaningTaskForm = saveCleaningTaskForm;
+
+  /* ---- Staff: task detail — view submitted photos, comment, mark reviewed ---- */
+  var cleaningDetailTaskId = null;
+  function openCleaningDetailModal(taskId){
+    cleaningDetailTaskId = taskId;
+    var task = cleaningTasks.find(function(t){ return t.id===taskId; });
+    if (!task) return;
+    var p = propertyOf(task.propertyId), r = roomOf(task.roomId);
+    document.getElementById('cleaning-detail-title').textContent = (r?r.name:'Room') + ' · ' + shortDate(task.scheduledDate);
+    var subs = cleaningTaskSubmissions(taskId);
+    var comments = cleaningTaskComments(taskId);
+    var body = '<div class="field-row"><span class="k">Property</span><span class="v">'+esc(p?p.name:'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Status</span><span class="v">'+(task.status==='reviewed'?'Reviewed':(subs.length?'Needs review':'Pending'))+'</span></div>'+
+      (subs.length===0
+        ? '<p style="font-size:13px;color:var(--text-dim);margin:10px 0 0;">No photos submitted yet.</p>'
+        : subs.map(function(s){
+            var tn = tenantOf(s.tenantId);
+            return '<div style="margin-top:12px;"><p style="font-size:12px;color:var(--text-faint);margin:0 0 4px;">'+esc(tn?tn.fullName:'Tenant')+' · '+shortDate((s.createdAt||'').slice(0,10))+(s.note?' — '+esc(s.note):'')+'</p>'+
+              '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+cleaningPhotoThumbsHtml(s.photoPaths)+'</div></div>';
+          }).join(''))+
+      (comments.length===0 ? '' : '<div style="margin-top:14px;"><p style="font-size:12px;color:var(--text-faint);margin:0 0 4px;">Comments</p>'+
+        comments.map(function(c){ return '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 4px;">💬 '+esc(c.comment)+' <span style="color:var(--text-faint);">· '+shortDate((c.createdAt||'').slice(0,10))+'</span></p>'; }).join('')+'</div>');
+    document.getElementById('cleaning-detail-body').innerHTML = body;
+    document.getElementById('cleaning-detail-comment').value = '';
+    document.getElementById('cleaning-detail-review-btn').hidden = task.status==='reviewed';
+    document.getElementById('cleaning-detail-modal-error').hidden = true;
+    document.getElementById('cleaning-detail-modal').hidden = false;
+    hydrateLazyThumbs();
+  }
+  window.openCleaningDetailModal = openCleaningDetailModal;
+
+  function closeCleaningDetailModal(){ document.getElementById('cleaning-detail-modal').hidden = true; cleaningDetailTaskId = null; }
+  window.closeCleaningDetailModal = closeCleaningDetailModal;
+
+  async function saveCleaningComment(){
+    var comment = document.getElementById('cleaning-detail-comment').value.trim();
+    var errorEl = document.getElementById('cleaning-detail-modal-error');
+    if (!comment){ errorEl.textContent = 'Write a comment first.'; errorEl.hidden = false; return; }
+    var task = cleaningTasks.find(function(t){ return t.id===cleaningDetailTaskId; });
+    if (!task) return;
+    try {
+      var created = await cleaningService.addComment(task.id, task.propertyId, task.roomId, currentProfile ? currentProfile.id : null, comment);
+      cleaningComments.push(created);
+      var subs = cleaningTaskSubmissions(task.id);
+      var reporterTenant = subs.length ? tenantOf(subs[subs.length-1].tenantId) : (currentTenantOf(task.roomId));
+      if (reporterTenant && reporterTenant.authUserId){
+        await notificationService.notify(reporterTenant.authUserId, 'New comment on your cleaning photos', comment, 'cleaning_tasks', task.id);
+      }
+      showToast('Comment added.', 'success');
+      openCleaningDetailModal(task.id);
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.saveCleaningComment = saveCleaningComment;
+
+  async function markCleaningTaskReviewed(){
+    var task = cleaningTasks.find(function(t){ return t.id===cleaningDetailTaskId; });
+    if (!task) return;
+    try {
+      var saved = await cleaningService.setTaskStatus(task.id, 'reviewed');
+      Object.assign(task, saved);
+      closeCleaningDetailModal();
+      showToast('Marked as reviewed.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not update status. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.markCleaningTaskReviewed = markCleaningTaskReviewed;
+
+  /* ---- Tenant: submit cleaning photos ---- */
+  var cleaningSubmitTaskId = null;
+  function openCleaningSubmitModal(taskId){
+    cleaningSubmitTaskId = taskId;
+    document.getElementById('cleaning-submit-photos').value = '';
+    document.getElementById('cleaning-submit-note').value = '';
+    document.getElementById('cleaning-submit-modal-error').hidden = true;
+    document.getElementById('cleaning-submit-modal').hidden = false;
+  }
+  window.openCleaningSubmitModal = openCleaningSubmitModal;
+
+  function closeCleaningSubmitModal(){ document.getElementById('cleaning-submit-modal').hidden = true; cleaningSubmitTaskId = null; }
+  window.closeCleaningSubmitModal = closeCleaningSubmitModal;
+
+  async function saveCleaningSubmitForm(){
+    var task = cleaningTasks.find(function(t){ return t.id===cleaningSubmitTaskId; });
+    var errorEl = document.getElementById('cleaning-submit-modal-error');
+    var t = myTenantRecord();
+    if (!task || !t){ errorEl.textContent = 'Could not find this cleaning task.'; errorEl.hidden = false; return; }
+    var files = document.getElementById('cleaning-submit-photos').files;
+    if (!files || !files.length){ errorEl.textContent = 'Add at least one photo.'; errorEl.hidden = false; return; }
+    var note = document.getElementById('cleaning-submit-note').value.trim();
+    var saveBtn = document.querySelector('#cleaning-submit-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Uploading…'; }
+    try {
+      var photoPaths = await storageService.uploadCleaningPhotos(files);
+      var created = await cleaningService.createSubmission(task.id, task.propertyId, task.roomId, t.id, photoPaths, note);
+      cleaningSubmissions.push(created);
+      closeCleaningSubmitModal();
+      showToast('Photos submitted.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveCleaningSubmitForm = saveCleaningSubmitForm;
+
+  /* ---- Staff: trash agenda entries ---- */
+  function onTrashPropertyChange(){
+    var propId = document.getElementById('trash-property').value;
+    var roomSelect = document.getElementById('trash-room');
+    roomSelect.innerHTML = roomsOf(propId).map(function(r){ return '<option value="'+r.id+'">'+esc(r.name)+'</option>'; }).join('');
+  }
+  window.onTrashPropertyChange = onTrashPropertyChange;
+
+  var trashModalEditId = null;
+  function openTrashModal(id){
+    trashModalEditId = id || null;
+    var x = id ? trashSchedule.find(function(i){ return i.id===id; }) : null;
+    document.getElementById('trash-modal-title').textContent = x ? 'Edit trash agenda entry' : 'Add to trash agenda';
+    var propSelect = document.getElementById('trash-property');
+    propSelect.innerHTML = properties.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
+    propSelect.value = x ? x.propertyId : (properties[0] ? properties[0].id : '');
+    onTrashPropertyChange();
+    if (x) document.getElementById('trash-room').value = x.roomId;
+    document.getElementById('trash-day').value = x ? String(x.dayOfWeek) : '1';
+    document.getElementById('trash-type').value = x ? x.trashType : '';
+    document.getElementById('trash-notes').value = x ? (x.notes||'') : '';
+    document.getElementById('trash-delete-btn').hidden = !x;
+    document.getElementById('trash-modal-error').hidden = true;
+    document.getElementById('trash-modal').hidden = false;
+  }
+  window.openTrashModal = openTrashModal;
+
+  function closeTrashModal(){ document.getElementById('trash-modal').hidden = true; trashModalEditId = null; }
+  window.closeTrashModal = closeTrashModal;
+
+  async function saveTrashForm(){
+    var propertyId = document.getElementById('trash-property').value;
+    var roomId = document.getElementById('trash-room').value;
+    var dayOfWeek = parseInt(document.getElementById('trash-day').value, 10);
+    var trashType = document.getElementById('trash-type').value.trim();
+    var notes = document.getElementById('trash-notes').value.trim();
+    var errorEl = document.getElementById('trash-modal-error');
+    if (!propertyId || !roomId || !trashType){
+      errorEl.textContent = 'Choose a property, room, and enter what kind of bin it is.';
+      errorEl.hidden = false;
+      return;
+    }
+    var draft = { propertyId:propertyId, roomId:roomId, dayOfWeek:dayOfWeek, trashType:trashType, notes:notes };
+    try {
+      if (trashModalEditId){
+        var saved = await trashService.update(trashModalEditId, draft);
+        var existing = trashSchedule.find(function(x){ return x.id===trashModalEditId; });
+        if (existing) Object.assign(existing, saved);
+      } else {
+        var created = await trashService.create(draft);
+        trashSchedule.push(created);
+      }
+      closeTrashModal();
+      showToast('Trash agenda saved.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.saveTrashForm = saveTrashForm;
+
+  async function deleteTrashEntryConfirm(){
+    if (!trashModalEditId) return;
+    if (!window.confirm('Remove this entry from the trash agenda?')) return;
+    try {
+      await trashService.remove(trashModalEditId);
+      trashSchedule = trashSchedule.filter(function(x){ return x.id!==trashModalEditId; });
+      closeTrashModal();
+      showToast('Removed.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not remove. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.deleteTrashEntryConfirm = deleteTrashEntryConfirm;
 
   /* ============ Users (Super Admin only) ============ */
   var ROLE_LABEL = { super_admin:'Super Admin', administrator:'Administrator', tenant:'Tenant' };
@@ -5456,21 +5860,26 @@ import * as recurringBillService from './services/recurringBillService.js';
     if (!t) return pageHeader('My Dashboard', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
     var p = propertyOf(t.propertyId);
     var r = t.roomId ? roomOf(t.roomId) : null;
-    var myPayments = paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.paymentDate||'').localeCompare(a.paymentDate||''); });
-    var latestPayment = myPayments[0];
     var myAllocations = [];
     bills.forEach(function(b){
       if (isTenantHiddenProvider(b.provider)) return;
       (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); });
     });
-    var outstanding = myAllocations.filter(function(x){ return !x.alloc.paid; }).reduce(function(s,x){ return s+x.alloc.amount; }, 0);
+    var unpaidAllocations = myAllocations.filter(function(x){ return !x.alloc.paid; }).sort(function(a,b){ return (a.bill.dueDate||'').localeCompare(b.bill.dueDate||''); });
+    var outstanding = unpaidAllocations.reduce(function(s,x){ return s+x.alloc.amount; }, 0);
+    var outstandingBreakdown = unpaidAllocations.length === 0 ? '' :
+      '<details class="outstanding-breakdown"><summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">What this includes ('+unpaidAllocations.length+')</summary>'+
+      unpaidAllocations.map(function(x){
+        return '<div class="field-row" style="padding-left:12px;"><span class="k" style="font-size:12.5px;">'+esc(x.bill.provider||x.bill.billType||'Bill')+' · due '+shortDate(x.bill.dueDate)+'</span><span class="v" style="font-size:12.5px;">'+money(x.alloc.amount)+'</span></div>';
+      }).join('')+
+      '</details>';
     return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') +
       '<div class="card">'+
-      '<div class="field-row"><span class="k">Property</span><span class="v">'+(p?esc(p.name):'—')+'</span></div>'+
+      '<div class="field-row"><span class="k">Property</span><span class="v">'+(p?esc(p.address||p.name):'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Room</span><span class="v">'+(r?esc(r.name):'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+esc(t.rentFrequency)+'</span></div>'+
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
-      (latestPayment ? '<div class="field-row"><span class="k">Latest payment</span><span class="v">'+money(latestPayment.amount)+' on '+shortDate(latestPayment.paymentDate)+'</span></div>' : '')+
+      outstandingBreakdown+
       '</div>'+
       tenantRentHistoryHtml(t.id);
   }
@@ -6330,6 +6739,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     '#/payments': renderPayments,
     '#/bills': renderBills,
     '#/maintenance': renderMaintenance,
+    '#/cleaning': renderCleaning,
     '#/calendar': renderCalendar,
     '#/reports': renderReports,
     '#/profits': renderProfits,
@@ -6346,6 +6756,7 @@ import * as recurringBillService from './services/recurringBillService.js';
     '#/bills': renderTenantBills,
     '#/documents': renderTenantDocuments,
     '#/maintenance': renderMaintenance,
+    '#/cleaning': renderCleaning,
     '#/notifications': renderNotifications,
     '#/settings': renderSettings,
     '#/more': renderMore
@@ -6371,7 +6782,35 @@ import * as recurringBillService from './services/recurringBillService.js';
     else html = (ROUTES[hash] || ROUTES['#/'])();
     content.innerHTML = html;
     setActiveNav(hash);
+    hydrateLazyThumbs();
     if (!preserveScroll) window.scrollTo(0,0);
+  }
+
+  /** Signed URLs for a private Storage file are short-lived — cached in memory a little under
+   *  their real TTL so re-rendering the same page (e.g. after an unrelated toggle) doesn't
+   *  re-request one for every thumbnail already on screen. */
+  async function getCachedSignedUrl(bucket, path, ttlSeconds){
+    var key = bucket + '|' + path;
+    var cached = signedUrlCache[key];
+    var now = Date.now();
+    if (cached && cached.expiresAt > now + 5000) return cached.url;
+    var url = await storageService.getSignedUrl(bucket, path, ttlSeconds || 600);
+    signedUrlCache[key] = { url: url, expiresAt: now + (ttlSeconds||600)*1000 };
+    return url;
+  }
+  /** Fills in every `<img class="lazy-thumb" data-bucket=".." data-path="..">` placeholder left
+   *  by a page's HTML string with its real signed-URL image — used for cleaning photos (and
+   *  anywhere else a private-bucket thumbnail needs to show up in a plain list, not a modal). */
+  function hydrateLazyThumbs(){
+    document.querySelectorAll('img.lazy-thumb[data-path]').forEach(function(img){
+      var bucket = img.getAttribute('data-bucket');
+      var path = img.getAttribute('data-path');
+      if (!bucket || !path) return;
+      getCachedSignedUrl(bucket, path, 600).then(function(url){
+        img.src = url;
+        img.onclick = function(){ window.open(url, '_blank', 'noopener'); };
+      }).catch(function(){ /* one broken thumbnail shouldn't break the rest of the page */ });
+    });
   }
   /** Same as render(), but without scrolling back to the top — for actions like changing a
    *  table's sort order or a filter, where the user wants to keep looking at what they were already viewing. */
@@ -6383,7 +6822,7 @@ import * as recurringBillService from './services/recurringBillService.js';
   /* ============ Async bootstrap: load everything from Supabase in parallel, then render ============ */
   async function bootstrapData(){
     var results = await Promise.all([
-      propertyService.getAll(),
+      propertyService.getAll(isTenantRole()),
       roomService.getAll(),
       tenantService.getAll(),
       bondService.getAll(),
@@ -6394,7 +6833,11 @@ import * as recurringBillService from './services/recurringBillService.js';
       tenantDocumentService.getAll(),
       maintenanceService.getAll(),
       notificationService.getAll(),
-      recurringBillService.getAll()
+      recurringBillService.getAll(),
+      cleaningService.getAllTasks(),
+      cleaningService.getAllSubmissions(),
+      cleaningService.getAllComments(),
+      trashService.getAll()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -6412,6 +6855,10 @@ import * as recurringBillService from './services/recurringBillService.js';
     maintenanceRequests = results[9];
     notificationsList = results[10];
     recurringBills = results[11];
+    cleaningTasks = results[12];
+    cleaningSubmissions = results[13];
+    cleaningComments = results[14];
+    trashSchedule = results[15];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
