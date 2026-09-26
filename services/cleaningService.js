@@ -61,13 +61,13 @@ export async function getAllComments() {
   return data.map(commentFromRow);
 }
 
-/** Creates one task per date in `dates` (an array of 'YYYY-MM-DD' strings) for the same
- *  room — used by the "repeat weekly for N weeks" helper in the schedule form as much as for a
- *  single one-off date. */
-export async function createTasks(propertyId, roomId, dates) {
+/** Bulk-creates tasks from `rows` ([{propertyId, roomId, scheduledDate}, ...]) — used by the
+ *  weekly rotation generator, which spreads one date per week across every room in turn so each
+ *  room's turn comes back around every N weeks (N = room count). */
+export async function createTasksBulk(rows) {
   const userId = await getCurrentUserId();
-  const rows = dates.map(function(d){ return { user_id: userId, property_id: propertyId, room_id: roomId, scheduled_date: d }; });
-  const { data, error } = await supabase.from('cleaning_tasks').insert(rows).select();
+  const dbRows = rows.map(function(r){ return { user_id: userId, property_id: r.propertyId, room_id: r.roomId, scheduled_date: r.scheduledDate }; });
+  const { data, error } = await supabase.from('cleaning_tasks').insert(dbRows).select();
   if (error) throw error;
   return data.map(taskFromRow);
 }
