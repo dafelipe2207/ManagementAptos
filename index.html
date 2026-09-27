@@ -114,6 +114,46 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="payment-report-modal" hidden>
+    <div class="card modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">I made this payment</h2>
+      <p id="payment-report-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment date</label>
+      <input id="payment-report-date" class="modal-input" type="date" />
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment method</label>
+      <select id="payment-report-method" class="modal-input">
+        <option value="bank_transfer">Bank transfer</option>
+        <option value="cash">Cash</option>
+        <option value="card">Card</option>
+        <option value="other">Other</option>
+      </select>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reference (optional)</label>
+      <input id="payment-report-reference" class="modal-input" type="text" maxlength="120" />
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+        <button class="mini-btn" type="button" onclick="triggerPaymentReportProofUpload()">Attach proof (optional)</button>
+        <span id="payment-report-proof-status" style="font-size:11.5px;color:var(--text-faint);"></span>
+      </div>
+      <p id="payment-report-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closePaymentReportModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="submitPaymentReport()">I made this payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="reject-payment-modal" hidden>
+    <div class="card modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Reject payment report</h2>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reason (shown to the tenant)</label>
+      <textarea id="reject-payment-reason" class="modal-input" rows="3" placeholder="e.g. Payment could not be verified. Please provide proof of payment."></textarea>
+      <p id="reject-payment-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeRejectPaymentReportModal()">Cancel</button>
+        <button class="mini-btn danger" onclick="confirmRejectPaymentReport()">Reject Payment</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="history-modal" hidden>
     <div class="card modal-card">
       <h2 id="history-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
@@ -179,6 +219,7 @@
       <input type="file" id="import-input-gallery" accept="image/*" hidden onchange="handleImportFile(event)" />
       <input type="file" id="import-input-pdf" accept="application/pdf" hidden onchange="handleImportFile(event)" />
       <input type="file" id="receipt-input" accept="image/*,application/pdf" hidden onchange="handleReceiptFile(event)" />
+      <input type="file" id="payment-report-proof-input" accept="image/*,application/pdf" hidden onchange="handlePaymentReportProofFile(event)" />
       <datalist id="known-accounts-list"></datalist>
     </div>
   </div>
@@ -895,6 +936,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=72"></script>
+<script type="module" src="app.js?v=73"></script>
 </body>
 </html>
