@@ -7,12 +7,12 @@ import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js?v=3';
+import * as tenantService from './services/tenantService.js?v=4';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
 import * as billService from './services/billService.js?v=3';
-import * as billAllocationService from './services/billAllocationService.js?v=2';
+import * as billAllocationService from './services/billAllocationService.js?v=3';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=3';
@@ -23,6 +23,7 @@ import * as notificationService from './services/notificationService.js';
 import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js';
+import * as cleaningRotationService from './services/cleaningRotationService.js';
 import * as trashService from './services/trashService.js';
 import * as inspectionService from './services/inspectionService.js';
 
@@ -55,8 +56,10 @@ import * as inspectionService from './services/inspectionService.js';
   var cleaningTasks = [];
   var cleaningSubmissions = [];
   var cleaningComments = [];
+  var cleaningRotations = [];
   var trashSchedule = [];
   var inspectionSubmissions = [];
+  var inspectionComments = [];
   var signedUrlCache = {}; // "bucket|path" -> { url, expiresAt }
   var PHONE_LOGIN_SUFFIX = '@tenant.belmontmanager.internal'; // must match the create-user Edge Function exactly
   function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
@@ -1037,6 +1040,12 @@ import * as inspectionService from './services/inspectionService.js';
 
   function roomsOf(propertyId){ return rooms.filter(function(r){ return r.propertyId===propertyId; }); }
   function currentTenantOf(roomId){ return tenants.find(function(t){ return t.roomId===roomId; }); }
+  /** A room counts as occupied only while its tenant hasn't moved out — used by the cleaning
+   *  rotation to skip a vacant room's turn (see ensureCleaningRotationsUpToDate). */
+  function roomIsOccupied(roomId){
+    var t = tenants.find(function(x){ return x.roomId===roomId; });
+    return !!t && !tenantHasMovedOut(t);
+  }
   /** Looks for ANOTHER tenant (different from excludeTenantId) already assigned to this room
    *  with a stay whose dates overlap [moveInDate, moveOutDate]. A null moveOutDate
    *  means "still living there, no move-out date" (open-ended stay). A tenant who
@@ -4813,6 +4822,8 @@ import * as inspectionService from './services/inspectionService.js';
       openCall = isTenantRole() ? 'location.hash=\'#/\'' : ('location.hash=\'#/tenants/'+n.relatedId+'\'');
     } else if (n.relatedTable === 'cleaning_tasks' && n.relatedId){
       openCall = 'location.hash=\'#/cleaning\'';
+    } else if (n.relatedTable === 'inspection_submissions' && n.relatedId){
+      openCall = 'location.hash=\'#/inspection\'';
     }
     if (!openCall) return '';
     return ' onclick="markDbNotifRead(\''+n.id+'\');'+openCall+'"';
@@ -5320,31 +5331,46 @@ import * as inspectionService from './services/inspectionService.js';
     return isStaff() ? renderCleaningStaff() : renderCleaningTenant();
   }
 
+  function cleaningRotationOf(propertyId){ return cleaningRotations.find(function(r){ return r.propertyId===propertyId; }); }
+
+  /** Grouped by property (each with its own rotation setting and task list), same convention as
+   *  Inspection's staff view — an admin with several properties thinks property by property. */
   function renderCleaningStaff(){
-    var sorted = cleaningTasks.slice().sort(function(a,b){ return a.scheduledDate.localeCompare(b.scheduledDate); });
-    var upcoming = sorted.filter(function(t){ return t.scheduledDate >= TODAY; });
-    var past = sorted.filter(function(t){ return t.scheduledDate < TODAY; }).reverse().slice(0, 20);
     function taskRow(t){
-      var p = propertyOf(t.propertyId), r = roomOf(t.roomId);
       var subs = cleaningTaskSubmissions(t.id);
+      var r = roomOf(t.roomId);
       var statusBadge = t.status==='reviewed' ? badge('paid','Reviewed') : (subs.length ? badge('overdue','Needs review') : badge('neutral','Pending'));
       return '<div class="card" style="cursor:pointer;" onclick="openCleaningDetailModal(\''+t.id+'\')">'+
         '<div class="detail-head" style="margin-top:0;align-items:center;">'+
-        '<h2 style="margin:0;font-size:14px;">'+esc(r?r.name:'—')+' · '+esc(p?p.name:'—')+'</h2>'+statusBadge+
+        '<h2 style="margin:0;font-size:14px;">'+esc(r?r.name:'—')+'</h2>'+statusBadge+
         '</div>'+
         '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+shortDate(t.scheduledDate)+
         (subs.length ? ' · '+subs.length+' photo submission'+(subs.length>1?'s':'') : ' · no photos yet')+
         '</p></div>';
     }
-    var taskListHtml = sorted.length===0
-      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No cleaning tasks scheduled yet.</p></div>'
-      : upcoming.map(taskRow).join('') +
-        (past.length ? '<h3 style="margin:18px 0 8px;font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+past.map(taskRow).join('') : '');
+    var propIds = properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(p){ return p.id; });
+    var sectionsHtml = propIds.map(function(propId){
+      var p = propertyOf(propId);
+      var rot = cleaningRotationOf(propId);
+      var propTasks = cleaningTasks.filter(function(t){ return t.propertyId===propId; }).sort(function(a,b){ return a.scheduledDate.localeCompare(b.scheduledDate); });
+      var upcoming = propTasks.filter(function(t){ return t.scheduledDate >= TODAY; });
+      var past = propTasks.filter(function(t){ return t.scheduledDate < TODAY; }).reverse().slice(0, 10);
+      var rotationLine = rot
+        ? 'Every ' + rot.intervalDays + ' day' + (rot.intervalDays===1?'':'s') + ', starting ' + shortDate(rot.referenceDate) + '.'
+        : 'No rotation set up yet.';
+      var taskListHtml = propTasks.length===0
+        ? '<p style="font-size:13px;color:var(--text-dim);margin:0;">No cleaning turns scheduled yet.</p>'
+        : upcoming.map(taskRow).join('') +
+          (past.length ? '<h3 style="margin:14px 0 8px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+past.map(taskRow).join('') : '');
+      return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+esc(p?p.name:'—')+'</h2>'+
+        '<div class="card" style="margin-bottom:10px;">'+
+        '<div class="detail-head" style="margin-top:0;align-items:center;"><p style="margin:0;font-size:12.5px;color:var(--text-dim);">'+esc(rotationLine)+'</p>'+
+        '<button class="mini-btn" onclick="openCleaningTaskModal(\''+propId+'\')">'+(rot?'Edit rotation':'Set up rotation')+'</button></div></div>'+
+        taskListHtml;
+    }).join('');
 
-    return pageHeader('Cleaning', "Who cleans which room and when.") +
-      '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Cleaning schedule</h2>'+
-      '<button class="mini-btn primary" onclick="openCleaningTaskModal()">+ Generate rotation</button></div>'+
-      taskListHtml +
+    return pageHeader('Cleaning', "Who cleans which room and when, per property.") +
+      (sectionsHtml || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No properties yet.</p></div>') +
       '<p style="font-size:12px;color:var(--text-faint);margin:14px 0 0;">The trash agenda now lives on each property\'s page (Properties → open a property).</p>';
   }
 
@@ -5382,24 +5408,33 @@ import * as inspectionService from './services/inspectionService.js';
       '<div class="card">'+trashHtml+'</div>';
   }
 
-  /* ---- Staff: generate the weekly cleaning rotation ---- */
+  /* ---- Staff: set up / edit a property's standing cleaning rotation ---- */
   function onCleaningTaskPropertyChange(){
     var propId = document.getElementById('cleaning-task-property').value;
-    var roomCount = roomsOf(propId).length;
+    var rot = cleaningRotationOf(propId);
     var note = document.getElementById('cleaning-task-periodicity');
-    note.textContent = roomCount === 0
-      ? 'This property has no rooms yet.'
-      : 'With ' + roomCount + ' room' + (roomCount===1?'':'s') + ', each room\'s turn comes back around every ' + roomCount + ' week' + (roomCount===1?'':'s') + '.';
+    var deleteBtn = document.getElementById('cleaning-task-delete-btn');
+    var occCount = roomsOf(propId).filter(roomIsOccupied).length;
+    note.textContent = occCount === 0
+      ? 'This property has no occupied rooms right now — the rotation will start once a room is occupied.'
+      : 'Cycles through ' + occCount + ' occupied room' + (occCount===1?'':'s') + ' in turn; a room that moves out is skipped.';
+    if (rot){
+      document.getElementById('cleaning-task-interval').value = rot.intervalDays;
+      document.getElementById('cleaning-task-date').value = rot.referenceDate;
+      if (deleteBtn) deleteBtn.hidden = false;
+    } else {
+      document.getElementById('cleaning-task-interval').value = '7';
+      document.getElementById('cleaning-task-date').value = nextWeekdayIso(TODAY, 6); // default: coming Saturday
+      if (deleteBtn) deleteBtn.hidden = true;
+    }
   }
   window.onCleaningTaskPropertyChange = onCleaningTaskPropertyChange;
 
-  function openCleaningTaskModal(){
+  function openCleaningTaskModal(propertyId){
     var propSelect = document.getElementById('cleaning-task-property');
     propSelect.innerHTML = properties.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
-    propSelect.value = properties[0] ? properties[0].id : '';
+    propSelect.value = propertyId && properties.some(function(p){ return p.id===propertyId; }) ? propertyId : (properties[0] ? properties[0].id : '');
     onCleaningTaskPropertyChange();
-    document.getElementById('cleaning-task-date').value = nextWeekdayIso(TODAY, 6); // default: coming Saturday
-    document.getElementById('cleaning-task-repeat').value = '12';
     document.getElementById('cleaning-task-modal-error').hidden = true;
     document.getElementById('cleaning-task-modal').hidden = false;
   }
@@ -5410,25 +5445,25 @@ import * as inspectionService from './services/inspectionService.js';
 
   async function saveCleaningTaskForm(){
     var propertyId = document.getElementById('cleaning-task-property').value;
-    var startDate = document.getElementById('cleaning-task-date').value;
-    var weeks = parseInt(document.getElementById('cleaning-task-repeat').value, 10) || 1;
+    var referenceDate = document.getElementById('cleaning-task-date').value;
+    var intervalDays = Math.max(1, Math.min(90, parseInt(document.getElementById('cleaning-task-interval').value, 10) || 7));
     var errorEl = document.getElementById('cleaning-task-modal-error');
-    var propRooms = roomsOf(propertyId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-    if (!propertyId || !startDate || propRooms.length===0){
-      errorEl.textContent = 'Choose a property (with at least one room) and a start date.';
+    if (!propertyId || !referenceDate){
+      errorEl.textContent = 'Choose a property and a reference date.';
       errorEl.hidden = false;
       return;
     }
-    weeks = Math.max(1, Math.min(52, weeks));
-    var rows = [];
-    for (var i=0; i<weeks; i++){
-      rows.push({ propertyId: propertyId, roomId: propRooms[i % propRooms.length].id, scheduledDate: stepDateIso(startDate, i*7) });
-    }
     try {
-      var created = await cleaningService.createTasksBulk(rows);
-      cleaningTasks = cleaningTasks.concat(created);
+      var existing = cleaningRotationOf(propertyId);
+      var saved = await cleaningRotationService.upsertForProperty(existing, { propertyId: propertyId, intervalDays: intervalDays, referenceDate: referenceDate });
+      if (existing){
+        cleaningRotations = cleaningRotations.map(function(r){ return r.id===saved.id ? saved : r; });
+      } else {
+        cleaningRotations = cleaningRotations.concat([saved]);
+      }
       closeCleaningTaskModal();
-      showToast('Cleaning rotation generated — each room\'s turn repeats every ' + propRooms.length + ' week' + (propRooms.length===1?'':'s') + '.', 'success');
+      await ensureCleaningRotationsUpToDate();
+      showToast('Cleaning rotation saved.', 'success');
       render();
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
@@ -5436,6 +5471,51 @@ import * as inspectionService from './services/inspectionService.js';
     }
   }
   window.saveCleaningTaskForm = saveCleaningTaskForm;
+
+  async function deleteCleaningRotationConfirm(){
+    var propertyId = document.getElementById('cleaning-task-property').value;
+    var rot = cleaningRotationOf(propertyId);
+    if (!rot) return;
+    var p = propertyOf(propertyId);
+    openConfirmModal('Delete rotation?', 'This stops auto-generating cleaning turns for ' + esc(p ? p.name : 'this property') + '. Existing scheduled turns are kept.', async function(){
+      await cleaningRotationService.remove(rot.id);
+      cleaningRotations = cleaningRotations.filter(function(r){ return r.id !== rot.id; });
+      closeCleaningTaskModal();
+      showToast('Cleaning rotation deleted.', 'success');
+      render();
+    }, { confirmLabel: 'Delete' });
+  }
+  window.deleteCleaningRotationConfirm = deleteCleaningRotationConfirm;
+
+  /** Extends each property's rotation by exactly one task once its current cycle is up, always
+   *  picking up from whichever occupied room hasn't had its turn most recently — no stored cursor,
+   *  so it can't go stale as tenants move in/out. Safe to call repeatedly (on bootstrap, on save,
+   *  on move-out): a no-op once every property already has a future task queued. */
+  async function ensureCleaningRotationsUpToDate(){
+    var newRows = [];
+    for (var i=0; i<cleaningRotations.length; i++){
+      var rot = cleaningRotations[i];
+      var occupiedRooms = roomsOf(rot.propertyId).filter(roomIsOccupied).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+      if (occupiedRooms.length===0) continue;
+      var propTasks = cleaningTasks.concat(newRows).filter(function(t){ return t.propertyId===rot.propertyId; });
+      var lastTask = propTasks.reduce(function(best, t){ return (!best || t.scheduledDate > best.scheduledDate) ? t : best; }, null);
+      var guard = 0;
+      while (guard++ < 12){
+        var nextDate = lastTask ? stepDateIso(lastTask.scheduledDate, rot.intervalDays) : rot.referenceDate;
+        if (lastTask && nextDate > TODAY) break; // already have a future turn queued
+        var lastIdx = lastTask ? occupiedRooms.findIndex(function(r){ return r.id===lastTask.roomId; }) : -1;
+        var nextIdx = (lastIdx + 1 + occupiedRooms.length) % occupiedRooms.length;
+        var row = { propertyId: rot.propertyId, roomId: occupiedRooms[nextIdx].id, scheduledDate: nextDate };
+        newRows.push(row);
+        lastTask = row;
+        if (nextDate >= TODAY) break; // caught up to now — don't pre-generate further ahead
+      }
+    }
+    if (newRows.length){
+      var created = await cleaningService.createTasksBulk(newRows);
+      cleaningTasks = cleaningTasks.concat(created);
+    }
+  }
 
   /* ---- Staff: task detail — view submitted photos, comment, mark reviewed ---- */
   var cleaningDetailTaskId = null;
@@ -5631,18 +5711,37 @@ import * as inspectionService from './services/inspectionService.js';
   function inspectionSubmissionsFor(tenantId, type){
     return inspectionSubmissions.filter(function(s){ return s.tenantId===tenantId && s.type===type; });
   }
-  function inspectionSectionHtml(tenantId, type, canAdd){
+  function inspectionCommentsFor(tenantId, type){
+    return inspectionComments.filter(function(c){ return c.tenantId===tenantId && c.type===type; });
+  }
+  /** canAdd: tenant or admin can attach more photos to this move-in/move-out set (both use the
+   *  same submit flow — inspectionService.create doesn't care who's calling).
+   *  canComment: admin can leave/see an observation on these photos (mirrors cleaning's
+   *  per-task comments — see inspection_comments). Tenants always see existing comments
+   *  read-only, same as they do on cleaning photos. */
+  function inspectionSectionHtml(tenantId, type, canAdd, canComment){
     var subs = inspectionSubmissionsFor(tenantId, type);
+    var comments = inspectionCommentsFor(tenantId, type);
     var photosHtml = subs.length===0 ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">No photos yet.</p>' :
       subs.map(function(s){
         return '<div style="margin-bottom:8px;">'+
           (s.note ? '<p style="font-size:12px;color:var(--text-faint);margin:0 0 4px;">'+esc(s.note)+' · '+shortDate((s.createdAt||'').slice(0,10))+'</p>' : '<p style="font-size:11px;color:var(--text-faint);margin:0 0 4px;">'+shortDate((s.createdAt||'').slice(0,10))+'</p>')+
           '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+photoThumbsHtml('inspection-photos', s.photoPaths)+'</div></div>';
       }).join('');
+    var commentsHtml = comments.length===0 ? '' :
+      '<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">'+comments.map(function(c){
+        return '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">💬 '+esc(c.comment)+' <span style="color:var(--text-faint);">· '+shortDate((c.createdAt||'').slice(0,10))+'</span></p>';
+      }).join('')+'</div>';
+    var commentFormHtml = !canComment ? '' :
+      '<div class="form-row" style="margin-top:10px;">'+
+        '<label for="inspection-comment-input-'+type+'">Add a comment / observation</label>'+
+        '<textarea id="inspection-comment-input-'+type+'"></textarea>'+
+      '</div>'+
+      '<button class="mini-btn" onclick="saveInspectionComment(\''+tenantId+'\',\''+type+'\')">Add comment</button>';
     return '<div class="card" style="margin-bottom:10px;">'+
       '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+INSPECTION_TYPE_LABEL[type]+' photos</h2>'+
       (canAdd ? '<button class="mini-btn primary" onclick="openInspectionSubmitModal(\''+tenantId+'\',\''+type+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>' : '')+
-      '</div>'+photosHtml+'</div>';
+      '</div>'+photosHtml+commentsHtml+commentFormHtml+'</div>';
   }
 
   function renderInspection(){
@@ -5651,24 +5750,40 @@ import * as inspectionService from './services/inspectionService.js';
     if (!t) return pageHeader('Inspection', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
     if (!t.roomId) return pageHeader('Inspection', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
     return pageHeader('Inspection', 'Photos of the room when you moved in, and again when you move out.') +
-      inspectionSectionHtml(t.id, 'move_in', true) +
-      inspectionSectionHtml(t.id, 'move_out', true);
+      inspectionSectionHtml(t.id, 'move_in', true, false) +
+      inspectionSectionHtml(t.id, 'move_out', true, false);
   }
 
+  /** Grouped by property (each with a header), same convention as Cleaning's staff view —
+   *  matches how the admin actually thinks about their portfolio, property by property. */
   function renderInspectionStaff(){
-    var activeTenants = tenants.filter(function(t){ return t.rentAmount > 0; }).sort(function(a,b){ return (a.fullName||'').localeCompare(b.fullName||''); });
-    var rows = activeTenants.map(function(t){
-      var p = propertyOf(t.propertyId), r = t.roomId ? roomOf(t.roomId) : null;
-      var moveIn = inspectionSubmissionsFor(t.id, 'move_in').length;
-      var moveOut = inspectionSubmissionsFor(t.id, 'move_out').length;
-      return '<div class="card" style="cursor:pointer;" onclick="openInspectionDetailModal(\''+t.id+'\')">'+
-        '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+'</h2></div>'+
-        '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+(p?esc(p.name):'—')+(r?' · '+esc(r.name):'')+'</p>'+
-        '<p style="font-size:11.5px;color:var(--text-faint);margin:0;">Move-in: '+moveIn+' photo submission'+(moveIn!==1?'s':'')+' · Move-out: '+moveOut+' photo submission'+(moveOut!==1?'s':'')+'</p>'+
-        '</div>';
+    var activeTenants = tenants.filter(function(t){ return t.rentAmount > 0; });
+    var byProperty = {};
+    activeTenants.forEach(function(t){
+      (byProperty[t.propertyId] || (byProperty[t.propertyId] = [])).push(t);
+    });
+    var propIds = Object.keys(byProperty).sort(function(a,b){
+      var pa = propertyOf(a), pb = propertyOf(b);
+      return (pa?pa.name:'').localeCompare(pb?pb.name:'');
+    });
+    if (!propIds.length) return pageHeader('Inspection', "Move-in and move-out condition photos, per tenant.") +
+      '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No tenants yet.</p></div>';
+    var sectionsHtml = propIds.map(function(propId){
+      var p = propertyOf(propId);
+      var tenantsHere = byProperty[propId].slice().sort(function(a,b){ return (a.fullName||'').localeCompare(b.fullName||''); });
+      var rows = tenantsHere.map(function(t){
+        var r = t.roomId ? roomOf(t.roomId) : null;
+        var moveIn = inspectionSubmissionsFor(t.id, 'move_in').length;
+        var moveOut = inspectionSubmissionsFor(t.id, 'move_out').length;
+        return '<div class="card" style="cursor:pointer;" onclick="openInspectionDetailModal(\''+t.id+'\')">'+
+          '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+'</h2></div>'+
+          '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+(r?esc(r.name):'—')+'</p>'+
+          '<p style="font-size:11.5px;color:var(--text-faint);margin:0;">Move-in: '+moveIn+' photo submission'+(moveIn!==1?'s':'')+' · Move-out: '+moveOut+' photo submission'+(moveOut!==1?'s':'')+'</p>'+
+          '</div>';
+      }).join('');
+      return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+esc(p?p.name:'—')+'</h2>'+rows;
     }).join('');
-    return pageHeader('Inspection', "Move-in and move-out condition photos, per tenant.") +
-      (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No tenants yet.</p></div>');
+    return pageHeader('Inspection', "Move-in and move-out condition photos, per property.") + sectionsHtml;
   }
 
   function openInspectionDetailModal(tenantId){
@@ -5676,11 +5791,35 @@ import * as inspectionService from './services/inspectionService.js';
     if (!t) return;
     document.getElementById('inspection-detail-title').textContent = t.fullName;
     document.getElementById('inspection-detail-body').innerHTML =
-      inspectionSectionHtml(tenantId, 'move_in', false) + inspectionSectionHtml(tenantId, 'move_out', false);
+      inspectionSectionHtml(tenantId, 'move_in', true, true) + inspectionSectionHtml(tenantId, 'move_out', true, true);
+    document.getElementById('inspection-detail-modal-error').hidden = true;
     document.getElementById('inspection-detail-modal').hidden = false;
     hydrateLazyThumbs();
   }
   window.openInspectionDetailModal = openInspectionDetailModal;
+
+  async function saveInspectionComment(tenantId, type){
+    var input = document.getElementById('inspection-comment-input-'+type);
+    var comment = input ? input.value.trim() : '';
+    var errorEl = document.getElementById('inspection-detail-modal-error');
+    if (!comment){ errorEl.textContent = 'Write a comment first.'; errorEl.hidden = false; return; }
+    var t = tenantOf(tenantId);
+    if (!t){ errorEl.textContent = 'Could not find this tenant.'; errorEl.hidden = false; return; }
+    try {
+      var created = await inspectionService.addComment(t.propertyId, t.roomId, t.id, type, currentProfile ? currentProfile.id : null, comment);
+      inspectionComments.push(created);
+      if (t.authUserId){
+        await notificationService.notify(t.authUserId, 'New comment on your '+(INSPECTION_TYPE_LABEL[type]||'').toLowerCase()+' photos', comment, 'inspection_submissions', t.id);
+      }
+      showToast('Comment added.', 'success');
+      openInspectionDetailModal(tenantId);
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.saveInspectionComment = saveInspectionComment;
 
   function closeInspectionDetailModal(){ document.getElementById('inspection-detail-modal').hidden = true; }
   window.closeInspectionDetailModal = closeInspectionDetailModal;
@@ -6821,6 +6960,11 @@ import * as inspectionService from './services/inspectionService.js';
       refreshStaticSelects();
       closeTenantModal();
       location.hash = '#/tenants/' + tenantObj.id;
+
+      // Occupancy may have just changed (moved in or out) -> the cleaning rotation's "next room"
+      // depends on who's currently occupying each room, so refresh it right away rather than
+      // waiting for the next bootstrap.
+      try { await ensureCleaningRotationsUpToDate(); } catch(_e){ console.error('ensureCleaningRotationsUpToDate failed', _e); }
 
       // Tenant just crossed into "moved out" for the first time (or was moved out already and
       // this is the first save since the feature shipped) -> settle outstanding rent/bills from
@@ -8183,7 +8327,9 @@ import * as inspectionService from './services/inspectionService.js';
       cleaningService.getAllSubmissions(),
       cleaningService.getAllComments(),
       trashService.getAll(),
-      inspectionService.getAll()
+      inspectionService.getAll(),
+      cleaningRotationService.getAll(),
+      inspectionService.getAllComments()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -8206,12 +8352,15 @@ import * as inspectionService from './services/inspectionService.js';
     cleaningComments = results[14];
     trashSchedule = results[15];
     inspectionSubmissions = results[16];
+    cleaningRotations = results[17];
+    inspectionComments = results[18];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
     }
     try { await generateDueRecurringBills(); } catch(_e){ console.error('generateDueRecurringBills failed', _e); }
     try { await checkMissingBillsNotifications(); } catch(_e){ console.error('checkMissingBillsNotifications failed', _e); }
+    try { await ensureCleaningRotationsUpToDate(); } catch(_e){ console.error('ensureCleaningRotationsUpToDate failed', _e); }
     recomputeRentCharges();
     refreshStaticSelects();
   }
