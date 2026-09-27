@@ -7,14 +7,14 @@ import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js?v=5';
+import * as tenantService from './services/tenantService.js?v=6';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
 import * as billService from './services/billService.js?v=3';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
-import * as storageService from './services/storageService.js';
+import * as storageService from './services/storageService.js?v=1';
 import * as aiService from './services/aiService.js?v=3';
 import * as migrationService from './services/migrationService.js';
 import * as profileService from './services/profileService.js?v=5';
@@ -27,6 +27,7 @@ import * as cleaningService from './services/cleaningService.js';
 import * as cleaningRotationService from './services/cleaningRotationService.js';
 import * as trashService from './services/trashService.js';
 import * as inspectionService from './services/inspectionService.js';
+import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=1';
 
 (function(){
   "use strict";
@@ -45,6 +46,7 @@ import * as inspectionService from './services/inspectionService.js';
   var rooms = [];
   var tenants = [];
   var bonds = [];
+  var moveOutSettlements = []; // one row per move-out attempt per tenant — see moveOutSettlementService.js
   /* Role/session state — set once by enterApp() right after sign-in, before anything else
    * loads. currentProfile is the signed-in user's own profiles row (role, name, active status);
    * allProfiles/maintenanceRequests/notificationsList are populated by bootstrapData(). RLS is
@@ -1480,6 +1482,69 @@ import * as inspectionService from './services/inspectionService.js';
 
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
 
+  /** The "Move-Out Settlement" card on the admin's tenant detail page — one of four shapes
+   *  depending on moveOutSettlementOf(t.id).status (or its absence). Never shown for a tenant
+   *  settled under the OLD automatic flow (t.moveOutSettledAt set, no move_out_settlements row)
+   *  — those keep showing bondSettlementSummaryHtml unchanged. */
+  function moveOutSettlementCardHtml(t){
+    if (t.moveOutSettledAt) return ''; // legacy-settled tenant — bondSettlementSummaryHtml handles it
+    var settlement = moveOutSettlementOf(t.id);
+    if (!settlement){
+      return '<div class="card"><h2>Move-Out Settlement</h2>'+
+        '<p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">No move-out process has been started for this tenant.</p>'+
+        '<button class="mini-btn primary" onclick="startMoveOutProcess(\''+t.id+'\')">Start Move-Out Process</button></div>';
+    }
+    var bond = bondOf(t.id);
+    if (settlement.status === 'completed'){
+      var lines = (bond && bond.discounts || []).filter(function(d){ return d.settlementId === settlement.id; });
+      return '<div class="card"><h2>Move-Out Settlement</h2>'+
+        '<div class="field-row"><span class="k">Status</span><span class="v">Move-Out Completed</span></div>'+
+        '<div class="field-row"><span class="k">Approved</span><span class="v">'+fullDate(settlement.approvedAt)+'</span></div>'+
+        (bond ? '<div class="field-row"><span class="k">Original bond</span><span class="v">'+money(bond.amountPaid)+'</span></div>' : '')+
+        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('')+
+        (bond ? '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>' : '')+ // same basis as computeSettlementTotals: bond.deduction now holds existing + this settlement's lines; subtract what was already returned
+        '</div>';
+    }
+    var candidates = computeCandidateDeductions(t.id);
+    // Only in_progress recomputes live; a pending_approval proposal shows the FROZEN totals
+    // stored on the settlement row at Calculate time (what Approve will actually act on).
+    var totals = settlement.status === 'pending_approval'
+      ? { totalDeductions: settlement.totalDeductions, bondRefund: settlement.bondRefund }
+      : computeSettlementTotals(bond, settlement.manualDeductions, candidates);
+    var deductionRowsHtml = settlement.manualDeductions.map(function(d){
+      return '<div class="field-row"><span class="k">'+esc(d.description)+' ('+esc(d.category)+')</span>'+
+        '<span class="v">'+money(d.amount)+
+        (settlement.status==='in_progress' ? ' <button class="text-link" onclick="openMoveOutDeductionModal(\''+settlement.id+'\',\''+d.id+'\')">Edit</button>'+
+          ' <button class="text-link" onclick="removeMoveOutDeduction(\''+settlement.id+'\',\''+d.id+'\')">Remove</button>' : '')+
+        '</span></div>';
+    }).join('');
+    var candidateRowsHtml = (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Outstanding rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
+      candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill (Unpaid)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('');
+    var summaryHtml = '<div class="field-row"><span class="k">Original bond</span><span class="v">'+(bond?money(bond.amountPaid):'No bond on file')+'</span></div>'+
+      '<div class="field-row"><span class="k">Total deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(totals.totalDeductions)+'</span></div>'+
+      (totals.bondRefund != null ? '<div class="field-row"><span class="k" style="font-weight:650;">Refund to tenant</span><span class="v" style="font-weight:650;">'+money(totals.bondRefund)+'</span></div>' : '');
+
+    if (settlement.status === 'in_progress'){
+      return '<div class="card"><h2>Move-Out Settlement</h2>'+
+        '<p style="font-size:12px;color:var(--text-faint);">Move-Out in Progress. Bills remain Unpaid until you approve a settlement below.</p>'+
+        '<h3 style="font-size:12.5px;">Candidate deductions (from unpaid bills/rent)</h3>'+candidateRowsHtml+
+        '<h3 style="font-size:12.5px;">Other deductions</h3>'+(deductionRowsHtml||'<p style="font-size:12.5px;color:var(--text-dim);">None added yet.</p>')+
+        '<button class="mini-btn" onclick="openMoveOutDeductionModal(\''+settlement.id+'\')">Add deduction</button>'+
+        '<h3 style="font-size:12.5px;">Bond Summary (preview — not final)</h3>'+summaryHtml+
+        '<button class="mini-btn primary" onclick="calculateMoveOutSettlement(\''+settlement.id+'\')">Calculate Move-Out Settlement</button></div>';
+    }
+    // pending_approval
+    return '<div class="card"><h2>Move-Out Settlement — Pending Approval</h2>'+
+      '<h3 style="font-size:12.5px;">Deductions in this proposal</h3>'+
+      settlement.billsSnapshot.map(function(l){ return '<div class="field-row"><span class="k">'+esc(l.label)+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
+      deductionRowsHtml+
+      '<h3 style="font-size:12.5px;">Bond Summary</h3>'+summaryHtml+
+      '<div class="actions-row">'+
+      '<button class="mini-btn primary" onclick="confirmApproveMoveOutSettlement(\''+settlement.id+'\')">Approve Deduction & Finalise Bond</button>'+
+      '<button class="mini-btn danger" onclick="confirmRejectMoveOutSettlement(\''+settlement.id+'\')">Reject Settlement</button>'+
+      '</div></div>';
+  }
+
   function renderTenantDetail(id){
     var t = tenantOf(id);
     if (!t){ return pageHeader('Tenant not found', '') + notFoundState('Tenant', '#/tenants', 'Back to tenants'); }
@@ -1512,6 +1577,18 @@ import * as inspectionService from './services/inspectionService.js';
       ((t.excludedBillTypes && t.excludedBillTypes.length) ? '<div class="field-row"><span class="k">Doesn\'t pay for</span><span class="v">'+esc(t.excludedBillTypes.map(billTypeLabel).join(', '))+'</span></div>' : '')
     ) : '';
 
+    // Bond discount labels stored by the move-out settlement flow read as "Outstanding X Bill" /
+    // "Outstanding Rent" — accurate at the moment they're written (that's what was owed), but
+    // confusing here since by the time they're shown the amount has already been deducted and
+    // the bill/rent is already marked paid via bond deduction. Relabel for display only — the
+    // stored text is untouched, so bondSettlementSummaryHtml's /^Outstanding .+ Bill$/ matcher
+    // above still works on old AND new rows alike.
+    function bondDiscountDisplayLabel(label){
+      var billMatch = /^Outstanding (.+) Bill$/.exec(label || '');
+      if (billMatch) return billMatch[1] + ' bill (paid from bond)';
+      if (label === 'Outstanding Rent') return 'Rent (paid from bond)';
+      return label || 'Discount';
+    }
     var bondRows = bond ? (function(){
       // A bond saved before the itemized discounts list existed only has the old single
       // `deduction` number, with an empty discounts array — show that as one unlabeled
@@ -1524,7 +1601,7 @@ import * as inspectionService from './services/inspectionService.js';
       return '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
       '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
       (effectiveDiscounts.length
-        ? effectiveDiscounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label||'Discount')+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('') +
+        ? effectiveDiscounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(bondDiscountDisplayLabel(d.label))+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('') +
           '<div class="field-row"><span class="k">Total deduction</span><span class="v">-'+money(totalDeduction)+'</span></div>'+
           '<div class="field-row"><span class="k" style="font-weight:650;">Amount to return</span><span class="v" style="font-weight:650;">'+money(toReturn)+'</span></div>'
         : '') +
@@ -1549,11 +1626,7 @@ import * as inspectionService from './services/inspectionService.js';
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
       inspectionSectionHtml(t.id, 'move_in', false) +
       inspectionSectionHtml(t.id, 'move_out', false) +
-      (tenantHasMovedOut(t) && !t.moveOutSettledAt
-        ? '<div class="card"><h2>Bond settlement</h2>'+
-          '<p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">This tenant has moved out. Outstanding rent and unpaid bills haven\'t been deducted from the bond yet.</p>'+
-          '<button class="mini-btn primary" onclick="confirmSettleBondNow(\''+t.id+'\')">Settle bond now</button></div>'
-        : '') +
+      moveOutSettlementCardHtml(t) +
       bondSettlementSummaryHtml(t) +
       moveOutSettlementHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
@@ -1629,6 +1702,7 @@ import * as inspectionService from './services/inspectionService.js';
 
   function moveOutSettlementHtml(t){
     if (t.moveOutSettledAt) return ''; // already settled for real — see bondSettlementSummaryHtml
+    if (moveOutSettlementOf(t.id)) return ''; // the staged move-out settlement flow has taken over — see moveOutSettlementCardHtml
     var est = computeMoveOutEstimate(t);
     if (!est) return '';
     /** One row per service type, showing the FIXED part (already billed, unpaid — a
@@ -1696,120 +1770,420 @@ import * as inspectionService from './services/inspectionService.js';
     return '<div class="card"><h2>Bond settlement</h2>'+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Outstanding rent and bills were settled by deducting them from the bond on move-out — see payment history and each bill\'s allocation for the individual entries. Actually returning a refund is still a manual step, from "Edit bond" below.</p>'+
       '<div class="field-list">'+rows+'</div>'+
-      '<button class="text-link" onclick="confirmSettleBondNow(\''+t.id+'\')">Re-run settlement (e.g. after correcting a bill)</button>'+
       '</div>';
   }
 
-  /** Runs the move-out bond settlement for one tenant: settles outstanding rent (as a
-   *  bond-deduction "payment") and every unpaid bill share (marked paid, via bond deduction),
-   *  records one bond-discount line per reason, and marks the tenant settled so this never
-   *  runs again on its own. Safe to call manually more than once (e.g. after fixing a bill) —
-   *  it only ever acts on rent/bills still outstanding AT THE TIME it runs. */
-  async function processMoveOutBondSettlement(tenantId){
+  /** Every unpaid bill share for this tenant (grouped one line per allocation, not merged by
+   *  type — the settlement needs to reference each bill individually) plus outstanding rent.
+   *  Pure and read-only: never marks anything paid. Used both for the live "in_progress"
+   *  preview and, frozen, as the bills_snapshot at Calculate time. */
+  function computeCandidateDeductions(tenantId){
+    var rentAmount = round2(rentCharges
+      .filter(function(c){ return c.tenantId === tenantId && c.remaining > 0.004; })
+      .reduce(function(s, c){ return s + c.remaining; }, 0));
+    var billLines = [];
+    bills.forEach(function(b){
+      (b.allocations || []).forEach(function(a){
+        if (a.tenantId !== tenantId || a.paid || round2(a.amount) <= 0) return;
+        billLines.push({ billId: b.id, billType: b.billType || 'other', allocationId: a.id, amount: round2(a.amount) });
+      });
+    });
+    return { rentAmount: rentAmount, billLines: billLines };
+  }
+
+  /** bondRefund is null (not 0) when there's no bond on file, so the UI can show "No bond on
+   *  file" instead of a misleading "$0.00 refund". */
+  function computeSettlementTotals(bond, manualDeductions, candidates){
+    var manualTotal = (manualDeductions || []).reduce(function(s, d){ return s + (d.amount || 0); }, 0);
+    var billsTotal = candidates.billLines.reduce(function(s, l){ return s + l.amount; }, 0);
+    var totalDeductions = round2(candidates.rentAmount + billsTotal + manualTotal);
+    // Account for anything already deducted from / returned out of this bond before this
+    // settlement (e.g. an old-format single-number deduction, or a partial refund already paid).
+    var existingDeduction = bond ? round2(bond.deduction || 0) : 0;
+    var alreadyReturned = bond ? round2(bond.amountReturned || 0) : 0;
+    var bondRefund = bond ? round2(bond.amountPaid - existingDeduction - totalDeductions - alreadyReturned) : null;
+    return { totalDeductions: totalDeductions, bondRefund: bondRefund };
+  }
+
+  /** The tenant's current move-out settlement: the active (non-completed) row if one exists,
+   *  otherwise the most recently completed one (so a finished settlement still displays after
+   *  the fact), otherwise undefined (no move-out process started). */
+  function moveOutSettlementOf(tenantId){
+    var mine = moveOutSettlements.filter(function(s){ return s.tenantId === tenantId; });
+    var active = mine.find(function(s){ return s.status !== 'completed'; });
+    if (active) return active;
+    return mine.slice().sort(function(a,b){ return (b.approvedAt||'').localeCompare(a.approvedAt||''); })[0];
+  }
+
+  /** Rebuilds the {fullName, propertyId, ...} draft shape tenantService.update expects, from an
+   *  in-memory tenant object — used by startMoveOutProcess so it can patch just actualMoveOutDate
+   *  without duplicating saveTenantForm's full form-reading logic. */
+  function tenantToDraft(t){
+    var draft = { fullName:t.fullName, propertyId:t.propertyId, roomId:t.roomId, moveInDate:t.moveInDate,
+      rentAmount:t.rentAmount, rentFrequency:t.rentFrequency, paymentDay:t.paymentDay,
+      excludedBillTypes:t.excludedBillTypes||[], billOccupancyFactor:t.billOccupancyFactor||1,
+      isActive: t.isActive !== false }; // toRow writes is_active: t.isActive !== false — omitting it would silently reactivate a deactivated tenant
+    if (t.phone) draft.phone = t.phone;
+    if (t.email) draft.email = t.email;
+    if (t.expectedMoveOutDate) draft.expectedMoveOutDate = t.expectedMoveOutDate;
+    if (t.actualMoveOutDate) draft.actualMoveOutDate = t.actualMoveOutDate;
+    if (t.notes) draft.notes = t.notes;
+    return draft;
+  }
+
+  /** Starts the staged move-out settlement process for a tenant — never marks anything paid or
+   *  touches the bond. Callable by staff (from the tenant detail page) or by the tenant
+   *  themselves (from "My Bond" in the portal). If there's no actual move-out date yet, asks
+   *  for one first (defaulting to today) since the settlement needs a settle-as-of date. */
+  async function startMoveOutProcess(tenantId){
     var t = tenantOf(tenantId);
     if (!t) return;
-    var settleDate = (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY) ? t.actualMoveOutDate : TODAY;
-    var bond = bondOf(t.id);
-
-    try {
-      if (!bond){
-        var settledTenant0 = await tenantService.markMoveOutSettled(t.id, new Date().toISOString());
-        t.moveOutSettledAt = settledTenant0.moveOutSettledAt;
-        showToast('Tenant moved out, but there\'s no bond on file — nothing to deduct.', 'info');
-        render();
+    if (moveOutSettlementOf(tenantId) && moveOutSettlementOf(tenantId).status !== 'completed'){
+      showToast('This tenant already has a move-out in progress.', 'info');
+      return;
+    }
+    if (!t.actualMoveOutDate){
+      var dateInput = window.prompt('Actual move-out date (YYYY-MM-DD):', TODAY);
+      if (!dateInput) return;
+      if (dateInput < t.moveInDate){
+        showToast("Actual move-out can't be before the move-in date.", 'error');
         return;
       }
-
-      // 1) Outstanding rent -> one bond-deduction "payment" that settles it via the same FIFO
-      // allocation a real payment would go through (see rentService), just tagged differently.
-      // Calls paymentService directly (not recordPayment) so this whole batch only toasts/renders
-      // once, at the very end, instead of once per item.
-      var outstandingRent = round2(rentCharges
-        .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004; })
-        .reduce(function(s,c){ return s + c.remaining; }, 0));
-      if (outstandingRent > 0){
-        var savedPayment = await paymentService.create({ tenantId:t.id, amount:outstandingRent, date:settleDate, method:'bond_deduction' });
-        paymentRecords.push(savedPayment);
-        recomputeRentCharges();
-      }
-
-      // 2) Every unpaid bill share, grouped by service type (Electricity, Water, Gas, Internet,
-      // Hot water, Other) so each gets its own labeled bond-deduction line, per type. Calls
-      // billAllocationService directly for the same reason as above.
-      var unpaidByType = {};
-      bills.forEach(function(b){
-        (b.allocations || []).forEach(function(a){
-          if (a.tenantId !== t.id || a.paid || round2(a.amount) <= 0) return;
-          var bt = b.billType || 'other';
-          (unpaidByType[bt] || (unpaidByType[bt] = [])).push({ bill:b, alloc:a });
-        });
-      });
-      var touchedBills = {};
-      var billTypeTotals = {};
-      for (var bt in unpaidByType){
-        var items = unpaidByType[bt];
-        var total = 0;
-        for (var i=0; i<items.length; i++){
-          var bill = items[i].bill, alloc = items[i].alloc;
-          var savedAlloc = await billAllocationService.markPaid(alloc.id, settleDate, 'bond_deduction');
-          alloc.paid = true; alloc.paidDate = settleDate; alloc.paidVia = savedAlloc.paidVia;
-          // This bulk settlement writes bill_allocations directly (not via markAllocationPaid), so
-          // it needs its own call to resolve any payment_reports row left pending for this share —
-          // otherwise a tenant's report stays stuck at "pending" forever once they've moved out.
-          try { await autoConfirmPendingPaymentReport(alloc.id); } catch(_e){ console.error('autoConfirmPendingPaymentReport failed', _e); }
-          total += round2(alloc.amount);
-          touchedBills[bill.id] = bill;
+      try {
+        if (isTenantRole()){
+          // Tenants have no UPDATE grant on their own tenants row (RLS) — use the narrow
+          // SECURITY DEFINER RPC that can only set this one date on the caller's own row.
+          await tenantService.setOwnActualMoveOutDate(dateInput);
+          t.actualMoveOutDate = dateInput;
+        } else {
+          var saved = await tenantService.update(tenantId, Object.assign({}, tenantToDraft(t), { actualMoveOutDate: dateInput }));
+          Object.assign(t, saved);
         }
-        billTypeTotals[bt] = round2(total);
+      } catch(err){
+        showToast('Could not save the move-out date. ' + friendlyErrorMessage(err), 'error');
+        return;
       }
-      for (var billId in touchedBills){
-        var touchedBill = touchedBills[billId];
-        recomputeBillStatus(touchedBill);
-        var keepAllocations = touchedBill.allocations;
-        await persistBill(touchedBill);
-        touchedBill.allocations = keepAllocations;
-      }
-
-      // 3) Record one bond-discount line per reason (kept alongside any manual ones already
-      // there, e.g. "Cleaning") and recompute the bond's total deduction as their sum.
-      var newLines = [];
-      if (outstandingRent > 0) newLines.push({ label:'Outstanding Rent', amount: outstandingRent });
-      Object.keys(billTypeTotals).sort(function(a,b){ return billTypeLabel(a).localeCompare(billTypeLabel(b)); }).forEach(function(bt){
-        newLines.push({ label:'Outstanding '+billTypeLabel(bt)+' Bill', amount: billTypeTotals[bt] });
-      });
-      if (newLines.length){
-        var mergedDiscounts = (bond.discounts || []).concat(newLines);
-        var newDeduction = round2(mergedDiscounts.reduce(function(s,d){ return s + (d.amount||0); }, 0));
-        var savedBond = await bondService.update(bond.id, {
-          amountRequired: bond.amountRequired, amountPaid: bond.amountPaid, amountReturned: bond.amountReturned,
-          deduction: newDeduction, discounts: mergedDiscounts, status: bond.status
-        });
-        Object.assign(bond, savedBond);
-      }
-
-      var settledTenant = await tenantService.markMoveOutSettled(t.id, new Date().toISOString());
-      t.moveOutSettledAt = settledTenant.moveOutSettledAt;
-
-      var totalNow = round2(newLines.reduce(function(s,l){ return s+l.amount; }, 0));
-      showToast(totalNow > 0
-        ? ('Move-out settled: '+money(totalNow)+' deducted from the bond.')
-        : 'Move-out settled — no outstanding rent or bills to deduct.', 'success');
+    }
+    var role = isTenantRole() ? 'tenant' : (currentProfile ? currentProfile.role : 'administrator');
+    try {
+      var row = await moveOutSettlementService.start(tenantId, role);
+      moveOutSettlements.push(row);
+      showToast('Move-out process started.', 'success');
       render();
     } catch(err){
-      showToast('Could not settle the move-out. ' + friendlyErrorMessage(err), 'error');
+      // 23505 = unique violation on move_out_settlements_one_active_per_tenant: someone else
+      // (staff or the tenant) started one between our in-memory check above and this insert.
+      if (err && err.code === '23505'){
+        showToast('This tenant already has a move-out in progress.', 'info');
+      } else {
+        showToast('Could not start the move-out process. ' + friendlyErrorMessage(err), 'error');
+      }
     }
   }
-  window.processMoveOutBondSettlement = processMoveOutBondSettlement;
+  window.startMoveOutProcess = startMoveOutProcess;
 
-  function confirmSettleBondNow(tenantId){
-    var t = tenantOf(tenantId);
-    if (!t) return;
-    openConfirmModal('Settle bond now',
-      'Deduct any outstanding rent and unpaid bills for ' + t.fullName + ' from their bond, and mark them as paid? This can\'t be undone from here — correct it from the bond\'s discounts instead if needed.',
-      function(){ processMoveOutBondSettlement(tenantId); },
-      { confirmLabel: 'Settle now' });
+  var moveOutDeductionModalSettlementId = null;
+  var moveOutDeductionModalEditId = null;
+
+  function openMoveOutDeductionModal(settlementId, deductionId){
+    moveOutDeductionModalSettlementId = settlementId;
+    moveOutDeductionModalEditId = deductionId || null;
+    var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
+    var existing = deductionId && settlement ? settlement.manualDeductions.find(function(d){ return d.id === deductionId; }) : null;
+    document.getElementById('move-out-deduction-modal-title').textContent = existing ? 'Edit deduction' : 'Add deduction';
+    document.getElementById('move-out-deduction-category').value = existing ? existing.category : 'cleaning';
+    document.getElementById('move-out-deduction-description').value = existing ? existing.description : '';
+    document.getElementById('move-out-deduction-amount').value = existing ? existing.amount : '';
+    document.getElementById('move-out-deduction-date').value = existing ? existing.date : TODAY;
+    document.getElementById('move-out-deduction-comments').value = existing ? (existing.comments||'') : '';
+    document.getElementById('move-out-deduction-photos').value = '';
+    document.getElementById('move-out-deduction-modal-error').hidden = true;
+    document.getElementById('move-out-deduction-modal').hidden = false;
   }
-  window.confirmSettleBondNow = confirmSettleBondNow;
+  window.openMoveOutDeductionModal = openMoveOutDeductionModal;
+
+  function closeMoveOutDeductionModal(){
+    document.getElementById('move-out-deduction-modal').hidden = true;
+    moveOutDeductionModalSettlementId = null;
+    moveOutDeductionModalEditId = null;
+  }
+  window.closeMoveOutDeductionModal = closeMoveOutDeductionModal;
+
+  async function saveMoveOutDeductionForm(){
+    var settlement = moveOutSettlements.find(function(s){ return s.id === moveOutDeductionModalSettlementId; });
+    var errorEl = document.getElementById('move-out-deduction-modal-error');
+    if (!settlement){ errorEl.textContent = 'Settlement not found.'; errorEl.hidden = false; return; }
+    var category = document.getElementById('move-out-deduction-category').value;
+    var description = document.getElementById('move-out-deduction-description').value.trim();
+    var amount = parseFloat(document.getElementById('move-out-deduction-amount').value);
+    var date = document.getElementById('move-out-deduction-date').value;
+    var comments = document.getElementById('move-out-deduction-comments').value.trim();
+    var fileInput = document.getElementById('move-out-deduction-photos');
+    if (!description || !isFinite(amount) || amount <= 0 || !date){
+      errorEl.textContent = 'Add a description, a date, and an amount greater than 0.';
+      errorEl.hidden = false;
+      return;
+    }
+    var saveBtn = document.querySelector('#move-out-deduction-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    errorEl.hidden = true;
+    try {
+      var photoPaths = [];
+      if (fileInput.files && fileInput.files.length){
+        photoPaths = await storageService.uploadMoveOutEvidencePhotos(fileInput.files);
+      }
+      var deductions = settlement.manualDeductions.slice();
+      var timelineEntries;
+      if (moveOutDeductionModalEditId){
+        var idx = deductions.findIndex(function(d){ return d.id === moveOutDeductionModalEditId; });
+        var prevAmount = idx >= 0 ? deductions[idx].amount : null;
+        var existingPhotos = idx >= 0 ? (deductions[idx].photoPaths || []) : [];
+        deductions[idx] = { id: moveOutDeductionModalEditId, category:category, description:description,
+          amount:round2(amount), date:date, comments:comments, photoPaths: existingPhotos.concat(photoPaths) };
+        timelineEntries = [{ at:new Date().toISOString(), action:'Admin edited deduction: ' + description,
+          amount: round2(amount), detail: prevAmount != null ? ('was ' + money(prevAmount)) : null }];
+      } else {
+        var newId = 'ded_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+        deductions.push({ id:newId, category:category, description:description, amount:round2(amount),
+          date:date, comments:comments, photoPaths:photoPaths });
+        timelineEntries = [{ at:new Date().toISOString(), action:'Admin added deduction: ' + description, amount: round2(amount) }];
+      }
+      // If a proposal was already calculated, this invalidates it — see calculateMoveOutSettlement's
+      // "revert on edit" rule (Task 8's Review Focus item 2).
+      var wasPending = settlement.status === 'pending_approval';
+      var saved = wasPending
+        ? await moveOutSettlementService.revertToInProgress(settlement.id, timelineEntries.concat([
+            { at:new Date().toISOString(), action:'Settlement proposal invalidated by a deduction change — recalculate to continue.' }
+          ]))
+        : await moveOutSettlementService.saveDraftDeductions(settlement.id, deductions, timelineEntries);
+      if (wasPending){
+        saved.manualDeductions = deductions;
+        await moveOutSettlementService.saveDraftDeductions(settlement.id, deductions, []);
+      }
+      Object.assign(settlement, saved, { manualDeductions: deductions });
+      closeMoveOutDeductionModal();
+      showToast('Deduction saved.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = 'Could not save this deduction. ' + friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  window.saveMoveOutDeductionForm = saveMoveOutDeductionForm;
+
+  async function removeMoveOutDeduction(settlementId, deductionId){
+    var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
+    if (!settlement) return;
+    var target = settlement.manualDeductions.find(function(d){ return d.id === deductionId; });
+    var deductions = settlement.manualDeductions.filter(function(d){ return d.id !== deductionId; });
+    var timelineEntries = [{ at:new Date().toISOString(), action:'Admin removed deduction: ' + (target ? target.description : deductionId) }];
+    try {
+      var saved = settlement.status === 'pending_approval'
+        ? await moveOutSettlementService.revertToInProgress(settlement.id, timelineEntries)
+        : await moveOutSettlementService.saveDraftDeductions(settlement.id, deductions, timelineEntries);
+      Object.assign(settlement, saved, { manualDeductions: deductions });
+      showToast('Deduction removed.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not remove this deduction. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.removeMoveOutDeduction = removeMoveOutDeduction;
+
+  /** Freezes the current candidate bills/rent + manual deductions into a proposal. Recomputing
+   *  (pressing this again while already pending_approval) simply overwrites the previous
+   *  snapshot — there's no need to revert first since this IS the recalculation. */
+  async function calculateMoveOutSettlement(settlementId){
+    var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
+    if (!settlement) return;
+    var t = tenantOf(settlement.tenantId);
+    if (!t) return;
+    var candidates = computeCandidateDeductions(t.id);
+    var bond = bondOf(t.id);
+    var totals = computeSettlementTotals(bond, settlement.manualDeductions, candidates);
+    var billsSnapshot = candidates.billLines.map(function(l){
+      return { kind:'bill', label: billTypeLabel(l.billType) + ' bill', amount: l.amount, billId: l.billId, billType: l.billType, allocationId: l.allocationId };
+    });
+    if (candidates.rentAmount > 0){
+      billsSnapshot.unshift({ kind:'rent', label:'Outstanding rent', amount: candidates.rentAmount });
+    }
+    var timelineEntries = [{
+      at: new Date().toISOString(),
+      action: 'Admin generated settlement proposal.',
+      amount: totals.totalDeductions, fromStatus: settlement.status, toStatus: 'pending_approval'
+    }];
+    try {
+      var saved = await moveOutSettlementService.calculate(settlementId, billsSnapshot, totals, timelineEntries);
+      Object.assign(settlement, saved);
+      showToast('Move-out settlement proposal generated — pending approval.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not generate the settlement proposal. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.calculateMoveOutSettlement = calculateMoveOutSettlement;
+
+  /** The ONLY function in this feature allowed to touch bill_allocations, payments or bonds —
+   *  and only ever called from confirmApproveMoveOutSettlement's explicit confirm. Mirrors what
+   *  the old automatic settlement flow did, minus the "automatic" part. Skips any
+   *  snapshot line whose allocation is already paid (Review Focus item 4 — e.g. the tenant paid
+   *  cash between Calculate and Approve) so it never double-counts or errors on a stale row. */
+  async function approveMoveOutSettlement(settlementId){
+    var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
+    if (!settlement || !settlement.billsSnapshot) return;
+    if (settlement.status !== 'pending_approval') return;
+    var t = tenantOf(settlement.tenantId);
+    if (!t) return;
+    var settleDate = t.actualMoveOutDate || TODAY;
+    var bond = bondOf(t.id);
+    var timelineEntries = [];
+    var newDiscountLines = [];
+    var touchedBills = {};
+
+    for (var i = 0; i < settlement.billsSnapshot.length; i++){
+      var line = settlement.billsSnapshot[i];
+      if (line.kind === 'rent'){
+        var stillOwed = round2(rentCharges.filter(function(c){ return c.tenantId === t.id && c.remaining > 0.004; })
+          .reduce(function(s,c){ return s + c.remaining; }, 0));
+        var rentToDeduct = Math.min(stillOwed, line.amount);
+        // Retry recovery (Task9a): if an earlier, partially-failed attempt of THIS approval already
+        // created the bond_deduction rent payment but never got as far as recording it on the bond,
+        // stillOwed is now 0 and the rent would otherwise never appear in bond.discounts. Recover it
+        // from the bond_deduction payment(s) already on file for this settle date (only this flow
+        // creates bond_deduction payments), capped at what the snapshot line proposed — unless the
+        // bond already has this settlement's rent line (then the alreadyRecorded filter below
+        // would drop it anyway).
+        var rentAlreadyOnBond = !!bond && (bond.discounts || []).some(function(d){ return d.settlementId === settlement.id && d.sourceId === 'rent'; });
+        var recoveredRent = 0;
+        if (!rentAlreadyOnBond && rentToDeduct < line.amount - 0.004){
+          var priorBondRent = round2(paymentRecords.filter(function(p){ return p.tenantId === t.id && p.method === 'bond_deduction' && p.date === settleDate; })
+            .reduce(function(s,p){ return s + p.amount; }, 0));
+          recoveredRent = round2(Math.min(priorBondRent, line.amount - rentToDeduct));
+        }
+        if (rentToDeduct > 0.004){
+          var savedPayment = await paymentService.create({ tenantId:t.id, amount:rentToDeduct, date:settleDate, method:'bond_deduction' });
+          paymentRecords.push(savedPayment);
+          recomputeRentCharges();
+          timelineEntries.push({ at:new Date().toISOString(), action:'Rent deducted from bond.', amount: rentToDeduct });
+        }
+        if (recoveredRent > 0.004){
+          timelineEntries.push({ at:new Date().toISOString(), action:'Rent already deducted from bond on an earlier approval attempt — recording it on the bond.', amount: recoveredRent });
+        }
+        var rentDiscountTotal = round2(rentToDeduct + recoveredRent);
+        if (rentDiscountTotal > 0.004){
+          newDiscountLines.push({ label:'Outstanding Rent', amount:rentDiscountTotal, category:'rent', sourceType:'rent', sourceId:'rent', settlementId:settlement.id });
+        }
+        continue;
+      }
+      // line.kind === 'bill'
+      var bill = bills.find(function(b){ return b.id === line.billId; });
+      var alloc = bill ? (bill.allocations||[]).find(function(a){ return a.id === line.allocationId; }) : null;
+      var hasPendingReport = alloc ? paymentReports.some(function(pr){ return pr.allocationId === alloc.id && pr.status === 'pending'; }) : false;
+      // Retry recovery (Task9a): already paid via bond_deduction means an earlier, partially-failed
+      // attempt of THIS approval marked it paid (only this flow uses bond_deduction, and the
+      // snapshot only holds shares that were unpaid at Calculate time). Don't mark it paid again,
+      // but still contribute its discount line so the bond records the money that already moved
+      // (the alreadyRecorded/sourceId filter below drops it if the bond already has it), and
+      // re-persist the bill's status in case the earlier attempt failed before doing so. A pending
+      // report here can only be one this flow's own autoConfirmPendingPaymentReport failed to
+      // resolve after markPaid (approval never marks a share with a pending report paid), so it
+      // doesn't block recovery — retry the auto-confirm instead.
+      if (bill && alloc && alloc.paid && alloc.paidVia === 'bond_deduction'){
+        if (hasPendingReport){ try { await autoConfirmPendingPaymentReport(alloc.id); } catch(_e){ console.error('autoConfirmPendingPaymentReport failed', _e); } }
+        touchedBills[bill.id] = bill;
+        newDiscountLines.push({ label: billTypeLabel(line.billType) + ' bill', amount: line.amount, category:'bill', sourceType:'bill', billId:bill.id, sourceId:bill.id, settlementId:settlement.id });
+        timelineEntries.push({ at:new Date().toISOString(), action: billTypeLabel(line.billType) + ' bill was already marked Paid — Bond deduction on an earlier approval attempt; recording it on the bond.', amount: line.amount });
+        continue;
+      }
+      if (!bill || !alloc || alloc.paid || hasPendingReport){
+        timelineEntries.push({ at:new Date().toISOString(), action:'Skipped ' + billTypeLabel(line.billType) + ' bill from the approved settlement — ' + (hasPendingReport ? 'tenant has a pending payment report for it.' : 'it was already resolved another way since the proposal was calculated.') });
+        continue;
+      }
+      var savedAlloc = await billAllocationService.markPaid(alloc.id, settleDate, 'bond_deduction');
+      alloc.paid = true; alloc.paidDate = settleDate; alloc.paidVia = savedAlloc.paidVia;
+      try { await autoConfirmPendingPaymentReport(alloc.id); } catch(_e){ console.error('autoConfirmPendingPaymentReport failed', _e); }
+      touchedBills[bill.id] = bill;
+      newDiscountLines.push({ label: billTypeLabel(line.billType) + ' bill', amount: line.amount, category:'bill', sourceType:'bill', billId:bill.id, sourceId:bill.id, settlementId:settlement.id });
+      timelineEntries.push({ at:new Date().toISOString(), action: billTypeLabel(line.billType) + ' bill marked Paid — Bond deduction.', amount: line.amount });
+    }
+    for (var billId in touchedBills){
+      var touchedBill = touchedBills[billId];
+      recomputeBillStatus(touchedBill);
+      var keepAllocations = touchedBill.allocations;
+      await persistBill(touchedBill);
+      touchedBill.allocations = keepAllocations;
+    }
+
+    (settlement.manualDeductions || []).forEach(function(d){
+      newDiscountLines.push({ label:d.description, amount:d.amount, category:d.category, description:d.description,
+        photoPaths:d.photoPaths||[], comments:d.comments||'', date:d.date, sourceType:'manual', sourceId:d.id, settlementId:settlement.id });
+      timelineEntries.push({ at:new Date().toISOString(), action:'Manual deduction applied: ' + d.description, amount:d.amount });
+    });
+
+    if (bond){
+      var alreadyRecorded = (bond.discounts || []).filter(function(d){ return d.settlementId === settlement.id; })
+        .map(function(d){ return d.sourceId; });
+      newDiscountLines = newDiscountLines.filter(function(d){ return alreadyRecorded.indexOf(d.sourceId) === -1; });
+    }
+
+    if (bond && newDiscountLines.length){
+      // Same old-format migration as openBondModal: a bond saved before itemized discounts existed
+      // only has the single `deduction` number with an empty discounts array — seed it as one line
+      // so approving this settlement doesn't silently erase that pre-existing deduction.
+      var existingDiscounts = (bond.discounts && bond.discounts.length) ? bond.discounts
+        : (bond.deduction > 0 ? [{ label:'Existing deduction', amount:bond.deduction }] : []);
+      var mergedDiscounts = existingDiscounts.concat(newDiscountLines);
+      var newDeduction = round2(mergedDiscounts.reduce(function(s,d){ return s + (d.amount||0); }, 0));
+      var savedBond = await bondService.update(bond.id, {
+        amountRequired: bond.amountRequired, amountPaid: bond.amountPaid, amountReturned: bond.amountReturned,
+        deduction: newDeduction, discounts: mergedDiscounts, status: bond.status
+      });
+      Object.assign(bond, savedBond);
+    }
+
+    timelineEntries.push({ at:new Date().toISOString(), action:'Move-out completed.', fromStatus:'pending_approval', toStatus:'completed' });
+    var saved = await moveOutSettlementService.approve(settlement.id, timelineEntries);
+    Object.assign(settlement, saved);
+  }
+
+  function confirmApproveMoveOutSettlement(settlementId){
+    openConfirmModal('Approve Deduction & Finalise Bond',
+      "Are you sure you want to approve this move-out settlement? This action will deduct the approved amounts from the tenant's bond and mark the corresponding bills as paid.",
+      async function(){
+        try {
+          await approveMoveOutSettlement(settlementId);
+          showToast('Move-out settlement approved and finalised.', 'success');
+          render();
+        } catch(err){
+          return { blocked:true, message: 'Could not finalise the settlement. ' + friendlyErrorMessage(err) };
+        }
+      },
+      { confirmLabel: 'Approve & Finalise' });
+  }
+  window.confirmApproveMoveOutSettlement = confirmApproveMoveOutSettlement;
+
+  function confirmRejectMoveOutSettlement(settlementId){
+    openConfirmModal('Reject Settlement',
+      'Reject this proposal? Bills stay Unpaid, the bond stays intact, and you can edit the deductions and generate a new proposal afterward.',
+      async function(){
+        try {
+          var saved = await moveOutSettlementService.revertToInProgress(settlementId, [
+            { at:new Date().toISOString(), action:'Admin rejected the settlement proposal.', fromStatus:'pending_approval', toStatus:'in_progress' }
+          ]);
+          var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
+          Object.assign(settlement, saved);
+          showToast('Settlement rejected — bills and bond are unchanged.', 'info');
+          render();
+        } catch(err){
+          return { blocked:true, message: 'Could not reject the settlement. ' + friendlyErrorMessage(err) };
+        }
+      },
+      { confirmLabel: 'Reject' });
+  }
+  window.confirmRejectMoveOutSettlement = confirmRejectMoveOutSettlement;
 
   /** "Rent history" card for a tenant's profile: which weeks/periods are already paid, and
    *  which are still due, overdue or upcoming — split into two lists so what still needs
@@ -6886,6 +7260,44 @@ import * as inspectionService from './services/inspectionService.js';
 
   /* ============ Tenant portal: read-only views of the tenant's own data (RLS already limits
    * every array below to just this person — see myTenantRecord()) ============ */
+  /** Tenant-facing "My Bond" — same underlying data as moveOutSettlementCardHtml, worded for the
+   *  tenant and never showing a total as final until status is completed (spec section 11: "Do
+   *  not show the settlement as final until the administrator approves it"). */
+  function renderTenantMyBondHtml(t){
+    var bond = bondOf(t.id);
+    var settlement = moveOutSettlementOf(t.id);
+    if (!bond && !settlement) return '';
+    var rows = bond ? '<div class="field-row"><span class="k">Original bond</span><span class="v">'+money(bond.amountPaid)+'</span></div>' : '';
+    if (!settlement){
+      return '<div class="card"><h2>My Bond</h2>'+rows+
+        '<button class="mini-btn primary" onclick="startMoveOutProcess(\''+t.id+'\')">Start Move-Out Process</button></div>';
+    }
+    if (settlement.status === 'completed'){
+      var lines = (bond && bond.discounts || []).filter(function(d){ return d.settlementId === settlement.id; });
+      return '<div class="card"><h2>My Bond</h2>'+
+        '<div class="field-row"><span class="k">Status</span><span class="v">Move-Out Completed</span></div>'+rows+
+        '<h3 style="font-size:12.5px;">Deductions</h3>'+
+        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span><span class="v">-'+money(d.amount)+'</span></div>'; }).join('')+
+        (bond ? '<div class="field-row"><span class="k" style="font-weight:650;">Final refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>' : '')+ // same basis as computeSettlementTotals (subtracts amount already returned)
+        '<div class="field-row"><span class="k">Approved</span><span class="v">'+fullDate(settlement.approvedAt)+'</span></div></div>';
+    }
+    var candidates = computeCandidateDeductions(t.id);
+    // Only in_progress recomputes live; a pending_approval proposal shows the FROZEN totals
+    // stored on the settlement row at Calculate time (same as the admin card).
+    var totals = settlement.status === 'pending_approval'
+      ? { totalDeductions: settlement.totalDeductions, bondRefund: settlement.bondRefund }
+      : computeSettlementTotals(bond, settlement.manualDeductions, candidates);
+    var statusLabel = settlement.status === 'in_progress' ? 'Move-Out in Progress' : 'Settlement pending approval';
+    return '<div class="card"><h2>My Bond</h2>'+
+      '<div class="field-row"><span class="k">Status</span><span class="v">'+esc(statusLabel)+'</span></div>'+rows+
+      '<h3 style="font-size:12.5px;">Deductions (estimated)</h3>'+
+      (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
+      candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
+      settlement.manualDeductions.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.description)+'</span><span class="v">'+money(d.amount)+'</span></div>'; }).join('')+
+      '<div class="field-row"><span class="k">Total deductions</span><span class="v">'+money(totals.totalDeductions)+'</span></div>'+
+      '<div class="field-row"><span class="k" style="font-weight:650;">Estimated refund</span><span class="v" style="font-weight:650;">'+(totals.bondRefund!=null?money(totals.bondRefund):'—')+'</span></div>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">Pending administrator approval — this is not final.</p></div>';
+  }
   function renderTenantDashboard(){
     var t = myTenantRecord();
     if (!t) return pageHeader('My Dashboard', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
@@ -6912,7 +7324,8 @@ import * as inspectionService from './services/inspectionService.js';
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
       '</div>'+
-      tenantRentHistoryHtml(t.id);
+      tenantRentHistoryHtml(t.id) +
+      renderTenantMyBondHtml(t);
   }
 
   function renderTenantPayments(){
@@ -7004,7 +7417,7 @@ import * as inspectionService from './services/inspectionService.js';
           }
           return '<div class="card">'+
             '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(b.billType))+(b.provider?' — '+esc(b.provider):'')+'</h2>'+
-            (a.paid ? badge('paid','Paid') : payStatus==='pending_verification' ? badge('upcoming','Pending verification') : badge('due','Pending'))+'</div>'+
+            (a.paid ? badge('paid','Paid'+(a.paidVia==='bond_deduction' ? ' · Paid from bond' : '')) : payStatus==='pending_verification' ? badge('upcoming','Pending verification') : badge('due','Pending'))+'</div>'+
             '<div class="field-list">'+
             '<div class="field-row"><span class="k">Total bill</span><span class="v">'+money(b.amount)+'</span></div>'+
             '<div class="field-row"><span class="k">Your share</span><span class="v">'+money(a.amount)+'</span></div>'+
@@ -7673,15 +8086,11 @@ import * as inspectionService from './services/inspectionService.js';
       // waiting for the next bootstrap.
       try { await ensureCleaningRotationsUpToDate(); } catch(_e){ console.error('ensureCleaningRotationsUpToDate failed', _e); }
 
-      // Tenant just crossed into "moved out" for the first time (or was moved out already and
-      // this is the first save since the feature shipped) -> settle outstanding rent/bills from
-      // the bond automatically. processMoveOutBondSettlement shows its own, more specific toast.
-      if (tenantHasMovedOut(tenantObj) && !tenantObj.moveOutSettledAt){
-        await processMoveOutBondSettlement(tenantObj.id);
-      } else {
-        showToast('Tenant saved successfully.', 'success');
-        render();
-      }
+      // Move-out settlement is never automatic — see startMoveOutProcess / the "Move-Out
+      // Settlement" card on the tenant page. Saving the tenant form (even with an actual
+      // move-out date) never touches bills or the bond.
+      showToast('Tenant saved successfully.', 'success');
+      render();
     } catch(err){
       errorEl.textContent = 'Could not save this tenant. ' + friendlyErrorMessage(err);
       errorEl.hidden = false;
@@ -7851,6 +8260,18 @@ import * as inspectionService from './services/inspectionService.js';
         Object.assign(existing, saved);
       } else {
         bonds.push(await bondService.create(draft));
+      }
+      // Review Focus item 5: if this tenant has a COMPLETED move-out settlement, log this edit
+      // to its (otherwise locked) timeline instead of silently letting the correction go
+      // unrecorded — appendTimelineEntry only ever writes the timeline column, so it's exempt
+      // from the lock trigger (see move_out_settlements' prevent_settlement_edit_after_lock).
+      var completedSettlement = moveOutSettlementOf(bondModalTenantId);
+      if (completedSettlement && completedSettlement.status === 'completed'){
+        try {
+          await moveOutSettlementService.appendTimelineEntry(completedSettlement.id, {
+            at: new Date().toISOString(), action: 'Manual bond adjustment after move-out completion.'
+          });
+        } catch(_e){ console.error('appendTimelineEntry failed', _e); }
       }
       closeBondModal();
       showToast('Bond saved successfully.', 'success');
@@ -9038,7 +9459,8 @@ import * as inspectionService from './services/inspectionService.js';
       inspectionService.getAll(),
       cleaningRotationService.getAll(),
       inspectionService.getAllComments(),
-      paymentReportService.getAll()
+      paymentReportService.getAll(),
+      moveOutSettlementService.getAll()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -9064,6 +9486,7 @@ import * as inspectionService from './services/inspectionService.js';
     cleaningRotations = results[17];
     inspectionComments = results[18];
     paymentReports = results[19];
+    moveOutSettlements = results[20];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
