@@ -871,6 +871,35 @@
     </div>
   </div>
 
+  <div id="move-out-deduction-modal" class="modal-overlay" hidden>
+    <div class="card modal-card">
+      <h2 id="move-out-deduction-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add deduction</h2>
+      <div class="form-row"><label for="move-out-deduction-category">Category</label>
+        <select id="move-out-deduction-category">
+          <option value="cleaning">Cleaning</option>
+          <option value="damage">Damage</option>
+          <option value="missing_item">Missing item</option>
+          <option value="other">Other agreed charge</option>
+        </select>
+      </div>
+      <div class="form-row"><label for="move-out-deduction-description">Description</label>
+        <input id="move-out-deduction-description" type="text" placeholder="e.g. Wall damage in bedroom" /></div>
+      <div class="form-row"><label for="move-out-deduction-amount">Amount</label>
+        <input id="move-out-deduction-amount" type="number" min="0" step="0.01" /></div>
+      <div class="form-row"><label for="move-out-deduction-date">Date</label>
+        <input id="move-out-deduction-date" type="date" /></div>
+      <div class="form-row"><label for="move-out-deduction-comments">Comments</label>
+        <textarea id="move-out-deduction-comments" rows="2"></textarea></div>
+      <div class="form-row"><label for="move-out-deduction-photos">Evidence photos</label>
+        <input id="move-out-deduction-photos" type="file" accept="image/*" multiple /></div>
+      <p id="move-out-deduction-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" type="button" onclick="closeMoveOutDeductionModal()">Cancel</button>
+        <button class="mini-btn primary" type="button" onclick="saveMoveOutDeductionForm()">Save deduction</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Image lightbox: one reusable overlay for every photo gallery (maintenance/cleaning/inspection).
        Opened via openLightboxForThumb()/openLightbox() in app.js — never rebuilt by render(). -->
   <div class="lightbox-overlay" id="lightbox-overlay" role="dialog" aria-modal="true" aria-label="Image viewer" hidden onclick="closeLightboxOnBackdrop(event)">
@@ -941,6 +970,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=75"></script>
+<script type="module" src="app.js?v=79"></script>
 </body>
 </html>
