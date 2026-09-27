@@ -22,7 +22,12 @@ function fromRow(row) {
     // 'cash' (default) is the tenant's own payment; 'bond_deduction' means this share was
     // instead settled by deducting it from the tenant's bond on move-out — never a separate
     // payment the tenant made. See processMoveOutBondSettlement in app.js.
-    paidVia: row.paid_via || 'cash'
+    paidVia: row.paid_via || 'cash',
+    // Snapshot of the tenant's occupancy factor (and the bill's total factor that day) at the
+    // moment this row was allocated by the 'occupancy' method — null for every other method.
+    // See computeOccupancyFactorAllocationRows in app.js.
+    occupancyFactor: row.occupancy_factor != null ? Number(row.occupancy_factor) : null,
+    totalOccupancyFactor: row.total_occupancy_factor != null ? Number(row.total_occupancy_factor) : null
   };
 }
 
@@ -55,7 +60,9 @@ export async function replaceForBill(billId, rows) {
       paid: !!r.paid,
       paid_date: r.paidDate || null,
       receipt_path: r.receiptPath || null,
-      paid_via: r.paidVia || 'cash'
+      paid_via: r.paidVia || 'cash',
+      occupancy_factor: (typeof r.occupancyFactor === 'number') ? r.occupancyFactor : null,
+      total_occupancy_factor: (typeof r.totalOccupancyFactor === 'number') ? r.totalOccupancyFactor : null
     };
   });
   const { data, error } = await supabase.from('bill_allocations').insert(payload).select();
