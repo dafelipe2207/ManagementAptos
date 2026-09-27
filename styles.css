@@ -1,4 +1,4 @@
-  :root{
+:root{
     color-scheme: light dark;
     --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -434,6 +434,7 @@
   .notif-dot-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
   .notif-dot{display:block;width:9px;height:9px;border-radius:50%;background:var(--border);}
   .notif-dot.unread{background:var(--accent);}
+  .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin-left:auto;border-radius:999px;background:var(--status-overdue);color:#fff;font-size:10.5px;font-weight:700;line-height:1;}
   .card > a, .card.prop-card > a:first-child{transition:opacity .15s ease;}
   @media (min-width:640px){
     .cal-daycell{min-height:78px;padding:5px 5px;gap:3px;}
