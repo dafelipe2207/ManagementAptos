@@ -1,10 +1,13 @@
 // services/tenantService.js
 // Maps the app's camelCase tenant shape (fullName, propertyId, roomId,
 // moveInDate, expectedMoveOutDate, actualMoveOutDate, rentAmount,
-// rentFrequency, paymentDay, notes, phone, email, excludedBillTypes) to/from
-// `tenants`. excludedBillTypes lists bill types (matching bills.type, e.g.
-// 'gas') this tenant does not pay a share of — see computeAllocationRows in
-// app.js, which redirects their share to the admin instead.
+// rentFrequency, paymentDay, notes, phone, email, excludedBillTypes,
+// billOccupancyFactor) to/from `tenants`. excludedBillTypes lists bill types
+// (matching bills.type, e.g. 'gas') this tenant does not pay a share of —
+// see computeAllocationRows in app.js, which redirects their share to the
+// admin instead. billOccupancyFactor is how many people this tenant
+// represents for the 'occupancy' allocation method (1.0 = one person, 2.0 =
+// a couple, etc.) — see computeOccupancyFactorAllocationRows in app.js.
 import { supabase } from '../lib/supabaseClient.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
@@ -19,6 +22,7 @@ function fromRow(row) {
     rentFrequency: row.rent_frequency,
     paymentDay: row.payment_day,
     excludedBillTypes: Array.isArray(row.excluded_bill_types) ? row.excluded_bill_types : [],
+    billOccupancyFactor: Number(row.bill_occupancy_factor) || 1,
     isActive: row.is_active !== false
   };
   if (row.phone) t.phone = row.phone;
@@ -49,6 +53,7 @@ function toRow(t) {
     payment_day: t.paymentDay,
     notes: t.notes || null,
     excluded_bill_types: Array.isArray(t.excludedBillTypes) ? t.excludedBillTypes : [],
+    bill_occupancy_factor: (typeof t.billOccupancyFactor === 'number' && t.billOccupancyFactor > 0) ? t.billOccupancyFactor : 1,
     is_active: t.isActive !== false
   };
 }
