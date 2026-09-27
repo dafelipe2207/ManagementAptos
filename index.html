@@ -609,6 +609,42 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="notification-compose-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">New notification</h2>
+      <div class="form-row"><label for="notif-compose-scope">Send to</label>
+        <select id="notif-compose-scope" onchange="onNotifComposeScopeChange()">
+          <option value="tenant">One resident</option>
+          <option value="property">All residents of a property</option>
+          <option value="all">All residents</option>
+        </select>
+      </div>
+      <div class="form-row" id="notif-compose-tenant-row"><label for="notif-compose-tenant">Resident</label>
+        <select id="notif-compose-tenant"></select>
+      </div>
+      <div class="form-row" id="notif-compose-property-row" hidden><label for="notif-compose-property">Property</label>
+        <select id="notif-compose-property"></select>
+      </div>
+      <div class="form-row"><label for="notif-compose-category">Category</label>
+        <select id="notif-compose-category"></select>
+      </div>
+      <div class="form-row"><label for="notif-compose-title">Title</label>
+        <input id="notif-compose-title" type="text" maxlength="120" />
+      </div>
+      <div class="form-row"><label for="notif-compose-body">Message</label>
+        <textarea id="notif-compose-body"></textarea>
+      </div>
+      <div class="form-row"><label for="notif-compose-schedule">Send later (optional)</label>
+        <input id="notif-compose-schedule" type="datetime-local" />
+      </div>
+      <p id="notification-compose-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeNotificationComposeModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveNotificationCompose()">Send</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="cleaning-detail-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
       <h2 id="cleaning-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning task</h2>
@@ -859,6 +895,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=71"></script>
+<script type="module" src="app.js?v=72"></script>
 </body>
 </html>
