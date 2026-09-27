@@ -86,3 +86,21 @@ export async function getSignedUrl(bucket, path, expiresInSeconds) {
   if (error) throw error;
   return data.signedUrl;
 }
+
+export async function uploadMoveOutEvidencePhoto(file) {
+  const userId = await getCurrentUserId();
+  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
+  const { error } = await supabase.storage.from('move-out-evidence').upload(path, file, { upsert: false });
+  if (error) throw error;
+  return path;
+}
+
+/** Uploads several evidence photos for one manual deduction (e.g. multiple angles of a damaged
+ *  wall), one at a time so a single failure doesn't lose the paths that already succeeded. */
+export async function uploadMoveOutEvidencePhotos(files) {
+  const paths = [];
+  for (const file of Array.from(files || [])) {
+    paths.push(await uploadMoveOutEvidencePhoto(file));
+  }
+  return paths;
+}
