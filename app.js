@@ -20,6 +20,7 @@ import * as migrationService from './services/migrationService.js';
 import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
+import * as paymentReportService from './services/paymentReportService.js';
 import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js';
@@ -53,6 +54,7 @@ import * as inspectionService from './services/inspectionService.js';
   var propertyAssignments = []; // [{id, propertyId, profileId}] — which Administrator sees which property (super_admin only, loaded in bootstrapData)
   var maintenanceRequests = [];
   var notificationsList = [];
+  var paymentReports = []; // tenant-reported payments awaiting admin confirmation — see paymentReportService.js
   var cleaningTasks = [];
   var cleaningSubmissions = [];
   var cleaningComments = [];
@@ -1751,6 +1753,10 @@ import * as inspectionService from './services/inspectionService.js';
           var bill = items[i].bill, alloc = items[i].alloc;
           var savedAlloc = await billAllocationService.markPaid(alloc.id, settleDate, 'bond_deduction');
           alloc.paid = true; alloc.paidDate = settleDate; alloc.paidVia = savedAlloc.paidVia;
+          // This bulk settlement writes bill_allocations directly (not via markAllocationPaid), so
+          // it needs its own call to resolve any payment_reports row left pending for this share —
+          // otherwise a tenant's report stays stuck at "pending" forever once they've moved out.
+          try { await autoConfirmPendingPaymentReport(alloc.id); } catch(_e){ console.error('autoConfirmPendingPaymentReport failed', _e); }
           total += round2(alloc.amount);
           touchedBills[bill.id] = bill;
         }
@@ -3324,6 +3330,16 @@ import * as inspectionService from './services/inspectionService.js';
       errorEl.hidden = false;
       return;
     }
+    // replaceForBill deletes every existing allocation row and inserts new ones with new ids —
+    // payment_reports.allocation_id is ON DELETE CASCADE, so re-allocating while a tenant's
+    // payment report is still pending would silently delete it (and their proof/reference) with
+    // no admin review ever happening. Block that instead of letting it vanish.
+    var hasPendingReport = (bill.allocations || []).some(function(a){ return allocationPaymentStatus(a) === 'pending_verification'; });
+    if (hasPendingReport){
+      errorEl.textContent = 'This bill has a payment report pending review — confirm or reject it first, then re-allocate.';
+      errorEl.hidden = false;
+      return;
+    }
     // Preserves the "paid" status of each tenant who was already in the
     // previous allocation (by tenantId), even if the amount or method
     // changes — reallocating shouldn't un-mark as paid someone who already
@@ -3403,6 +3419,12 @@ import * as inspectionService from './services/inspectionService.js';
       var savedAllocations = bill.allocations;
       await persistBill(bill);
       bill.allocations = savedAllocations;
+      // Whichever admin action actually marked this share paid — the "Confirm Payment" button,
+      // or the plain "Mark as paid" button here or in pendingBillsByTenantHtml — must never leave
+      // a payment_reports row stuck at 'pending' once the share is genuinely paid. This only runs
+      // after the write above succeeded (we're still inside the try), so a failed write never
+      // auto-confirms a report.
+      try { await autoConfirmPendingPaymentReport(alloc.id); } catch(_e){ console.error('autoConfirmPendingPaymentReport failed', _e); }
       if (alloc.paidVia === 'bond_deduction'){
         showToast('Bill share settled from the bond.', 'success');
       } else {
@@ -3411,6 +3433,26 @@ import * as inspectionService from './services/inspectionService.js';
       render();
     } catch(err){
       showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  /** If this allocation has a 'pending' payment_reports row, resolves it to 'confirmed' and
+   *  notifies the tenant — called from inside markAllocationPaid right after the share is
+   *  actually marked paid, so it fires no matter which button triggered that (Confirm Payment,
+   *  or either of the two pre-existing "Mark as paid" buttons). No-ops silently if there was no
+   *  pending report (the ordinary case, when the admin marks paid without any tenant report). */
+  async function autoConfirmPendingPaymentReport(allocationId){
+    var pending = paymentReportsForAllocation(allocationId).find(function(r){ return r.status==='pending'; });
+    if (!pending) return;
+    var updated = await paymentReportService.confirm(pending.id, currentProfile ? currentProfile.id : null);
+    var idx = paymentReports.findIndex(function(r){ return r.id===pending.id; });
+    if (idx > -1) paymentReports[idx] = updated;
+    var bill = billOf(pending.billId);
+    var t = tenantOf(pending.tenantId);
+    if (bill && t && t.authUserId){
+      var alloc = bill.allocations && bill.allocations.find(function(a){ return a.id===allocationId; });
+      notificationService.notify(t.authUserId, 'Payment confirmed',
+        'Your payment of ' + money(alloc ? alloc.amount : 0) + ' for ' + billTypeLabel(bill.billType) + ' has been verified and marked as paid.',
+        'bills', bill.id, { category: 'payment_report', propertyId: bill.propertyId, tenantId: pending.tenantId, createdByProfileId: currentProfile ? currentProfile.id : null });
     }
   }
   /** Corrects an administrator mistake: undoes the "paid" mark on a tenant's share of a
@@ -3820,7 +3862,7 @@ import * as inspectionService from './services/inspectionService.js';
         '<td style="font-weight:650;">'+money(b.amount)+'</td>'+
         '<td>'+billTenantPaymentsSummary(b)+'</td>'+
         '<td>'+billAdminPaymentSummary(b)+'</td>'+
-        '<td>'+billStatusBadge(b)+'</td>'+
+        '<td>'+billStatusBadge(b)+(billHasPendingPaymentReport(b) ? ' ' + badge('upcoming','Payment reported') : '')+'</td>'+
         '</tr>';
     }).join('');
     return '<div class="card"><div class="report-table-wrap"><table class="report-table bills-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
@@ -4649,6 +4691,31 @@ import * as inspectionService from './services/inspectionService.js';
     return '<button class="text-link" style="font-size:11.5px;" onclick="triggerReceiptUpload(\''+billId+'\','+tenantArg+')">Upload receipt</button>';
   }
 
+  var PAYMENT_METHOD_LABEL = { bank_transfer: 'Bank transfer', cash: 'Cash', card: 'Card', other: 'Other' };
+
+  /** Every payment_reports row for one allocation, newest first — the full history the spec
+   *  requires (reported → rejected → reported → confirmed, etc.) is just this list in order. */
+  function paymentReportsForAllocation(allocationId){
+    return paymentReports.filter(function(r){ return r.allocationId === allocationId; })
+      .sort(function(a, b){ return (b.reportedAt || '').localeCompare(a.reportedAt || ''); });
+  }
+  /** The tenant-facing / admin-facing effective status of one allocation's payment, derived —
+   *  never stored as its own column. 'paid' always wins (bill_allocations.paid is the single
+   *  source of truth); otherwise it's driven by the single most recent payment_reports row. */
+  function allocationPaymentStatus(alloc){
+    if (alloc.paid) return 'paid';
+    var latest = paymentReportsForAllocation(alloc.id)[0];
+    if (latest && latest.status === 'pending') return 'pending_verification';
+    if (latest && latest.status === 'rejected') return 'rejected';
+    return 'unpaid';
+  }
+  /** Used by the bill list (billsTableHtml) to show a "Payment reported" badge without opening
+   *  the bill's own detail page. */
+  function billHasPendingPaymentReport(bill){
+    if (!bill.allocations) return false;
+    return bill.allocations.some(function(a){ return allocationPaymentStatus(a) === 'pending_verification'; });
+  }
+
   function billAllocationCard(b){
     var p = propertyOf(b.propertyId);
     var methodLabel = { equal:'Equal split', days:'By days occupied', custom:'Custom' };
@@ -4693,16 +4760,47 @@ import * as inspectionService from './services/inspectionService.js';
         // it's not relevant — it isn't shown in the allocation instead of asking for a receipt or marking
         // as paid something that doesn't apply.
         if (owesNothing || notRelevant) return '';
+        var payStatus = allocationPaymentStatus(a);
+        var pendingReport = payStatus==='pending_verification' ? paymentReportsForAllocation(a.id)[0] : null;
         var paidBit = a.paid
           ? badge('paid', 'Paid'+(a.paidDate ? ' ' + shortDate(a.paidDate) : '')+(a.paidVia==='bond_deduction' ? ' · Bond deduction' : ''))
+          : payStatus==='pending_verification' ? badge('upcoming','Reported')
           : badge('due', 'Unpaid');
         var actionBtn = a.paid
           ? '<button class="mini-btn" onclick="unmarkAllocationPaid(\''+b.id+'\',\''+a.tenantId+'\')">Mark as unpaid</button>'
-          : '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
+          : pendingReport
+            ? '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+
+              '<button class="mini-btn primary" onclick="confirmPaymentReport(\''+b.id+'\',\''+a.tenantId+'\',\''+(pendingReport.paymentDate||TODAY)+'\')">Confirm Payment</button>'+
+              '<button class="mini-btn danger" onclick="openRejectPaymentReportModal(\''+pendingReport.id+'\',\''+a.tenantId+'\',\''+b.id+'\')">Reject Payment</button>'+
+              '</div>'
+            : '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
+        var reportDetailHtml = pendingReport
+          ? '<div style="font-size:11.5px;color:var(--text-faint);margin-top:4px;">Payment reported by tenant'+
+            (pendingReport.reportedAt ? ' · Reported ' + shortDate(pendingReport.reportedAt.slice(0,10)) : '')+
+            (pendingReport.paymentDate ? ' · Paid ' + shortDate(pendingReport.paymentDate) : '')+
+            (pendingReport.paymentMethod ? ' · ' + (PAYMENT_METHOD_LABEL[pendingReport.paymentMethod]||pendingReport.paymentMethod) : '')+
+            (pendingReport.reference ? ' · Ref: "' + esc(pendingReport.reference) + '"' : '')+
+            (pendingReport.proofPath ? ' · <button class="text-link" style="font-size:11.5px;" onclick="viewReceipt(\'receipts\',\''+pendingReport.proofPath+'\')">View proof</button>' : '')+
+            '</div>'
+          : '';
+        // Collapsed audit trail once paid — the spec's full history requirement (reported →
+        // rejected → reported → confirmed, etc.) is just this allocation's payment_reports rows
+        // in order; no separate audit-log table needed.
+        var historyReports = (a.paid && !pendingReport) ? paymentReportsForAllocation(a.id) : [];
+        var historyHtml = historyReports.length
+          ? '<details style="margin-top:4px;"><summary style="font-size:11px;color:var(--text-faint);cursor:pointer;">Payment report history</summary>'+
+            historyReports.map(function(r){
+              var label = r.status==='confirmed' ? 'Confirmed' : r.status==='rejected' ? ('Rejected'+(r.rejectionReason?' — '+esc(r.rejectionReason):'')) : 'Reported';
+              return '<div style="font-size:11px;color:var(--text-faint);padding:2px 0 2px 8px;">'+shortDate((r.reportedAt||'').slice(0,10))+' — '+label+'</div>';
+            }).join('')+
+            '</details>'
+          : '';
         return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
           '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div>'+
           '<div style="display:flex;gap:10px;flex-wrap:wrap;">'+receiptLinkHtml(a.receiptPath, b.id, a.tenantId)+
-          (a.paid ? '' : whatsAppButtonHtml(b, p, t, a.amount))+'</div></div>'+
+          (a.paid ? '' : whatsAppButtonHtml(b, p, t, a.amount))+'</div>'+
+          reportDetailHtml+historyHtml+
+          '</div>'+
           '<div style="display:flex;align-items:center;gap:10px;">'+
           '<div style="text-align:right;"><div style="font-weight:650;">'+money(a.amount)+'</div>'+paidBit+'</div>'+
           actionBtn+
@@ -4727,6 +4825,59 @@ import * as inspectionService from './services/inspectionService.js';
       '<p style="font-size:13px;color:var(--text-dim);margin:0;">Split this bill between the property\'s tenants — equally, by days occupied, or a custom amount.</p></div>'+
       adminSectionHtml;
   }
+
+  /* ---------- Admin: confirm/reject a tenant's payment report ---------- */
+  /** Confirm Payment is now just a thin wrapper: markAllocationPaid is what actually resolves the
+   *  pending payment_reports row and notifies the tenant, via autoConfirmPendingPaymentReport —
+   *  so this works identically whether triggered from here, or from either of the two
+   *  pre-existing plain "Mark as paid" buttons. */
+  async function confirmPaymentReport(billId, tenantId, paymentDate){
+    // paid_via has a DB check constraint allowing only 'cash'/'bond_deduction' (bill_allocations
+    // has no 'tenant_reported' value) — a tenant-reported-and-admin-confirmed payment is real
+    // money paid by the tenant, i.e. semantically 'cash', same as any other manual confirmation.
+    await markAllocationPaid(billId, tenantId, paymentDate, 'cash');
+  }
+  window.confirmPaymentReport = confirmPaymentReport;
+
+  var rejectPaymentReportTarget = null; // { reportId, tenantId, billId }
+  function openRejectPaymentReportModal(reportId, tenantId, billId){
+    rejectPaymentReportTarget = { reportId: reportId, tenantId: tenantId, billId: billId };
+    document.getElementById('reject-payment-reason').value = '';
+    document.getElementById('reject-payment-modal-error').hidden = true;
+    document.getElementById('reject-payment-modal').hidden = false;
+  }
+  function closeRejectPaymentReportModal(){
+    document.getElementById('reject-payment-modal').hidden = true;
+    rejectPaymentReportTarget = null;
+  }
+  async function confirmRejectPaymentReport(){
+    var target = rejectPaymentReportTarget;
+    var errorEl = document.getElementById('reject-payment-modal-error');
+    var reason = document.getElementById('reject-payment-reason').value.trim();
+    if (!reason){ errorEl.textContent = 'Enter a reason.'; errorEl.hidden = false; return; }
+    if (!target) return;
+    try {
+      var updated = await paymentReportService.reject(target.reportId, currentProfile ? currentProfile.id : null, reason);
+      var idx = paymentReports.findIndex(function(r){ return r.id===target.reportId; });
+      if (idx > -1) paymentReports[idx] = updated;
+      var bill = billOf(target.billId);
+      var t = tenantOf(target.tenantId);
+      if (t && t.authUserId && bill){
+        await notificationService.notify(t.authUserId, 'Payment could not be verified',
+          'Payment could not be verified. ' + reason,
+          'bills', target.billId, { category: 'payment_report', propertyId: bill.propertyId, tenantId: target.tenantId, createdByProfileId: currentProfile ? currentProfile.id : null });
+      }
+      closeRejectPaymentReportModal();
+      showToast('Payment report rejected.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.openRejectPaymentReportModal = openRejectPaymentReportModal;
+  window.closeRejectPaymentReportModal = closeRejectPaymentReportModal;
+  window.confirmRejectPaymentReport = confirmRejectPaymentReport;
 
   function renderCalendar(){
     var events = buildCalendarEvents();
@@ -5649,7 +5800,8 @@ import * as inspectionService from './services/inspectionService.js';
     bins: { emoji: '🗑️', label: 'Bins' },
     house_rules: { emoji: '🏡', label: 'House rules' },
     important_notice: { emoji: '⚠️', label: 'Important notice' },
-    general_announcement: { emoji: '📢', label: 'General announcement' }
+    general_announcement: { emoji: '📢', label: 'General announcement' },
+    payment_report: { emoji: '💳', label: 'Payment report' }
   };
   /** The next pickup date on/after `asOfIso` for a trash_schedule entry. */
   function nextTrashPickupIso(entry, asOfIso){
@@ -6760,23 +6912,113 @@ import * as inspectionService from './services/inspectionService.js';
         .sort(function(a,b){ return (b.bill.billingPeriodStart||'').localeCompare(a.bill.billingPeriodStart||''); })
         .map(function(x){
           var b = x.bill, a = x.alloc;
+          var payStatus = allocationPaymentStatus(a);
+          var reportActionHtml = '';
+          if (payStatus === 'unpaid' || payStatus === 'rejected'){
+            reportActionHtml = '<button class="mini-btn" style="margin-top:10px;" onclick="openPaymentReportModal(\''+b.id+'\',\''+a.tenantId+'\')">I made this payment</button>';
+          } else if (payStatus === 'pending_verification'){
+            reportActionHtml = '<p style="font-size:12px;color:var(--text-faint);margin:10px 0 0;">Payment verification pending</p>';
+          }
+          var rejectionHtml = '';
+          if (payStatus === 'rejected'){
+            var lastReport = paymentReportsForAllocation(a.id)[0];
+            rejectionHtml = '<div class="field-row"><span class="k">Payment could not be verified</span><span class="v" style="color:var(--status-overdue);">'+esc(lastReport.rejectionReason||'')+'</span></div>';
+          }
           return '<div class="card">'+
             '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(b.billType))+(b.provider?' — '+esc(b.provider):'')+'</h2>'+
-            badge(a.paid?'paid':'due', a.paid?'Paid':'Pending')+'</div>'+
+            (a.paid ? badge('paid','Paid') : payStatus==='pending_verification' ? badge('upcoming','Pending verification') : badge('due','Pending'))+'</div>'+
             '<div class="field-list">'+
             '<div class="field-row"><span class="k">Total bill</span><span class="v">'+money(b.amount)+'</span></div>'+
             '<div class="field-row"><span class="k">Your share</span><span class="v">'+money(a.amount)+'</span></div>'+
             '<div class="field-row"><span class="k">Period</span><span class="v">'+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</span></div>'+
             (b.dueDate ? '<div class="field-row"><span class="k">Due date</span><span class="v">'+shortDate(b.dueDate)+'</span></div>' : '')+
             (a.paid && a.paidDate ? '<div class="field-row"><span class="k">Paid on</span><span class="v">'+shortDate(a.paidDate)+'</span></div>' : '')+
+            rejectionHtml+
             '</div>'+
             (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>' : '')+
+            reportActionHtml+
             '</div>';
         }).join('');
       return '<h3 style="font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:16px 0 8px;">'+(ym==='unknown'?'No date on file':esc(monthYearLabel(ym)))+'</h3>'+rowsHtml;
     }).join('');
     return pageHeader('My Bills', 'Your share of each shared bill — electricity, water, gas, internet and more.') + body;
   }
+
+  /* ---------- Tenant: "I made this payment" report modal ---------- */
+  var paymentReportModalTarget = null; // { allocationId, billId, tenantId }
+  var paymentReportModalProofPath = null;
+  function openPaymentReportModal(billId, tenantId){
+    var b = billOf(billId);
+    var alloc = b && b.allocations && b.allocations.find(function(a){ return a.tenantId===tenantId; });
+    if (!alloc) return;
+    paymentReportModalTarget = { allocationId: alloc.id, billId: billId, tenantId: tenantId };
+    paymentReportModalProofPath = null;
+    document.getElementById('payment-report-modal-sub').textContent = (b.provider||'') + ' • ' + money(alloc.amount);
+    document.getElementById('payment-report-date').value = TODAY;
+    document.getElementById('payment-report-method').value = 'bank_transfer';
+    document.getElementById('payment-report-reference').value = '';
+    document.getElementById('payment-report-proof-status').textContent = '';
+    document.getElementById('payment-report-modal-error').hidden = true;
+    document.getElementById('payment-report-modal').hidden = false;
+  }
+  function closePaymentReportModal(){
+    document.getElementById('payment-report-modal').hidden = true;
+    paymentReportModalTarget = null;
+    paymentReportModalProofPath = null;
+  }
+  function triggerPaymentReportProofUpload(){
+    document.getElementById('payment-report-proof-input').click();
+  }
+  async function handlePaymentReportProofFile(event){
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file || !paymentReportModalTarget) return;
+    try {
+      var path = await storageService.uploadReceipt('report-' + paymentReportModalTarget.allocationId, file);
+      paymentReportModalProofPath = path;
+      document.getElementById('payment-report-proof-status').textContent = 'Proof attached ✓';
+    } catch(err){
+      showToast('Could not attach the proof. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  async function submitPaymentReport(){
+    var target = paymentReportModalTarget;
+    var errorEl = document.getElementById('payment-report-modal-error');
+    if (!target) return;
+    var paymentDate = document.getElementById('payment-report-date').value || null;
+    var paymentMethod = document.getElementById('payment-report-method').value || null;
+    var reference = document.getElementById('payment-report-reference').value.trim() || null;
+    try {
+      var created = await paymentReportService.create({
+        allocationId: target.allocationId,
+        billId: target.billId,
+        tenantId: target.tenantId,
+        paymentDate: paymentDate,
+        paymentMethod: paymentMethod,
+        reference: reference,
+        proofPath: paymentReportModalProofPath
+      });
+      paymentReports.unshift(created);
+      closePaymentReportModal();
+      showToast('Payment reported — pending verification.', 'success');
+      render();
+    } catch(err){
+      // The DB's one-pending-report-per-allocation unique index (payment_reports_one_pending_per_alloc)
+      // is what actually prevents a duplicate report — surface its violation as a friendly message
+      // instead of the raw Postgres constraint error friendlyErrorMessage would otherwise return.
+      if (err && /payment_reports_one_pending_per_alloc/.test(err.message || '')){
+        errorEl.textContent = 'You already have a pending report for this bill — wait for it to be reviewed.';
+      } else {
+        errorEl.textContent = friendlyErrorMessage(err);
+      }
+      errorEl.hidden = false;
+    }
+  }
+  window.openPaymentReportModal = openPaymentReportModal;
+  window.closePaymentReportModal = closePaymentReportModal;
+  window.triggerPaymentReportProofUpload = triggerPaymentReportProofUpload;
+  window.handlePaymentReportProofFile = handlePaymentReportProofFile;
+  window.submitPaymentReport = submitPaymentReport;
 
   function renderTenantDocuments(){
     var t = myTenantRecord();
@@ -8701,7 +8943,8 @@ import * as inspectionService from './services/inspectionService.js';
       trashService.getAll(),
       inspectionService.getAll(),
       cleaningRotationService.getAll(),
-      inspectionService.getAllComments()
+      inspectionService.getAllComments(),
+      paymentReportService.getAll()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -8726,6 +8969,7 @@ import * as inspectionService from './services/inspectionService.js';
     inspectionSubmissions = results[16];
     cleaningRotations = results[17];
     inspectionComments = results[18];
+    paymentReports = results[19];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
