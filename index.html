@@ -378,6 +378,7 @@
       <div class="filter-chips" id="allocate-method-chips" style="margin:10px 0 4px;">
         <button class="chip" type="button" onclick="setAllocationMethod('equal')">Equal split</button>
         <button class="chip" type="button" onclick="setAllocationMethod('days')">By days occupied</button>
+        <button class="chip" type="button" onclick="setAllocationMethod('occupancy')">By occupancy factor</button>
         <button class="chip" type="button" onclick="setAllocationMethod('custom')">Custom</button>
       </div>
       <p id="allocate-method-note" style="font-size:11.5px;color:var(--text-faint);margin:2px 0 6px;"></p>
@@ -808,6 +809,10 @@
         <div id="tenant-excluded-billtypes" class="checkbox-group"></div>
         <p class="form-hint">Tick any service this tenant is excluded from — their share of that bill goes to you (the admin) instead.</p>
       </div>
+      <div class="form-row"><label for="tenant-occupancy-factor">Bill occupancy factor</label>
+        <input id="tenant-occupancy-factor" type="number" min="0.1" step="0.1" />
+        <p class="form-hint">How many people this tenant represents for splitting shared bills — 1.0 for one person, 2.0 for a couple, or any custom value.</p>
+      </div>
       <div class="form-row"><label for="tenant-notes">Notes</label><textarea id="tenant-notes"></textarea></div>
       <p id="tenant-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -936,6 +941,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=73"></script>
+<script type="module" src="app.js?v=74"></script>
 </body>
 </html>
