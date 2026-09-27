@@ -911,6 +911,29 @@ import * as inspectionService from './services/inspectionService.js';
     });
   }
 
+  /** Small red count badge on the "Notifications" nav item, kept in sync on every render() —
+   *  reads notificationsList, which bootstrapData()/markDbNotifRead() etc. keep up to date. */
+  function updateNotifNavBadge(){
+    // For staff, notificationsList holds EVERY resident's notifications (RLS lets is_staff() see
+    // all, so the admin Notification Center can filter/review them) — the badge must only count
+    // the signed-in user's OWN unread notifications, not everyone's.
+    var myAuthUserId = currentProfile ? currentProfile.authUserId : null;
+    var count = notificationsList.filter(function(n){ return !n.isRead && n.authUserId === myAuthUserId; }).length;
+    document.querySelectorAll('a[data-hash="#/notifications"]').forEach(function(a){
+      var existing = a.querySelector('.nav-badge');
+      if (count > 0){
+        if (!existing){
+          existing = document.createElement('span');
+          existing.className = 'nav-badge';
+          a.appendChild(existing);
+        }
+        existing.textContent = count > 99 ? '99+' : String(count);
+      } else if (existing){
+        existing.remove();
+      }
+    });
+  }
+
   /* ============ Badges / filas reutilizables ============ */
   function badge(status, label){
     return '<span class="badge '+status+'"><span class="dot"></span>'+esc(label)+'</span>';
@@ -4173,6 +4196,149 @@ import * as inspectionService from './services/inspectionService.js';
       '</div>';
   }
 
+  /** Generates the data-driven automatic notifications (check-out reminder, rent due/overdue,
+   *  bill due/overdue, cleaning turn, bins) — one call per load, staff-only (mirrors
+   *  checkMissingBillsNotifications below). Every rule uses notifyOnce with a stable dedupKey, so
+   *  calling this on every bootstrap is safe and required — it's how "automatic" notifications
+   *  actually get created in a backend-less app (see docs/superpowers/specs/2026-09-27-in-app-notifications-design.md §2/§5).
+   *  Note: rentCharges statuses are 'paid' | 'partially_paid' | 'overdue' | 'upcoming' (not 'due') —
+   *  mirrors the same overdue-vs-everything-else split buildCalendarEvents already uses. */
+  async function ensureAutomaticNotifications(){
+    if (isTenantRole() || !currentProfile) return;
+    var createdByProfileId = currentProfile.id;
+
+    // Check-in: fires the first time a tenant has BOTH a linked account and rent > 0 — accounts
+    // are created separately from the tenant record (see saveUserForm), often well after the
+    // tenant is created, so this can't only run once at creation time (it would silently never
+    // fire for the common case). notifyOnce's dedup key makes re-checking every load safe: once
+    // sent, it never repeats.
+    for (var q=0; q<tenants.length; q++){
+      var ct = tenants[q];
+      if (ct.rentAmount <= 0 || !ct.authUserId) continue;
+      await notificationService.notifyOnce(
+        ct.authUserId, 'checkin:' + ct.id,
+        'Welcome — your check-in time',
+        'Your check-in time is 3:00 PM. Please make sure you arrive after the designated check-in time.',
+        'tenants', ct.id,
+        { category: 'check_in', propertyId: ct.propertyId, tenantId: ct.id, createdByProfileId: createdByProfileId }
+      );
+    }
+
+    // Check-out: 7 days before the move-out date, for tenants who haven't moved out yet.
+    for (var i=0; i<tenants.length; i++){
+      var t = tenants[i];
+      if (t.rentAmount <= 0 || tenantHasMovedOut(t)) continue;
+      var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
+      if (!moveOut || !t.authUserId) continue;
+      var daysUntil = daysBetween(TODAY, moveOut);
+      if (daysUntil < 0 || daysUntil > 7) continue;
+      await notificationService.notifyOnce(
+        t.authUserId, 'checkout:' + t.id + ':' + moveOut,
+        'Your check-out is coming up',
+        'Your check-out time is 12:00 PM. Please make sure you have removed all your personal belongings and left the room and common areas clean.',
+        'tenants', t.id,
+        { category: 'check_out', propertyId: t.propertyId, tenantId: t.id, createdByProfileId: createdByProfileId }
+      );
+    }
+
+    // Rent: one notification when a charge turns overdue, another when it's due within 3 days
+    // (this also covers 'partially_paid' periods that haven't been fully settled yet). Guarded by
+    // tenantHasMovedOut explicitly (not just relying on charge generation stopping at move-out).
+    for (var j=0; j<rentCharges.length; j++){
+      var c = rentCharges[j];
+      if (c.status === 'paid') continue;
+      var rt = tenantOf(c.tenantId);
+      if (!rt || !rt.authUserId || tenantHasMovedOut(rt)) continue;
+      if (c.status === 'overdue'){
+        await notificationService.notifyOnce(
+          rt.authUserId, 'rent_overdue:' + rt.id + ':' + c.dueDate,
+          'Rent overdue', 'Your rent payment due ' + shortDate(c.dueDate) + ' (' + money(c.remaining) + ' remaining) is now overdue.',
+          'tenants', rt.id, { category: 'rent', propertyId: rt.propertyId, tenantId: rt.id, createdByProfileId: createdByProfileId }
+        );
+      } else {
+        var dueIn = daysBetween(TODAY, c.dueDate);
+        if (dueIn < 0 || dueIn > 3) continue;
+        await notificationService.notifyOnce(
+          rt.authUserId, 'rent_upcoming:' + rt.id + ':' + c.dueDate,
+          'Rent due soon', 'Your rent of ' + money(c.remaining) + ' is due ' + shortDate(c.dueDate) + '.',
+          'tenants', rt.id, { category: 'rent', propertyId: rt.propertyId, tenantId: rt.id, createdByProfileId: createdByProfileId }
+        );
+      }
+    }
+
+    // Bills: same due-soon/overdue split, per unpaid tenant allocation — skipping the admin's own
+    // share and any bill under the landlord's own hidden "RS" provider (never shown to tenants,
+    // same rule isTenantHiddenProvider already enforces for the Bills UI). Dedup key is
+    // bill+tenant, NOT the allocation id: replaceForBill deletes and reinserts allocations (new
+    // ids) whenever a bill's split is edited, so keying on allocation id would re-notify on every edit.
+    for (var k=0; k<bills.length; k++){
+      var b = bills[k];
+      if (!b.allocations || isTenantHiddenProvider(b.provider)) continue;
+      for (var m=0; m<b.allocations.length; m++){
+        var a = b.allocations[m];
+        if (a.paid || a.isAdmin) continue;
+        var bt = tenantOf(a.tenantId);
+        if (!bt || !bt.authUserId || tenantHasMovedOut(bt)) continue;
+        var overdue = billEffectiveStatus(b) === 'overdue';
+        if (overdue){
+          await notificationService.notifyOnce(
+            bt.authUserId, 'bill_overdue:' + b.id + ':' + bt.id,
+            'Bill overdue', billTypeLabel(b.billType) + ' (' + b.provider + ') — your share of ' + money(a.amount) + ' is overdue.',
+            'bills', b.id, { category: 'bills', propertyId: bt.propertyId, tenantId: bt.id, createdByProfileId: createdByProfileId }
+          );
+        } else {
+          var billDueIn = daysBetween(TODAY, b.dueDate);
+          if (billDueIn < 0 || billDueIn > 3) continue;
+          await notificationService.notifyOnce(
+            bt.authUserId, 'bill_upcoming:' + b.id + ':' + bt.id,
+            'Bill due soon', billTypeLabel(b.billType) + ' (' + b.provider + ') — your share of ' + money(a.amount) + ' is due ' + shortDate(b.dueDate) + '.',
+            'bills', b.id, { category: 'bills', propertyId: bt.propertyId, tenantId: bt.id, createdByProfileId: createdByProfileId }
+          );
+        }
+      }
+    }
+
+    // Cleaning: notify the current occupant of a room whose turn is today or tomorrow.
+    // currentTenantOf() isn't right here — it returns the FIRST tenant ever recorded for the
+    // room (tenants load oldest-first), which is often someone who has since moved out. Look up
+    // the actual current occupant instead (same predicate roomIsOccupied() uses).
+    for (var n=0; n<cleaningTasks.length; n++){
+      var task = cleaningTasks[n];
+      var taskDaysOut = daysBetween(TODAY, task.scheduledDate);
+      if (taskDaysOut < 0 || taskDaysOut > 1) continue;
+      var occupant = tenants.find(function(x){ return x.roomId===task.roomId && !tenantHasMovedOut(x); });
+      if (!occupant || !occupant.authUserId) continue;
+      var room = roomOf(task.roomId);
+      await notificationService.notifyOnce(
+        occupant.authUserId, 'cleaning_turn:' + task.id,
+        'Your cleaning turn', "It's your room's turn for cleaning " + (taskDaysOut===0 ? 'today' : 'tomorrow') + ' (' + (room?room.name:'') + ').',
+        'cleaning_tasks', task.id, { category: 'cleaning', propertyId: task.propertyId, tenantId: occupant.id, createdByProfileId: createdByProfileId }
+      );
+    }
+
+    // Bins: notify every active resident of a property whose collection is today or tomorrow.
+    for (var p=0; p<trashSchedule.length; p++){
+      var entry = trashSchedule[p];
+      var nextPickup = nextTrashPickupIso(entry, TODAY);
+      if (!nextPickup) continue;
+      var pickupDaysOut = daysBetween(TODAY, nextPickup);
+      if (pickupDaysOut < 0 || pickupDaysOut > 1) continue;
+      var propertyTenants = tenants.filter(function(x){ return x.propertyId===entry.propertyId && x.rentAmount>0 && !tenantHasMovedOut(x); });
+      await notificationService.notifyProperty(
+        entry.propertyId, propertyTenants,
+        (TRASH_TYPE_LABEL[entry.trashType]||entry.trashType) + ' collection ' + (pickupDaysOut===0?'today':'tomorrow'),
+        (TRASH_TYPE_LABEL[entry.trashType]||entry.trashType) + ' bin collection is ' + (pickupDaysOut===0?'today':'tomorrow') + ' — please put it out.',
+        'bins',
+        {
+          relatedTable: 'trash_schedule', relatedId: entry.id, createdByProfileId: createdByProfileId,
+          dedupKeyForTenant: (function(fixedEntryId, fixedPickupDate){
+            return function(tn){ return 'trash_turn:' + fixedEntryId + ':' + fixedPickupDate + ':' + tn.id; };
+          })(entry.id, nextPickup)
+        }
+      );
+    }
+  }
+
   /** Sends a notification (to the current user) for each detected gap that hasn't already
    *  been notified in the last 30 days — so the same alert isn't repeated every time the
    *  app is opened. Runs once per load, after generating the month's recurring bills. */
@@ -4793,8 +4959,10 @@ import * as inspectionService from './services/inspectionService.js';
       '<div class="card" style="margin-bottom:14px;"><h2 style="text-transform:none;letter-spacing:0;">Updates</h2>' +
       notificationsList.slice(0, 20).map(function(n){
         var clickAttr = notifDetailClickAttr(n);
+        var meta = NOTIFICATION_CATEGORY_META[n.category] || NOTIFICATION_CATEGORY_META.general_announcement;
         return '<div class="notif-row'+(n.isRead?' read':'')+'"'+clickAttr+' style="padding:8px 0;'+(clickAttr?'cursor:pointer;':'')+'">'+
-          '<span style="min-width:0;flex:1;"><div style="font-weight:600;font-size:13.5px;">'+esc(n.title)+'</div>'+
+          '<span style="min-width:0;flex:1;"><div style="font-weight:600;font-size:13.5px;">'+meta.emoji+' '+esc(n.title)+'</div>'+
+          '<div class="meta" style="font-size:11px;color:var(--text-faint);">'+meta.label+'</div>'+
           (n.body ? '<div class="meta" style="font-size:12px;color:var(--text-dim);">'+esc(n.body)+'</div>' : '')+
           '<div class="meta" style="font-size:11px;color:var(--text-faint);">'+shortDate((n.createdAt||'').slice(0,10))+'</div></span>'+
           (n.isRead ? '' : '<button class="notif-dot-btn" title="Mark as read" onclick="event.stopPropagation();markDbNotifRead(\''+n.id+'\')"><span class="notif-dot unread"></span></button>')+
@@ -4808,6 +4976,186 @@ import * as inspectionService from './services/inspectionService.js';
       '<div class="card" style="margin-top:14px;"><h2 style="text-transform:none;letter-spacing:0;">About notifications</h2>'+
       "<p style=\"font-size:13px;color:var(--text-dim);margin:0;\">This is an in-app notification centre — check this screen when you open the app. Real push notifications (system alerts even when the app is closed) need a backend and browser permissions, and aren't available yet.</p></div>";
   }
+
+  /* ---- Staff: Notification Center — every notification ever sent, filterable, with compose/cancel/archive ---- */
+  var notifFilterTenantId = 'all';
+  var notifFilterPropertyId = 'all';
+  var notifFilterCategory = 'all';
+
+  function notificationsFiltered(){
+    return notificationsList.filter(function(n){
+      if (notifFilterTenantId !== 'all' && n.tenantId !== notifFilterTenantId) return false;
+      if (notifFilterPropertyId !== 'all' && n.propertyId !== notifFilterPropertyId) return false;
+      if (notifFilterCategory !== 'all' && n.category !== notifFilterCategory) return false;
+      return true;
+    });
+  }
+
+  function notifStatusLabel(n){
+    if (n.canceledAt) return badge('overdue', 'Canceled');
+    if (n.archivedAt) return badge('neutral', 'Archived');
+    if (n.scheduledFor && n.scheduledFor > new Date().toISOString()) return badge('upcoming', 'Scheduled');
+    return n.isRead ? badge('paid', 'Read') : badge('due', 'Unread');
+  }
+
+  function renderNotificationsStaff(){
+    var filterOptionsTenants = '<option value="all">All residents</option>' + tenants.filter(function(t){ return t.rentAmount>0; }).sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
+      return '<option value="'+t.id+'"'+(notifFilterTenantId===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
+    }).join('');
+    var filterOptionsProperties = '<option value="all">All properties</option>' + properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(p){
+      return '<option value="'+p.id+'"'+(notifFilterPropertyId===p.id?' selected':'')+'>'+esc(p.name)+'</option>';
+    }).join('');
+    var filterOptionsCategories = '<option value="all">All categories</option>' + Object.keys(NOTIFICATION_CATEGORY_META).map(function(cat){
+      var meta = NOTIFICATION_CATEGORY_META[cat];
+      return '<option value="'+cat+'"'+(notifFilterCategory===cat?' selected':'')+'>'+meta.emoji+' '+meta.label+'</option>';
+    }).join('');
+
+    var rows = notificationsFiltered();
+    var listHtml = rows.length===0
+      ? emptyState('bell', 'No notifications match these filters', 'Try widening your filters, or send a new one.', '')
+      : '<div class="card">' + rows.map(function(n){
+          var meta = NOTIFICATION_CATEGORY_META[n.category] || NOTIFICATION_CATEGORY_META.general_announcement;
+          var recipient = n.tenantId ? (tenantOf(n.tenantId) ? tenantOf(n.tenantId).fullName : '—') : (n.propertyId ? (propertyOf(n.propertyId) ? propertyOf(n.propertyId).name + ' (all residents)' : '—') : '—');
+          var canCancel = n.scheduledFor && !n.canceledAt && !n.archivedAt && n.scheduledFor > new Date().toISOString();
+          var canArchive = !n.archivedAt;
+          // A row addressed to the signed-in admin themselves (e.g. a "missing bill" system
+          // alert) needs its own mark-read affordance here — this list is the only place staff
+          // sees their own notifications now that the route no longer falls back to renderNotifications().
+          var isMine = currentProfile && n.authUserId === currentProfile.authUserId;
+          return '<div class="notif-row" style="align-items:flex-start;padding:10px 0;">'+
+            '<span style="min-width:0;flex:1;"><div style="font-weight:600;font-size:13.5px;">'+meta.emoji+' '+esc(n.title)+'</div>'+
+            '<div class="meta" style="font-size:11.5px;color:var(--text-faint);">'+esc(recipient)+' · '+meta.label+' · created '+shortDate((n.createdAt||'').slice(0,10))+(n.scheduledFor?' · sends '+shortDate(n.scheduledFor.slice(0,10)):'')+'</div>'+
+            (n.body ? '<div class="meta" style="font-size:12px;color:var(--text-dim);">'+esc(n.body)+'</div>' : '')+
+            '</span>'+notifStatusLabel(n)+
+            '<span style="display:flex;gap:6px;">'+
+            (isMine && !n.isRead ? '<button class="mini-btn" onclick="markDbNotifRead(\''+n.id+'\')">Mark read</button>' : '')+
+            (canCancel ? '<button class="mini-btn" onclick="cancelScheduledNotification(\''+n.id+'\')">Cancel</button>' : '')+
+            (canArchive ? '<button class="mini-btn" onclick="archiveNotification(\''+n.id+'\')">Archive</button>' : '')+
+            '</span></div>';
+        }).join('') + '</div>';
+
+    return pageHeader('Notifications', 'Everything sent to residents — filter, review, or send a new one.') +
+      '<div class="card" style="margin-bottom:12px;"><div class="detail-head" style="margin-top:0;align-items:center;flex-wrap:wrap;gap:8px;">'+
+      '<select id="notif-filter-tenant" onchange="setNotifFilter(\'tenant\',this.value)" style="max-width:180px;">'+filterOptionsTenants+'</select>'+
+      '<select id="notif-filter-property" onchange="setNotifFilter(\'property\',this.value)" style="max-width:180px;">'+filterOptionsProperties+'</select>'+
+      '<select id="notif-filter-category" onchange="setNotifFilter(\'category\',this.value)" style="max-width:200px;">'+filterOptionsCategories+'</select>'+
+      '<button class="mini-btn primary" style="margin-left:auto;" onclick="openNotificationComposeModal()">+ New notification</button>'+
+      '</div></div>'+
+      listHtml;
+  }
+
+  window.setNotifFilter = function(kind, value){
+    if (kind==='tenant') notifFilterTenantId = value;
+    else if (kind==='property') notifFilterPropertyId = value;
+    else if (kind==='category') notifFilterCategory = value;
+    renderPreservingScroll();
+  };
+
+  window.cancelScheduledNotification = async function(id){
+    try {
+      await notificationService.cancelScheduled(id);
+      var n = notificationsList.find(function(x){ return x.id===id; });
+      if (n) n.canceledAt = new Date().toISOString();
+      showToast('Notification canceled.', 'success');
+      render();
+    } catch(err){ showToast('Could not cancel. ' + friendlyErrorMessage(err), 'error'); }
+  };
+
+  window.archiveNotification = async function(id){
+    try {
+      await notificationService.archive(id);
+      var n = notificationsList.find(function(x){ return x.id===id; });
+      if (n) n.archivedAt = new Date().toISOString();
+      showToast('Notification archived.', 'success');
+      render();
+    } catch(err){ showToast('Could not archive. ' + friendlyErrorMessage(err), 'error'); }
+  };
+
+  function onNotifComposeScopeChange(){
+    var scope = document.getElementById('notif-compose-scope').value;
+    document.getElementById('notif-compose-tenant-row').hidden = scope !== 'tenant';
+    document.getElementById('notif-compose-property-row').hidden = scope !== 'property';
+  }
+  window.onNotifComposeScopeChange = onNotifComposeScopeChange;
+
+  function openNotificationComposeModal(){
+    var tenantSelect = document.getElementById('notif-compose-tenant');
+    tenantSelect.innerHTML = tenants.filter(function(t){ return t.rentAmount>0 && !tenantHasMovedOut(t); }).sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
+      return '<option value="'+t.id+'">'+esc(t.fullName)+'</option>';
+    }).join('');
+    var propertySelect = document.getElementById('notif-compose-property');
+    propertySelect.innerHTML = properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(p){
+      return '<option value="'+p.id+'">'+esc(p.name)+'</option>';
+    }).join('');
+    var categorySelect = document.getElementById('notif-compose-category');
+    categorySelect.innerHTML = Object.keys(NOTIFICATION_CATEGORY_META).map(function(cat){
+      var meta = NOTIFICATION_CATEGORY_META[cat];
+      return '<option value="'+cat+'">'+meta.emoji+' '+meta.label+'</option>';
+    }).join('');
+    document.getElementById('notif-compose-scope').value = 'tenant';
+    document.getElementById('notif-compose-title').value = '';
+    document.getElementById('notif-compose-body').value = '';
+    document.getElementById('notif-compose-schedule').value = '';
+    onNotifComposeScopeChange();
+    document.getElementById('notification-compose-modal-error').hidden = true;
+    document.getElementById('notification-compose-modal').hidden = false;
+  }
+  window.openNotificationComposeModal = openNotificationComposeModal;
+
+  function closeNotificationComposeModal(){ document.getElementById('notification-compose-modal').hidden = true; }
+  window.closeNotificationComposeModal = closeNotificationComposeModal;
+
+  async function saveNotificationCompose(){
+    var scope = document.getElementById('notif-compose-scope').value;
+    var category = document.getElementById('notif-compose-category').value;
+    var title = document.getElementById('notif-compose-title').value.trim();
+    var body = document.getElementById('notif-compose-body').value.trim();
+    var scheduleRaw = document.getElementById('notif-compose-schedule').value;
+    var scheduledFor = scheduleRaw ? new Date(scheduleRaw).toISOString() : null;
+    var errorEl = document.getElementById('notification-compose-modal-error');
+    if (!title){
+      errorEl.textContent = 'Enter a title.';
+      errorEl.hidden = false;
+      return;
+    }
+    var createdByProfileId = currentProfile ? currentProfile.id : null;
+    try {
+      if (scope === 'tenant'){
+        var tenantId = document.getElementById('notif-compose-tenant').value;
+        var t = tenantOf(tenantId);
+        if (!t){ errorEl.textContent = 'Choose a resident.'; errorEl.hidden = false; return; }
+        if (!t.authUserId){ errorEl.textContent = 'This resident has no account yet, so they cannot receive in-app notifications.'; errorEl.hidden = false; return; }
+        // notifyOrThrow (not notify) — the admin needs to actually know if this failed, unlike
+        // the automatic/background call sites, which stay silent by design.
+        await notificationService.notifyOrThrow(t.authUserId, title, body, 'tenants', t.id, { category: category, propertyId: t.propertyId, tenantId: t.id, scheduledFor: scheduledFor, createdByProfileId: createdByProfileId });
+      } else if (scope === 'property'){
+        var propertyId = document.getElementById('notif-compose-property').value;
+        var propTenants = tenants.filter(function(x){ return x.propertyId===propertyId && x.rentAmount>0 && !tenantHasMovedOut(x); });
+        var propResults = await notificationService.notifyProperty(propertyId, propTenants, title, body, category, { scheduledFor: scheduledFor, createdByProfileId: createdByProfileId });
+        if (!propResults.some(function(r){ return r.sent; })){
+          errorEl.textContent = 'Nobody was notified — no active resident of this property has an account yet.';
+          errorEl.hidden = false;
+          return;
+        }
+      } else {
+        var allActive = tenants.filter(function(x){ return x.rentAmount>0 && !tenantHasMovedOut(x); });
+        var allResults = await notificationService.notifyPortfolio(allActive, title, body, category, { scheduledFor: scheduledFor, createdByProfileId: createdByProfileId });
+        if (!allResults.some(function(r){ return r.sent; })){
+          errorEl.textContent = 'Nobody was notified — no active resident has an account yet.';
+          errorEl.hidden = false;
+          return;
+        }
+      }
+      notificationsList = (await notificationService.getAll());
+      closeNotificationComposeModal();
+      showToast('Notification sent.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.saveNotificationCompose = saveNotificationCompose;
 
   /** Returns a ready-to-splice ` onclick="..."` attribute that opens whatever this DB notification
    *  is actually about (so selecting it shows the real detail, not the dashboard) — or '' when
@@ -5292,6 +5640,17 @@ import * as inspectionService from './services/inspectionService.js';
    * trashSchedule: property-level (not per-room) — which bin type is collected, from a reference
    * date, repeating every `intervalDays` days (not every property has this set up at all). */
   var TRASH_TYPE_LABEL = { garbage:'Garbage (red bin)', recycling:'Recycling (yellow bin)', organic:'Organic (green bin)' };
+  var NOTIFICATION_CATEGORY_META = {
+    check_in: { emoji: '🏠', label: 'Check-in' },
+    check_out: { emoji: '🚪', label: 'Check-out' },
+    rent: { emoji: '💰', label: 'Rent' },
+    bills: { emoji: '💳', label: 'Bills' },
+    cleaning: { emoji: '🧹', label: 'Cleaning' },
+    bins: { emoji: '🗑️', label: 'Bins' },
+    house_rules: { emoji: '🏡', label: 'House rules' },
+    important_notice: { emoji: '⚠️', label: 'Important notice' },
+    general_announcement: { emoji: '📢', label: 'General announcement' }
+  };
   /** The next pickup date on/after `asOfIso` for a trash_schedule entry. */
   function nextTrashPickupIso(entry, asOfIso){
     if (!entry.referenceDate || !entry.intervalDays) return null;
@@ -6941,6 +7300,18 @@ import * as inspectionService from './services/inspectionService.js';
       } else {
         tenantObj = await tenantService.create(draft);
         tenants.push(tenantObj);
+        if (tenantObj.authUserId){
+          try {
+            await notificationService.notifyOnce(
+              tenantObj.authUserId,
+              'checkin:' + tenantObj.id,
+              'Welcome — your check-in time',
+              'Your check-in time is 3:00 PM. Please make sure you arrive after the designated check-in time.',
+              'tenants', tenantObj.id,
+              { category: 'check_in', propertyId: tenantObj.propertyId, tenantId: tenantObj.id, createdByProfileId: currentProfile ? currentProfile.id : null }
+            );
+          } catch(_e){ console.error('check-in notification failed', _e); }
+        }
       }
 
       // rentService reads from rentSchedules, not directly from tenant.rentAmount/rentFrequency:
@@ -7213,7 +7584,7 @@ import * as inspectionService from './services/inspectionService.js';
     '#/reports': renderReports,
     '#/profits': renderProfits,
     '#/documents': renderDocuments,
-    '#/notifications': renderNotifications,
+    '#/notifications': function(){ return isTenantRole() ? renderNotifications() : renderNotificationsStaff(); },
     '#/users': renderUsers,
     '#/audit-log': renderAuditLog,
     '#/settings': renderSettings,
@@ -7227,7 +7598,7 @@ import * as inspectionService from './services/inspectionService.js';
     '#/maintenance': renderMaintenance,
     '#/cleaning': renderCleaning,
     '#/inspection': renderInspection,
-    '#/notifications': renderNotifications,
+    '#/notifications': function(){ return isTenantRole() ? renderNotifications() : renderNotificationsStaff(); },
     '#/settings': renderSettings,
     '#/more': renderMore
   };
@@ -7252,6 +7623,7 @@ import * as inspectionService from './services/inspectionService.js';
     else html = (ROUTES[hash] || ROUTES['#/'])();
     content.innerHTML = html;
     setActiveNav(hash);
+    updateNotifNavBadge();
     hydrateLazyThumbs();
     if (!preserveScroll) window.scrollTo(0,0);
   }
@@ -8362,6 +8734,9 @@ import * as inspectionService from './services/inspectionService.js';
     try { await checkMissingBillsNotifications(); } catch(_e){ console.error('checkMissingBillsNotifications failed', _e); }
     try { await ensureCleaningRotationsUpToDate(); } catch(_e){ console.error('ensureCleaningRotationsUpToDate failed', _e); }
     recomputeRentCharges();
+    // Must run after recomputeRentCharges() — its rent-reminder rules read the freshly computed
+    // rentCharges array, which doesn't exist yet at the point the other automatic checks above run.
+    try { await ensureAutomaticNotifications(); } catch(_e){ console.error('ensureAutomaticNotifications failed', _e); }
     refreshStaticSelects();
   }
   window.bootstrapData = bootstrapData;
