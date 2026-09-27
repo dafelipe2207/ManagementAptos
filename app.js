@@ -7,12 +7,12 @@ import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js?v=4';
+import * as tenantService from './services/tenantService.js?v=5';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
 import * as billService from './services/billService.js?v=3';
-import * as billAllocationService from './services/billAllocationService.js?v=3';
+import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js';
 import * as aiService from './services/aiService.js?v=3';
@@ -2999,8 +2999,51 @@ import * as inspectionService from './services/inspectionService.js';
     return rows;
   }
 
+  /** Day-prorated split by each present tenant's bill_occupancy_factor (spec:
+   *  docs/superpowers/specs/2026-09-27-bill-occupancy-factor-design.md §5). Parallels
+   *  computeDailyRoomAllocationRows's day loop, but skips the room-grouping step entirely —
+   *  each day's cost is split directly among that day's present tenants, weighted by their
+   *  factor, so a couple (factor 2.0) pays twice what a single tenant (factor 1.0) does. */
+  function computeOccupancyFactorAllocationRows(bill){
+    var totalDays = daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1;
+    var propTenants = tenantsOfProperty(bill.propertyId);
+    var totals = {};
+    var adminTotal = 0;
+    var dailyCost = bill.amount / totalDays;
+    for (var i=0; i<totalDays; i++){
+      var dayIso = stepDateIso(bill.billingPeriodStart, i);
+      var present = propTenants.filter(function(t){ return tenantOccupiesDay(t, dayIso); });
+      if (present.length === 0){ adminTotal += dailyCost; continue; }
+      var totalFactor = present.reduce(function(s,t){ return s + (t.billOccupancyFactor || 1); }, 0);
+      present.forEach(function(t){
+        var share = dailyCost * (t.billOccupancyFactor || 1) / totalFactor;
+        if (isTenantExcludedFromBillType(t, bill.billType)) adminTotal += share;
+        else totals[t.id] = (totals[t.id] || 0) + share;
+      });
+    }
+    var rows = Object.keys(totals).map(function(tenantId){
+      var t = tenantOf(tenantId);
+      return { tenantId: tenantId, name: t ? t.fullName : tenantId,
+        occupancyFactor: t ? t.billOccupancyFactor : 1, amount: round2(totals[tenantId]) };
+    });
+    if (adminTotal > 0.004){
+      rows.push({ tenantId: null, isAdmin: true, name: 'Administrator (you)', amount: round2(adminTotal) });
+    }
+    // Same largest-row rounding-remainder fix as computeDailyRoomAllocationRows, so the sum
+    // always matches the bill's amount exactly regardless of how the cents fell.
+    var sum = round2(rows.reduce(function(s,r){ return s + r.amount; }, 0));
+    var diff = round2(bill.amount - sum);
+    if (diff !== 0 && rows.length){
+      var maxIdx = 0;
+      for (var j=1; j<rows.length; j++){ if (rows[j].amount > rows[maxIdx].amount) maxIdx = j; }
+      rows[maxIdx].amount = round2(rows[maxIdx].amount + diff);
+    }
+    return rows;
+  }
+
   function computeAllocationRows(bill, method){
     if (method === 'days') return computeDailyRoomAllocationRows(bill);
+    if (method === 'occupancy') return computeOccupancyFactorAllocationRows(bill);
     // 'equal' and the starting point for 'custom' — even split among tenants (not by room,
     // since "equal" is intentionally "everyone pays the same", regardless of how many share a
     // room or how many days they were there).
@@ -3259,6 +3302,7 @@ import * as inspectionService from './services/inspectionService.js';
   var ALLOCATION_METHOD_NOTES = {
     equal: 'The amount is split equally between every tenant at the property.',
     days: "The amount is split day by day between the rooms that were occupied each day (not a fixed number of rooms) — tenants sharing a room split that room's share between them.",
+    occupancy: "The amount is split day by day by each tenant's occupancy factor (e.g. a couple counts as 2.0, a single tenant as 1.0) — moving in or out mid-period is handled automatically.",
     custom: "Set each amount by hand. The total must match the bill's amount exactly."
   };
   /** Lets the administrator mark that they're covering (part of) this bill themselves — for
@@ -3281,7 +3325,7 @@ import * as inspectionService from './services/inspectionService.js';
   function renderAllocateModal(){
     if (!allocationDraft) return;
     document.querySelectorAll('#allocate-method-chips .chip').forEach(function(btn, i){
-      var methods = ['equal','days','custom'];
+      var methods = ['equal','days','occupancy','custom'];
       btn.classList.toggle('active', methods[i] === allocationDraft.method);
     });
     var hasAdminRow = allocationDraft.rows.some(function(r){ return r.isAdmin; });
@@ -3292,7 +3336,9 @@ import * as inspectionService from './services/inspectionService.js';
       ? '<button class="mini-btn" type="button" onclick="toggleAllocationAdmin()">− Remove yourself as a payer</button>'
       : '<button class="mini-btn" type="button" onclick="toggleAllocationAdmin()">+ Add yourself (the admin) as a payer</button>';
     document.getElementById('allocate-rows').innerHTML = allocationDraft.rows.map(function(row, i){
-      var metaText = row.isAdmin ? "Paid by you, not the tenants" : (row.days+' / '+allocationDraft.periodDays+' days occupied');
+      var metaText = row.isAdmin ? "Paid by you, not the tenants"
+        : (allocationDraft.method === 'occupancy' ? ('Factor: ' + (row.occupancyFactor != null ? row.occupancyFactor.toFixed(1) : '1.0'))
+        : (row.days+' / '+allocationDraft.periodDays+' days occupied'));
       return '<div class="alloc-row"><div class="who"><div>'+esc(row.name)+'</div>'+
         '<div class="meta">'+metaText+'</div></div>'+
         '<input class="alloc-amount-input" type="number" min="0" step="0.01" value="'+row.amount.toFixed(2)+'" '+
@@ -3346,21 +3392,31 @@ import * as inspectionService from './services/inspectionService.js';
     // paid their share.
     var oldPaidByTenant = {};
     (bill.allocations || []).forEach(function(a){ oldPaidByTenant[a.isAdmin ? 'admin' : a.tenantId] = { paid: !!a.paid, paidDate: a.paidDate || null }; });
+    // Only an 'occupancy' allocation carries a real occupancy_factor/total_occupancy_factor
+    // snapshot — every other method must explicitly write null so re-allocating a bill away
+    // from 'occupancy' doesn't leave a stale factor from the old method on the new rows.
+    var isOccupancy = allocationDraft.method === 'occupancy';
+    var totalFactorForBill = isOccupancy
+      ? round2(allocationDraft.rows.filter(function(r){ return !r.isAdmin; })
+          .reduce(function(s,r){ return s + (r.occupancyFactor || 1); }, 0))
+      : null;
     var newRows = allocationDraft.rows.map(function(r){
       if (r.isAdmin){
         var prevAdmin = oldPaidByTenant.admin;
         // No one else owes the administrator's share — it's considered covered as soon as it's saved.
-        return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate: (prevAdmin && prevAdmin.paidDate) || TODAY };
+        return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate: (prevAdmin && prevAdmin.paidDate) || TODAY,
+          occupancyFactor: null, totalOccupancyFactor: null };
       }
       var amt = round2(r.amount);
+      var factorFields = { occupancyFactor: isOccupancy ? (r.occupancyFactor || 1) : null, totalOccupancyFactor: totalFactorForBill };
       if (amt <= 0){
         // They don't owe anything (e.g. excluded from this service, or the admin set
         // $0 by hand) — it's considered settled on its own, without asking the admin to mark it as paid.
         var prevZero = oldPaidByTenant[r.tenantId];
-        return { tenantId:r.tenantId, amount:0, paid:true, paidDate: (prevZero && prevZero.paidDate) || TODAY };
+        return Object.assign({ tenantId:r.tenantId, amount:0, paid:true, paidDate: (prevZero && prevZero.paidDate) || TODAY }, factorFields);
       }
       var prev = oldPaidByTenant[r.tenantId];
-      return { tenantId:r.tenantId, amount:amt, paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null };
+      return Object.assign({ tenantId:r.tenantId, amount:amt, paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null }, factorFields);
     });
     var confirmBtn = document.querySelector('#allocate-modal .mini-btn.primary');
     var originalLabel = confirmBtn ? confirmBtn.textContent : '';
@@ -6888,6 +6944,19 @@ import * as inspectionService from './services/inspectionService.js';
    *  oldest — so it's easy to find "the one from such-and-such month" instead of a flat list. They only
    *  see their own allocation row (bill_allocations RLS already limits it to that) — not what the
    *  other tenants in the house paid or owe. */
+  /** Whether "bill ÷ totalOccupancyFactor × occupancyFactor" actually reconstructs the stored
+   *  amount for this allocation row. It only does when every present-that-period tenant has a
+   *  row (no exclusions, no one moving in/out mid-period changing the day-by-day mix) AND the
+   *  amount wasn't hand-edited after picking the Occupancy method — both real possibilities the
+   *  simple flat formula doesn't represent (day-prorated computeOccupancyFactorAllocationRows
+   *  can legitimately produce a different amount per tenant than that single ratio implies). See
+   *  review finding I1/I2 on docs/superpowers/plans/2026-09-27-bill-occupancy-factor.md. */
+  function occupancyFormulaMatches(bill, alloc){
+    if (alloc.occupancyFactor == null || !alloc.totalOccupancyFactor) return false;
+    var expected = round2(bill.amount * alloc.occupancyFactor / alloc.totalOccupancyFactor);
+    return Math.abs(expected - alloc.amount) <= 0.02;
+  }
+
   function renderTenantBills(){
     var t = myTenantRecord();
     var myAllocations = [];
@@ -6935,6 +7004,14 @@ import * as inspectionService from './services/inspectionService.js';
             (a.paid && a.paidDate ? '<div class="field-row"><span class="k">Paid on</span><span class="v">'+shortDate(a.paidDate)+'</span></div>' : '')+
             rejectionHtml+
             '</div>'+
+            (occupancyFormulaMatches(b, a) ?
+              '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">'+
+              'Property bill: '+money(b.amount)+' · Total occupancy units: '+a.totalOccupancyFactor.toFixed(1)+
+              ' · Your occupancy factor: '+a.occupancyFactor.toFixed(1)+'<br>'+
+              money(b.amount)+' ÷ '+a.totalOccupancyFactor.toFixed(1)+' × '+a.occupancyFactor.toFixed(1)+' = '+money(a.amount)+
+              '</p>' : (a.occupancyFactor != null ?
+              '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">Your occupancy factor: '+a.occupancyFactor.toFixed(1)+
+              ' — prorated by the days you (and others) were at the property during this period.</p>' : ''))+
             (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>' : '')+
             reportActionHtml+
             '</div>';
@@ -7463,6 +7540,7 @@ import * as inspectionService from './services/inspectionService.js';
     document.getElementById('tenant-excluded-billtypes').innerHTML = BILL_TYPES.map(function(bt){
       return '<label><input type="checkbox" value="'+bt+'"'+(excluded.indexOf(bt)>=0?' checked':'')+'/><span>'+esc(billTypeLabel(bt))+'</span></label>';
     }).join('');
+    document.getElementById('tenant-occupancy-factor').value = (t && t.billOccupancyFactor > 0) ? t.billOccupancyFactor : 1;
     document.getElementById('tenant-notes').value = t ? (t.notes||'') : '';
     document.getElementById('tenant-modal-error').hidden = true;
     document.getElementById('tenant-modal').hidden = false;
@@ -7485,10 +7563,16 @@ import * as inspectionService from './services/inspectionService.js';
     var paymentDay = parseInt(document.getElementById('tenant-payment-day').value, 10);
     var notes = document.getElementById('tenant-notes').value.trim();
     var excludedBillTypes = Array.prototype.slice.call(document.querySelectorAll('#tenant-excluded-billtypes input:checked')).map(function(el){ return el.value; });
+    var billOccupancyFactor = parseFloat(document.getElementById('tenant-occupancy-factor').value);
     var errorEl = document.getElementById('tenant-modal-error');
 
     if (!fullName || !propertyId || !roomId || !moveInDate || !isFinite(rentAmount) || rentAmount<0 || !isFinite(paymentDay)){
       errorEl.textContent = 'Add a name, property, room, move-in date and a valid rent amount (0 or more).';
+      errorEl.hidden = false;
+      return;
+    }
+    if (!isFinite(billOccupancyFactor) || billOccupancyFactor <= 0){
+      errorEl.textContent = 'Bill occupancy factor must be a number greater than 0.';
       errorEl.hidden = false;
       return;
     }
@@ -7519,7 +7603,8 @@ import * as inspectionService from './services/inspectionService.js';
     }
 
     var draft = { fullName:fullName, propertyId:propertyId, roomId:roomId, moveInDate:moveInDate,
-      rentAmount:rentAmount, rentFrequency:rentFrequency, paymentDay:paymentDay, excludedBillTypes:excludedBillTypes };
+      rentAmount:rentAmount, rentFrequency:rentFrequency, paymentDay:paymentDay, excludedBillTypes:excludedBillTypes,
+      billOccupancyFactor:billOccupancyFactor };
     if (phone) draft.phone = phone;
     if (email) draft.email = email;
     if (expectedMoveOutDate) draft.expectedMoveOutDate = expectedMoveOutDate;
