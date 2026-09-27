@@ -3078,15 +3078,24 @@ import * as inspectionService from './services/inspectionService.js';
   async function autoAllocateNewBill(newBill){
     var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
     if (propTenantsForBill.length > 0){
-      var autoRows = computeAllocationRows(newBill, 'days');
+      var autoRows = computeAllocationRows(newBill, 'occupancy');
+      // Same snapshot rule as confirmAllocation's manual "By occupancy factor" save: every
+      // non-admin row carries the factor actually used, and the bill-wide total those factors
+      // summed to — both frozen at allocation time (see docs/superpowers/specs/
+      // 2026-09-27-bill-occupancy-factor-design.md §4). Tenants with the default factor (1.0)
+      // produce identical amounts to the old 'days' default, so this is a safe default switch.
+      var totalFactorForBill = round2(autoRows.filter(function(r){ return !r.isAdmin; })
+        .reduce(function(s,r){ return s + (r.occupancyFactor || 1); }, 0));
       var allocRows = autoRows.map(function(r){
-        if (r.isAdmin) return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate:TODAY };
+        if (r.isAdmin) return { tenantId:null, isAdmin:true, amount:round2(r.amount), paid:true, paidDate:TODAY,
+          occupancyFactor:null, totalOccupancyFactor:null };
         var amt = round2(r.amount);
         var owesNothing = amt <= 0;
-        return { tenantId:r.tenantId, amount:amt, paid:owesNothing, paidDate: owesNothing ? TODAY : null };
+        return { tenantId:r.tenantId, amount:amt, paid:owesNothing, paidDate: owesNothing ? TODAY : null,
+          occupancyFactor: r.occupancyFactor || 1, totalOccupancyFactor: totalFactorForBill };
       });
       var savedAllocations = await billAllocationService.replaceForBill(newBill.id, allocRows);
-      newBill.allocationMethod = 'days';
+      newBill.allocationMethod = 'occupancy';
       newBill.status = 'allocated';
       newBill = await billService.update(newBill.id, newBill);
       newBill.allocations = savedAllocations;
