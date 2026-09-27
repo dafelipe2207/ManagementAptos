@@ -92,3 +92,12 @@ export async function markMoveOutSettled(id, isoTimestamp) {
   if (error) throw error;
   return fromRow(data);
 }
+
+// Lets a logged-in TENANT set only their own actual_move_out_date (when starting the move-out
+// process from "My Bond") — tenants have no UPDATE grant on `tenants` under RLS, so this goes
+// through the narrow SECURITY DEFINER function set_own_actual_move_out_date, which only ever
+// touches that one column on the caller's own row (current_tenant_id()).
+export async function setOwnActualMoveOutDate(date) {
+  const { error } = await supabase.rpc('set_own_actual_move_out_date', { p_date: date });
+  if (error) throw error;
+}
