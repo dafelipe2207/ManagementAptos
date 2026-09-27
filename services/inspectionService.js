@@ -48,3 +48,34 @@ export async function remove(id) {
   const { error } = await supabase.from('inspection_submissions').delete().eq('id', id);
   if (error) throw error;
 }
+
+/* ---------- Admin comments on a tenant's move-in/move-out photos (mirrors cleaningService's
+   task comments, just keyed by tenant+type instead of a cleaning task id). ---------- */
+function commentFromRow(row) {
+  return {
+    id: row.id,
+    propertyId: row.property_id,
+    roomId: row.room_id,
+    tenantId: row.tenant_id,
+    type: row.type,
+    authorProfileId: row.author_profile_id || null,
+    comment: row.comment,
+    createdAt: row.created_at
+  };
+}
+
+export async function getAllComments() {
+  const { data, error } = await supabase.from('inspection_comments').select('*').order('created_at', { ascending: true });
+  if (error) throw error;
+  return data.map(commentFromRow);
+}
+
+export async function addComment(propertyId, roomId, tenantId, type, authorProfileId, comment) {
+  const userId = await getCurrentUserId();
+  const { data, error } = await supabase.from('inspection_comments').insert({
+    user_id: userId, property_id: propertyId, room_id: roomId, tenant_id: tenantId,
+    type: type, author_profile_id: authorProfileId || null, comment: comment
+  }).select().single();
+  if (error) throw error;
+  return commentFromRow(data);
+}
