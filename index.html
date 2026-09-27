@@ -592,18 +592,19 @@
 
   <div class="modal-overlay" id="cleaning-task-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Generate cleaning rotation</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Each week the turn passes to the next room, so with N rooms every room's turn comes back around every N weeks.</p>
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning rotation</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">The turn passes to the next occupied room every time this interval is up — it keeps going on its own, no need to re-generate it. A vacant room's turn is skipped.</p>
       <div class="form-row"><label for="cleaning-task-property">Property</label>
         <select id="cleaning-task-property" onchange="onCleaningTaskPropertyChange()"></select>
       </div>
       <p id="cleaning-task-periodicity" style="font-size:12px;color:var(--text-faint);margin:-6px 0 10px;"></p>
-      <div class="form-row"><label for="cleaning-task-date">First cleaning date (usually a weekend)</label><input id="cleaning-task-date" type="date" /></div>
-      <div class="form-row"><label for="cleaning-task-repeat">How many weeks to generate</label><input id="cleaning-task-repeat" type="number" min="1" max="52" value="12" /></div>
+      <div class="form-row"><label for="cleaning-task-date">Reference date (anchors the cycle)</label><input id="cleaning-task-date" type="date" /></div>
+      <div class="form-row"><label for="cleaning-task-interval">Repeats every (days)</label><input id="cleaning-task-interval" type="number" min="1" max="90" value="7" /></div>
       <p id="cleaning-task-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
+        <button class="mini-btn" id="cleaning-task-delete-btn" onclick="deleteCleaningRotationConfirm()" hidden>Delete</button>
         <button class="mini-btn" onclick="closeCleaningTaskModal()">Cancel</button>
-        <button class="mini-btn primary" onclick="saveCleaningTaskForm()">Generate</button>
+        <button class="mini-btn primary" onclick="saveCleaningTaskForm()">Save</button>
       </div>
     </div>
   </div>
@@ -663,6 +664,7 @@
     <div class="card modal-card" style="max-width:420px;">
       <h2 id="inspection-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Inspection photos</h2>
       <div id="inspection-detail-body"></div>
+      <p id="inspection-detail-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeInspectionDetailModal()">Close</button>
       </div>
@@ -857,6 +859,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=70"></script>
+<script type="module" src="app.js?v=71"></script>
 </body>
 </html>
