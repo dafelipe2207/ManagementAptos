@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="styles.css?v=13">
+<link rel="stylesheet" href="styles.css?v=14">
 </head>
 <body>
 <div id="app">
@@ -346,6 +346,9 @@
         <select id="doc-type">
           <option value="lease">Lease agreement</option>
           <option value="id">ID copy</option>
+          <option value="invoice">Invoice</option>
+          <option value="technician_report">Technician report</option>
+          <option value="warranty">Warranty</option>
           <option value="other">Other</option>
         </select>
       </div>
@@ -581,6 +584,7 @@
   <div class="modal-overlay" id="maintenance-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
       <h2 id="maintenance-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Report a problem</h2>
+      <p id="maintenance-modal-source-note" style="font-size:12px;color:var(--text-dim);margin:0 0 10px;" hidden></p>
       <div class="form-row" id="maintenance-property-row">
         <label for="maintenance-property">Property</label>
         <select id="maintenance-property" onchange="onMaintenancePropertyChange()"></select>
@@ -612,8 +616,14 @@
           </select>
         </div>
       </div>
-      <div class="form-row"><label for="maintenance-photo">Photos (optional)</label><input id="maintenance-photo" type="file" accept="image/*" multiple />
-        <div id="maintenance-photos-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
+      <div class="form-row"><label for="maintenance-photo-before">Before photos (optional)</label><input id="maintenance-photo-before" type="file" accept="image/*" multiple />
+        <div id="maintenance-photos-before-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
+      </div>
+      <div class="form-row"><label for="maintenance-photo-during">During photos (optional)</label><input id="maintenance-photo-during" type="file" accept="image/*" multiple />
+        <div id="maintenance-photos-during-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
+      </div>
+      <div class="form-row"><label for="maintenance-photo-after">After photos (optional)</label><input id="maintenance-photo-after" type="file" accept="image/*" multiple />
+        <div id="maintenance-photos-after-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
       </div>
       <div class="form-row" id="maintenance-status-row" hidden>
         <label for="maintenance-status">Status</label>
@@ -623,6 +633,28 @@
           <option value="resolved">Resolved</option>
           <option value="closed">Closed</option>
         </select>
+      </div>
+      <div class="form-row" id="maintenance-due-date-row" hidden>
+        <label for="maintenance-due-date">Due date</label>
+        <input id="maintenance-due-date" type="date" />
+      </div>
+      <div class="form-row" id="maintenance-assigned-to-row" hidden>
+        <label for="maintenance-assigned-to">Assigned to</label>
+        <input id="maintenance-assigned-to" type="text" />
+      </div>
+      <div class="form-row" id="maintenance-resolution-notes-row" hidden>
+        <label for="maintenance-resolution-notes">Resolution notes</label>
+        <textarea id="maintenance-resolution-notes"></textarea>
+      </div>
+      <div class="form-row" id="maintenance-documents-row" hidden>
+        <label>Documents</label>
+        <p id="maintenance-documents-no-tenant" style="font-size:12px;color:var(--text-dim);margin:0 0 6px;" hidden>Attach a tenant to this request to add documents.</p>
+        <div id="maintenance-documents-attach">
+          <input id="maintenance-doc-file" type="file" accept="image/*,application/pdf" />
+          <select id="maintenance-doc-type"></select>
+          <button type="button" class="mini-btn" onclick="confirmAddMaintenanceDocument()">Add document</button>
+        </div>
+        <div id="maintenance-documents-list" style="margin-top:6px;"></div>
       </div>
       <p id="maintenance-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -695,7 +727,8 @@
       <p id="cleaning-detail-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeCleaningDetailModal()">Close</button>
-        <button class="mini-btn" id="cleaning-detail-review-btn" onclick="markCleaningTaskReviewed()">Mark as reviewed</button>
+        <button class="mini-btn" id="cleaning-detail-not-completed-btn" onclick="markCleaningNotCompletedConfirm()" hidden>Mark not completed</button>
+        <button class="mini-btn" id="cleaning-detail-review-btn" onclick="markCleaningTaskReviewed()">Mark as completed</button>
         <button class="mini-btn primary" id="cleaning-detail-comment-btn" onclick="saveCleaningComment()">Add comment</button>
       </div>
     </div>
@@ -711,6 +744,40 @@
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeCleaningSubmitModal()">Cancel</button>
         <button class="mini-btn primary" onclick="saveCleaningSubmitForm()">Submit photos</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="bin-out-complete-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Mark Bin OUT completed</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">A photo is optional — add one if you'd like a record of it.</p>
+      <div class="form-row"><label for="bin-out-complete-photo">Photo (optional)</label><input id="bin-out-complete-photo" type="file" accept="image/*" /></div>
+      <p id="bin-out-complete-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeBinOutCompleteModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveBinOutCompleteForm()">Mark completed</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="bin-out-detail-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 id="bin-out-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Bin OUT task</h2>
+      <div id="bin-out-detail-body"></div>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeBinOutDetailModal()">Close</button>
+        <button class="mini-btn" id="bin-out-detail-not-completed-btn" onclick="markBinOutNotCompletedConfirm()" hidden>Mark not completed</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="room-activity-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 id="room-activity-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Room — Activity</h2>
+      <div id="room-activity-body"></div>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeRoomActivityModal()">Close</button>
       </div>
     </div>
   </div>
@@ -970,6 +1037,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=79"></script>
+<script type="module" src="app.js?v=86"></script>
 </body>
 </html>
