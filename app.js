@@ -33,6 +33,7 @@ import * as moveOutSettlementService from './services/moveOutSettlementService.j
 import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
+import * as roomIncludedBillService from './services/roomIncludedBillService.js';
 
 (function(){
   "use strict";
@@ -76,6 +77,7 @@ import * as entityLinkService from './services/entityLinkService.js';
   var entityLinks = []; // entity_links — generic cross-module relations; Phase 2's Inspection -> Create Issue
                          // is its first real consumer (see entityLinkService.js). Loaded once at bootstrap,
                          // updated locally (push) after linkEntities() calls, same pattern as other lists here.
+  var roomIncludedBills = []; // room_included_bills — admin-paid costs bundled into a room's rent, Profits-page-only
   var signedUrlCache = {}; // "bucket|path" -> { url, expiresAt }
   var PHONE_LOGIN_SUFFIX = '@tenant.belmontmanager.internal'; // must match the create-user Edge Function exactly
   function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
@@ -543,6 +545,18 @@ import * as entityLinkService from './services/entityLinkService.js';
   /* ============ Utils ============ */
   var currencyFmt = new Intl.NumberFormat('en-AU', { style:'currency', currency:'AUD', minimumFractionDigits:2 });
   function money(n){ return currencyFmt.format(n); }
+  /** Converts any {amount, frequency} pair to its steady weekly-equivalent value.
+   *  'monthly' NEVER divides by 4 — it uses the real weeks-per-month ratio
+   *  (52 weeks/year / 12 months/year), so $1,690/month and $390/week normalize
+   *  to the identical weekly figure. */
+  function normalizeToWeekly(amount, frequency){
+    if (amount == null) return 0;
+    if (frequency === 'fortnightly') return amount / 2;
+    if (frequency === 'monthly') return amount * 12 / 52;
+    return amount; // 'weekly' (and any unrecognized value falls back to as-is)
+  }
+  function weeklyToMonthly(weekly){ return weekly * 52 / 12; }
+  function weeklyToAnnual(weekly){ return weekly * 52; }
   function shortDate(iso){
     var d = new Date(iso + 'T00:00:00');
     return d.toLocaleDateString('en-AU', { day:'2-digit', month:'short' });
@@ -2472,6 +2486,9 @@ import * as entityLinkService from './services/entityLinkService.js';
   var paymentsFilter = 'all';
   var paymentsTenantFilter = 'all';
   var paymentsPropertyFilter = 'all';
+  var paymentsMonthFilter = TODAY.slice(0,7); // 'YYYY-MM', or 'all' — default = current month
+  function setPaymentsMonthFilter(v){ paymentsMonthFilter = v; renderPreservingScroll(); }
+  window.setPaymentsMonthFilter = setPaymentsMonthFilter;
   var paymentsDateSort = 'desc'; // 'desc' = most recent first, 'asc' = oldest first
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
   function setPaymentsFilter(f){ paymentsFilter = f; renderPreservingScroll(); }
@@ -2530,6 +2547,13 @@ import * as entityLinkService from './services/entityLinkService.js';
       tenantPool.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
         return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
       }).join('');
+    var monthsPresent = Array.from(new Set(rentCharges.map(function(c){ return c.periodStart.slice(0,7); }))).sort().reverse();
+    var monthOptionsHtml = '<option value="all"'+(paymentsMonthFilter==='all'?' selected':'')+'>All months</option>'+
+      monthsPresent.map(function(m){
+        var label = CALENDAR_MONTH_NAMES[parseInt(m.slice(5,7),10)-1] + ' ' + m.slice(0,4);
+        return '<option value="'+m+'"'+(paymentsMonthFilter===m?' selected':'')+'>'+label+'</option>';
+      }).join('');
+
     var tenantFilterHtml = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;align-items:flex-end;">'+
       '<div style="flex:1;min-width:160px;">'+
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by property</label>'+
@@ -2538,6 +2562,10 @@ import * as entityLinkService from './services/entityLinkService.js';
       '<div style="flex:1;min-width:160px;">'+
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
       '<select class="modal-input" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
+      '</div>'+
+      '<div style="flex:1;min-width:160px;">'+
+      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by month</label>'+
+      '<select class="modal-input" onchange="setPaymentsMonthFilter(this.value)">'+monthOptionsHtml+'</select>'+
       '</div>'+
       '<button type="button" class="mini-btn" style="flex:1;min-width:160px;" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
       '</div>';
@@ -2548,6 +2576,9 @@ import * as entityLinkService from './services/entityLinkService.js';
     var charges = paymentsTenantFilter==='all' ? rentCharges : rentCharges.filter(function(c){ return c.tenantId===paymentsTenantFilter; });
     if (paymentsPropertyFilter !== 'all'){
       charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); return t && t.propertyId === paymentsPropertyFilter; });
+    }
+    if (paymentsMonthFilter !== 'all'){
+      charges = charges.filter(function(c){ return c.periodStart.slice(0,7) === paymentsMonthFilter; });
     }
 
     var expected = charges.reduce(function(s,c){ return s+c.amountDue; },0);
@@ -2663,7 +2694,6 @@ import * as entityLinkService from './services/entityLinkService.js';
           var owedBills = unpaidBillAllocationsFor(t.id).map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; });
           var prop = properties.find(function(p){ return p.id===t.propertyId; });
           var pendingTotal = pending.reduce(function(s,c){ return s+c.remaining; }, 0);
-          var paidTotal = paid.reduce(function(s,c){ return s+c.amountDue; }, 0);
           var billsTotal = owedBills.reduce(function(s,o){ return s+o.alloc.amount; }, 0);
           // rentCharges (unfiltered by the chip/date-sort above) is sorted most-future-first,
           // so the tenant's first match here is always their next period — paid or not —
@@ -2682,7 +2712,7 @@ import * as entityLinkService from './services/entityLinkService.js';
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
             dueSectionHtml(pending, upcomingCharges)+
-            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+') · '+money(paidTotal)+'</h3>'+
+            '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
             limitedSection(paid, paidRow, 'No payments recorded yet.', 'Paid', t.id)+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.')+
@@ -5647,6 +5677,10 @@ import * as entityLinkService from './services/entityLinkService.js';
   }
 
   /* ---------- PHASE 11: Reports ---------- */
+  var reportsMonthFilter = TODAY.slice(0,7); // 'YYYY-MM', or 'all'
+  function setReportsMonthFilter(v){ reportsMonthFilter = v; renderPreservingScroll(); }
+  window.setReportsMonthFilter = setReportsMonthFilter;
+
   function renderReports(){
     if (properties.length === 0 && tenants.length === 0){
       return pageHeader('Reports', "Expected vs received rent, outstanding balances, bills and occupancy at a glance.") +
@@ -5655,21 +5689,38 @@ import * as entityLinkService from './services/entityLinkService.js';
           '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>');
     }
     var s = getDashboardSummary();
+    var scopedCharges = reportsMonthFilter === 'all' ? rentCharges : rentCharges.filter(function(c){ return c.periodStart.slice(0,7) === reportsMonthFilter; });
+    var scopedRentExpected = scopedCharges.reduce(function(s2,c){ return s2+c.amountDue; }, 0);
+    var scopedRentReceived = scopedCharges.reduce(function(s2,c){ return s2+c.amountPaid; }, 0);
+    var scopedOutstanding = scopedCharges.reduce(function(s2,c){ return s2+c.remaining; }, 0);
+    function billDateKey(b){ return (b.billingPeriodStart || b.issueDate || '').slice(0,7); }
+    var scopedBills = reportsMonthFilter === 'all' ? bills : bills.filter(function(b){ return billDateKey(b) === reportsMonthFilter; });
     // Real bill ledger: sums what's ACTUALLY been collected per allocation
     // (billPaidAmount) instead of all-or-nothing by bill.status, so a
     // partially paid bill is reflected correctly instead of counting
     // as "0% paid" until the last share is marked.
-    var billsPaidTotal = bills.reduce(function(sum,b){ return sum+billPaidAmount(b); },0);
-    var billsOutstandingTotal = bills.reduce(function(sum,b){ return sum+billOutstandingAmount(b); },0);
-    var billsOverdueTotal = bills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; })
+    var billsPaidTotal = scopedBills.reduce(function(sum,b){ return sum+billPaidAmount(b); },0);
+    var billsOutstandingTotal = scopedBills.reduce(function(sum,b){ return sum+billOutstandingAmount(b); },0);
+    var billsOverdueTotal = scopedBills.filter(function(b){ return billEffectiveStatus(b)==='overdue'; })
       .reduce(function(sum,b){ return sum+billOutstandingAmount(b); },0);
-    var netCashflow = s.totalRentReceived - billsPaidTotal;
+    var netCashflow = scopedRentReceived - billsPaidTotal;
     var occupancyRate = s.occupiedRooms + s.vacantRooms > 0 ? Math.round(100 * s.occupiedRooms / (s.occupiedRooms + s.vacantRooms)) : 0;
 
+    var monthsPresent = Array.from(new Set(rentCharges.map(function(c){ return c.periodStart.slice(0,7); }))).sort().reverse();
+    var monthOptionsHtml = '<option value="all"'+(reportsMonthFilter==='all'?' selected':'')+'>All months</option>'+
+      monthsPresent.map(function(m){
+        var label = CALENDAR_MONTH_NAMES[parseInt(m.slice(5,7),10)-1] + ' ' + m.slice(0,4);
+        return '<option value="'+m+'"'+(reportsMonthFilter===m?' selected':'')+'>'+label+'</option>';
+      }).join('');
+    var monthFilterHtml = '<div style="margin-bottom:10px;">'+
+      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by month</label>'+
+      '<select class="modal-input" onchange="setReportsMonthFilter(this.value)">'+monthOptionsHtml+'</select>'+
+      '</div>';
+
     var statHtml = '<div class="stat-grid">'+
-      ['Rent expected|'+money(s.totalRentExpected)+'|0',
-       'Rent received|'+money(s.totalRentReceived)+'|0',
-       'Outstanding|'+money(s.totalOutstanding)+'|'+(s.totalOutstanding>0?1:0),
+      ['Rent expected|'+money(scopedRentExpected)+'|0',
+       'Rent received|'+money(scopedRentReceived)+'|0',
+       'Outstanding|'+money(scopedOutstanding)+'|'+(scopedOutstanding>0?1:0),
        'Bills paid|'+money(billsPaidTotal)+'|0',
        'Bills outstanding|'+money(billsOutstandingTotal)+'|'+(billsOutstandingTotal>0?1:0),
        'Net cashflow|'+money(netCashflow)+'|'+(netCashflow<0?1:0)
@@ -5683,7 +5734,7 @@ import * as entityLinkService from './services/entityLinkService.js';
       '<div class="bar-track"><div class="bar-fill" style="width:'+occupancyRate+'%;"></div></div></div>'+
       '</div>';
 
-    var billsAmountTotal = bills.reduce(function(sum,b){ return sum+b.amount; },0);
+    var billsAmountTotal = scopedBills.reduce(function(sum,b){ return sum+b.amount; },0);
     var billsBreakdownHtml = '<div class="card"><h2>Bills breakdown</h2>'+
       '<div class="bar-row"><div class="bar-label"><span>Paid</span><span>'+money(billsPaidTotal)+'</span></div>'+
       '<div class="bar-track"><div class="bar-fill" style="width:'+(billsAmountTotal? Math.round(100*billsPaidTotal/billsAmountTotal):0)+'%;background:var(--status-paid);"></div></div></div>'+
@@ -5692,7 +5743,7 @@ import * as entityLinkService from './services/entityLinkService.js';
       '</div>';
 
     var byTenant = {};
-    rentCharges.forEach(function(c){
+    scopedCharges.forEach(function(c){
       if (!byTenant[c.tenantId]) byTenant[c.tenantId] = { expected:0, received:0, outstanding:0 };
       byTenant[c.tenantId].expected += c.amountDue;
       byTenant[c.tenantId].received += c.amountPaid;
@@ -5708,75 +5759,136 @@ import * as entityLinkService from './services/entityLinkService.js';
       (tenantRows
         ? '<div class="report-table-wrap"><table class="report-table"><thead><tr><th>Tenant</th><th>Expected</th><th>Received</th><th>Outstanding</th></tr></thead>'+
           '<tbody>'+tenantRows+'</tbody></table></div>'+
-          '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">Covers every rent period since move-in, not just the current one.</p>'
+          '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">'+
+            (reportsMonthFilter === 'all'
+              ? 'Covers every rent period since move-in, not just the current one.'
+              : 'Scoped to the selected month — choose "All months" above to see every rent period since move-in.')+
+          '</p>'
         : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No rent charges yet — add a paying tenant to see a breakdown here.</p>')+
       '</div>';
 
     return pageHeader('Reports', 'Expected vs received rent, outstanding balances, bills and occupancy at a glance.') +
-      statHtml + occupancyHtml + billsBreakdownHtml + tenantTableHtml;
+      monthFilterHtml + statHtml + occupancyHtml + billsBreakdownHtml + tenantTableHtml;
   }
 
-  /** "Profits" by property: what tenants pay (actual payments, not just what's
-   *  billed) minus what the admin pays the real estate for that property, based on its
-   *  frequency. In "All time" the lease expense is prorated over the months elapsed since
-   *  that property's earliest move-in (or from today, if there are no tenants), since we
-   *  don't store an actual lease start date — it's made clear that this is an estimate. */
-  var profitsPeriod = 'month'; // 'month' | 'all'
-  function setProfitsPeriod(p){ profitsPeriod = p; renderPreservingScroll(); }
-  window.setProfitsPeriod = setProfitsPeriod;
-
-  function monthlyLeaseCost(p){
+  /** "Profits" by property: a current run-rate snapshot (not a historical
+   *  range) of each occupied room's normalized weekly rent, minus active
+   *  admin-paid bills bundled into rent (room_included_bills), minus the
+   *  property's own weekly-normalized lease cost. See
+   *  docs/superpowers/specs/2026-09-28-profit-by-property-design.md. */
+  function propertyWeeklyLeaseCost(p){
     if (p.leasePaymentAmount == null) return 0;
-    // Fortnightly ≈ 26.09 cycles per year (365.25/14) → divided over 12 months.
-    return p.leasePaymentFrequency === 'fortnightly' ? p.leasePaymentAmount * (365.25/14) / 12 : p.leasePaymentAmount;
+    return normalizeToWeekly(p.leasePaymentAmount, p.leasePaymentFrequency === 'fortnightly' ? 'fortnightly' : 'monthly');
+  }
+
+  function activeIncludedBillsForRoom(roomId){
+    return roomIncludedBills.filter(function(e){
+      return e.roomId === roomId && e.startDate <= TODAY && (!e.endDate || e.endDate >= TODAY);
+    });
+  }
+
+  function propertyProfitBreakdown(p){
+    var propRooms = rooms.filter(function(r){ return r.propertyId === p.id; });
+    var roomLines = propRooms.map(function(r){
+      // NOT currentTenantOf(r.id) — that helper returns the first tenant EVER
+      // assigned to this room by array order, which can be an old, moved-out
+      // tenant on a room that has turned over. Filter for the currently active
+      // tenant directly instead (same test roomIsOccupied uses internally).
+      var tenant = tenants.find(function(t){ return t.roomId === r.id && !tenantHasMovedOut(t); }) || null;
+      var weeklyRent = tenant ? normalizeToWeekly(tenant.rentAmount, tenant.rentFrequency) : 0;
+      return { room:r, tenant:tenant, weeklyRent:weeklyRent };
+    });
+    var includedBillLines = [];
+    propRooms.forEach(function(r){
+      activeIncludedBillsForRoom(r.id).forEach(function(e){
+        includedBillLines.push({ room:r, entry:e, weeklyAmount: normalizeToWeekly(e.amount, e.frequency) });
+      });
+    });
+    var allBillLines = [];
+    propRooms.forEach(function(r){
+      roomIncludedBills.filter(function(e){ return e.roomId === r.id; }).forEach(function(e){
+        allBillLines.push({ room:r, entry:e, weeklyAmount: normalizeToWeekly(e.amount, e.frequency) });
+      });
+    });
+    var inactiveIncludedBills = allBillLines.filter(function(l){
+      return !(l.entry.startDate <= TODAY && (!l.entry.endDate || l.entry.endDate >= TODAY));
+    });
+    var weeklyIncome = round2(roomLines.reduce(function(s,l){ return s+l.weeklyRent; }, 0));
+    var weeklyIncludedBillsTotal = round2(includedBillLines.reduce(function(s,l){ return s+l.weeklyAmount; }, 0));
+    var hasLeaseCost = p.leasePaymentAmount != null;
+    var weeklyCost = propertyWeeklyLeaseCost(p);
+    var weeklyProfit = round2(weeklyIncome - weeklyIncludedBillsTotal - weeklyCost);
+    return {
+      rooms: roomLines,
+      includedBills: includedBillLines,
+      inactiveIncludedBills: inactiveIncludedBills,
+      weeklyCost: weeklyCost,
+      hasLeaseCost: hasLeaseCost,
+      weeklyIncome: weeklyIncome,
+      weeklyIncludedBillsTotal: weeklyIncludedBillsTotal,
+      weeklyProfit: weeklyProfit,
+      monthlyProfit: round2(weeklyToMonthly(weeklyProfit)),
+      annualProfit: round2(weeklyToAnnual(weeklyProfit))
+    };
   }
 
   function renderProfits(){
     if (properties.length === 0){
-      return pageHeader('Profits', "What tenants pay you vs what you pay the real estate, per property.") +
+      return pageHeader('Profits', "What each property earns after admin-paid costs bundled into rent, and what you pay the real estate.") +
         emptyState('chart', 'Nothing to show yet', 'Once you add properties and tenants, profits will show up here.',
           '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>');
     }
-    var periodChipsHtml = '<div class="filter-chips" style="margin-bottom:10px;">'+
-      '<button class="chip'+(profitsPeriod==='month'?' active':'')+'" onclick="setProfitsPeriod(\'month\')">This month</button>'+
-      '<button class="chip'+(profitsPeriod==='all'?' active':'')+'" onclick="setProfitsPeriod(\'all\')">All time</button>'+
-      '</div>';
-    var monthStart = TODAY.slice(0,7)+'-01';
-
-    var rows = properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
-      var propTenants = tenants.filter(function(t){ return t.propertyId===p.id; });
-      var tenantIds = propTenants.map(function(t){ return t.id; });
-      var propPayments = paymentRecords.filter(function(pay){ return tenantIds.indexOf(pay.tenantId) > -1; });
-      var monthlyCost = monthlyLeaseCost(p);
-      var income, expense, periodLabel;
-      if (profitsPeriod === 'month'){
-        income = propPayments.filter(function(pay){ return pay.date >= monthStart; }).reduce(function(s,pay){ return s+pay.amount; }, 0);
-        expense = monthlyCost;
-        periodLabel = 'this month';
-      } else {
-        income = propPayments.reduce(function(s,pay){ return s+pay.amount; }, 0);
-        var earliestMoveIn = propTenants.reduce(function(min,t){ return (!min || t.moveInDate < min) ? t.moveInDate : min; }, null);
-        var months = earliestMoveIn ? Math.max(1, daysBetween(earliestMoveIn, TODAY) / 30.44) : 0;
-        expense = monthlyCost * months;
-        periodLabel = 'all time (estimated)';
-      }
-      var profit = round2(income - expense);
-      var hasLeaseCost = p.leasePaymentAmount != null;
+    var cardsHtml = properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
+      var b = propertyProfitBreakdown(p);
+      var roomRowsHtml = b.rooms.map(function(l){
+        var addBillBtn = '<button type="button" class="text-link" style="margin-left:8px;" onclick="openIncludedBillModal(\''+l.room.id+'\')">+ Add included bill</button>';
+        return l.tenant
+          ? '<div class="field-row"><span class="k">'+esc(l.room.name)+' — '+esc(l.tenant.fullName)+'</span><span class="v">'+money(round2(l.weeklyRent))+'/week'+addBillBtn+'</span></div>'
+          : '<div class="field-row"><span class="k">'+esc(l.room.name)+'</span><span class="v" style="color:var(--text-faint);">Vacant'+addBillBtn+'</span></div>';
+      }).join('');
+      var includedBillRowsHtml = b.includedBills.length
+        ? b.includedBills.map(function(l){
+            return '<div class="field-row"><span class="k">− '+esc(l.entry.label)+' ('+esc(l.room.name)+')</span><span class="v" style="color:var(--status-overdue);">−'+money(round2(l.weeklyAmount))+'/week'+
+              '<button type="button" class="icon-mini-btn" title="Edit" onclick="openIncludedBillModal(\''+l.room.id+'\',\''+l.entry.id+'\')">✎</button>'+
+              '<button type="button" class="icon-mini-btn" title="End (stop applying from today)" onclick="endIncludedBill(\''+l.entry.id+'\')">⏹</button>'+
+              '<button type="button" class="icon-mini-btn danger" title="Delete" onclick="deleteIncludedBillConfirm(\''+l.entry.id+'\')">✕</button>'+
+              '</span></div>';
+          }).join('')
+        : '<p style="font-size:12px;color:var(--text-faint);margin:4px 0 0;">No included bills for this property.</p>';
+      var inactiveRowsHtml = b.inactiveIncludedBills.length
+        ? '<h3 style="font-size:11px;text-transform:none;letter-spacing:0;color:var(--text-faint);margin:10px 0 4px;">Not currently active</h3>'+
+          b.inactiveIncludedBills.map(function(l){
+            var range = shortDate(l.entry.startDate) + (l.entry.endDate ? ' – ' + shortDate(l.entry.endDate) : ' – (no end date)');
+            return '<div class="field-row"><span class="k" style="color:var(--text-faint);">'+esc(l.entry.label)+' ('+esc(l.room.name)+') · '+range+'</span>'+
+              '<span class="v"><button type="button" class="icon-mini-btn" title="Edit" onclick="openIncludedBillModal(\''+l.room.id+'\',\''+l.entry.id+'\')">✎</button>'+
+              '<button type="button" class="icon-mini-btn danger" title="Delete" onclick="deleteIncludedBillConfirm(\''+l.entry.id+'\')">✕</button></span></div>';
+          }).join('')
+        : '';
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;"><a href="#/properties/'+p.id+'" style="color:inherit;text-decoration:none;">'+esc(p.name)+'</a></h2>'+
-        '<div style="font-weight:700;font-size:15px;color:'+(profit<0?'var(--status-overdue)':'var(--status-paid)')+';">'+money(profit)+'</div>'+
+        '<div style="font-weight:700;font-size:15px;color:'+(b.weeklyProfit<0?'var(--status-overdue)':'var(--status-paid)')+';">'+money(b.weeklyProfit)+'/week</div>'+
         '</div>'+
-        '<div class="field-list">'+
-        '<div class="field-row"><span class="k">Rent collected</span><span class="v">'+money(income)+'</span></div>'+
-        '<div class="field-row"><span class="k">Paid to real estate</span><span class="v">'+(hasLeaseCost ? money(expense) : '—')+'</span></div>'+
+        '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Rooms</h3>'+
+        '<div class="field-list">'+roomRowsHtml+'</div>'+
+        '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Included bills (paid by you, subtracted)</h3>'+
+        includedBillRowsHtml+
+        inactiveRowsHtml+
+        '<div class="field-list" style="margin-top:10px;">'+
+        '<div class="field-row"><span class="k">Weekly income</span><span class="v">'+money(b.weeklyIncome)+'</span></div>'+
+        '<div class="field-row"><span class="k">Included bills</span><span class="v">−'+money(b.weeklyIncludedBillsTotal)+'</span></div>'+
+        '<div class="field-row"><span class="k">Paid to real estate</span><span class="v">'+(b.hasLeaseCost ? '−'+money(b.weeklyCost) : '—')+'</span></div>'+
         '</div>'+
-        '<p style="font-size:11px;color:var(--text-faint);margin:8px 0 0;">'+
-        (hasLeaseCost ? 'Profit '+periodLabel+' = rent collected − lease cost.' : 'No lease amount set for this property, so this only shows rent collected.')+
-        '</p></div>';
+        '<div class="field-list" style="margin-top:6px;">'+
+        '<div class="field-row"><span class="k">Profit / week</span><span class="v" style="font-weight:700;">'+money(b.weeklyProfit)+'</span></div>'+
+        '<div class="field-row"><span class="k">Profit / month</span><span class="v">'+money(b.monthlyProfit)+'</span></div>'+
+        '<div class="field-row"><span class="k">Profit / year</span><span class="v">'+money(b.annualProfit)+'</span></div>'+
+        '</div>'+
+        (b.hasLeaseCost ? '' : '<p style="font-size:11px;color:var(--text-faint);margin:8px 0 0;">No lease amount set for this property, so cost is not subtracted here.</p>')+
+        '</div>';
     }).join('');
 
-    return pageHeader('Profits', "What tenants pay you vs what you pay the real estate, per property.") +
-      periodChipsHtml + rows;
+    return pageHeader('Profits', "What each property earns after admin-paid costs bundled into rent, and what you pay the real estate.") +
+      cardsHtml;
   }
 
   /* ---------- PHASE 13: Notifications ---------- */
@@ -8727,6 +8839,8 @@ import * as entityLinkService from './services/entityLinkService.js';
   /* ---------- Room form ---------- */
   var roomModalEditId = null;
   var roomModalPropertyId = null;
+  var includedBillModalRoomId = null;
+  var includedBillModalEditId = null; // null = adding a new entry
   function openRoomModal(propertyId, roomId){
     roomModalPropertyId = propertyId;
     roomModalEditId = roomId || null;
@@ -8805,6 +8919,97 @@ import * as entityLinkService from './services/entityLinkService.js';
   window.closeRoomModal = closeRoomModal;
   window.saveRoomForm = saveRoomForm;
   window.deleteRoomConfirm = deleteRoomConfirm;
+
+  /* ---------- Included bill form ---------- */
+  function openIncludedBillModal(roomId, entryId){
+    includedBillModalRoomId = roomId;
+    includedBillModalEditId = entryId || null;
+    var e = entryId ? roomIncludedBills.find(function(x){ return x.id===entryId; }) : null;
+    document.getElementById('included-bill-modal-title').textContent = e ? 'Edit included bill' : 'Add included bill';
+    document.getElementById('included-bill-label').value = e ? e.label : '';
+    document.getElementById('included-bill-amount').value = e ? e.amount : '';
+    document.getElementById('included-bill-frequency').value = e ? e.frequency : 'weekly';
+    document.getElementById('included-bill-start').value = e ? e.startDate : TODAY;
+    document.getElementById('included-bill-end').value = e ? (e.endDate || '') : '';
+    document.getElementById('included-bill-modal-error').hidden = true;
+    document.getElementById('included-bill-modal').hidden = false;
+  }
+  function closeIncludedBillModal(){
+    document.getElementById('included-bill-modal').hidden = true;
+    includedBillModalRoomId = null;
+    includedBillModalEditId = null;
+  }
+  async function saveIncludedBillForm(){
+    var label = document.getElementById('included-bill-label').value.trim();
+    var amountRaw = document.getElementById('included-bill-amount').value;
+    var amount = parseFloat(amountRaw);
+    var frequency = document.getElementById('included-bill-frequency').value;
+    var startDate = document.getElementById('included-bill-start').value;
+    var endDate = document.getElementById('included-bill-end').value || null;
+    var errorEl = document.getElementById('included-bill-modal-error');
+    if (!label){ errorEl.textContent = 'Label is required.'; errorEl.hidden = false; return; }
+    if (!amountRaw || !isFinite(amount) || amount <= 0){ errorEl.textContent = 'Enter an amount greater than 0.'; errorEl.hidden = false; return; }
+    if (!startDate){ errorEl.textContent = 'Start date is required.'; errorEl.hidden = false; return; }
+    if (endDate && endDate < startDate){ errorEl.textContent = 'End date cannot be before the start date.'; errorEl.hidden = false; return; }
+    var saveBtn = document.querySelector('#included-bill-modal .mini-btn.primary');
+    var originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    errorEl.hidden = true;
+    try {
+      var payload = { roomId: includedBillModalRoomId, label: label, amount: amount, frequency: frequency, startDate: startDate, endDate: endDate };
+      if (includedBillModalEditId){
+        var saved = await roomIncludedBillService.update(includedBillModalEditId, payload);
+        var idx = roomIncludedBills.findIndex(function(x){ return x.id===includedBillModalEditId; });
+        if (idx > -1) roomIncludedBills[idx] = saved;
+      } else {
+        var created = await roomIncludedBillService.create(payload);
+        roomIncludedBills.push(created);
+      }
+      closeIncludedBillModal();
+      showToast('Included bill saved.', 'success');
+      renderPreservingScroll();
+    } catch(err){
+      errorEl.textContent = 'Could not save this included bill. ' + friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    } finally {
+      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
+    }
+  }
+  /** Ends an arrangement as of today rather than deleting it, so past profit
+   *  figures that relied on it stay explainable (see plan Task 5, Step 4). */
+  async function endIncludedBill(entryId){
+    var e = roomIncludedBills.find(function(x){ return x.id===entryId; });
+    if (!e) return;
+    var newEndDate = stepDateIso(TODAY, -1);
+    if (newEndDate < e.startDate){
+      showToast('This bill started today, so it can\'t be ended today — delete it instead if it was added by mistake.', 'error');
+      return;
+    }
+    try {
+      var saved = await roomIncludedBillService.update(entryId, Object.assign({}, e, { endDate: newEndDate }));
+      var idx = roomIncludedBills.findIndex(function(x){ return x.id===entryId; });
+      if (idx > -1) roomIncludedBills[idx] = saved;
+      showToast('Included bill ended.', 'success');
+      renderPreservingScroll();
+    } catch(err){
+      showToast('Could not end this included bill. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  function deleteIncludedBillConfirm(entryId){
+    var e = roomIncludedBills.find(function(x){ return x.id===entryId; });
+    if (!e) return;
+    openConfirmModal('Delete included bill', 'Delete "'+e.label+'"? This cannot be undone — if this bill just stopped applying, use "End" instead so past profit figures stay explainable.', async function(){
+      await roomIncludedBillService.remove(entryId);
+      roomIncludedBills = roomIncludedBills.filter(function(x){ return x.id!==entryId; });
+      showToast('Included bill deleted.', 'success');
+      renderPreservingScroll();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.openIncludedBillModal = openIncludedBillModal;
+  window.closeIncludedBillModal = closeIncludedBillModal;
+  window.saveIncludedBillForm = saveIncludedBillForm;
+  window.endIncludedBill = endIncludedBill;
+  window.deleteIncludedBillConfirm = deleteIncludedBillConfirm;
 
   /** A room row with edit/delete actions (only in Property detail; the Properties list doesn't have them). */
   function roomLine(r, propertyId){
@@ -10427,7 +10632,8 @@ import * as entityLinkService from './services/entityLinkService.js';
       binOutTaskService.getAll(),
       taskIndexService.getAll(),
       activityLogService.getAll(),
-      entityLinkService.getAll()
+      entityLinkService.getAll(),
+      roomIncludedBillService.getAll()
     ]);
     properties = results[0];
     rooms = results[1];
@@ -10459,6 +10665,7 @@ import * as entityLinkService from './services/entityLinkService.js';
     taskIndexRows = results[23];
     activityLogRows = results[24];
     entityLinks = results[25];
+    roomIncludedBills = results[26]; // one past entityLinks — new last entry in the Promise.all array above
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
