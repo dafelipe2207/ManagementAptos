@@ -854,12 +854,13 @@ import * as entityLinkService from './services/entityLinkService.js';
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
     { hash:'#/profits', label:'Profits', icon:'chart', primary:false },
     { hash:'#/properties', label:'Properties', icon:'building', primary:false },
+    { header:true, label:'Property Operations' },
     { hash:'#/property-operations', label:'Property Operations', icon:'building', primary:false },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
     { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
     { hash:'#/inspection', label:'Inspection', icon:'document', primary:false },
-    { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
     { hash:'#/documents', label:'Documents', icon:'document', primary:false },
+    { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { hash:'#/users', label:'Users', icon:'tenants', primary:false, superAdminOnly:true },
     { hash:'#/audit-log', label:'Audit log', icon:'chart', primary:false, superAdminOnly:true },
@@ -883,6 +884,7 @@ import * as entityLinkService from './services/entityLinkService.js';
     NAV = navList.filter(function(i){ return !i.superAdminOnly || (currentProfile && currentProfile.role === 'super_admin'); });
     var sidebarNavEl = document.getElementById('sidebar-nav');
     sidebarNavEl.innerHTML = NAV.map(function(item){
+      if (item.header) return '<div class="nav-section-header">'+esc(item.label)+'</div>';
       return '<a href="'+item.hash+'" data-hash="'+item.hash+'">'+svg(item.icon)+item.label+'</a>';
     }).join('');
 
@@ -1604,11 +1606,19 @@ import * as entityLinkService from './services/entityLinkService.js';
       ? { totalDeductions: settlement.totalDeductions, bondRefund: settlement.bondRefund }
       : computeSettlementTotals(bond, settlement.manualDeductions, candidates);
     var deductionRowsHtml = settlement.manualDeductions.map(function(d){
+      // "Evidence" sub-row for a deduction linked to a Maintenance request at creation time (see
+      // openMoveOutDeductionModal/saveMoveOutDeductionForm) — click-through via openMaintenanceModal,
+      // the same global entry point Maintenance's own list uses. Only available pre-approval:
+      // approveMoveOutSettlement snapshots deductions onto bond.discounts (a plain audit record,
+      // untouched by this task), which doesn't carry linkedMaintenanceRequestId.
+      var linkedReq = d.linkedMaintenanceRequestId ? maintenanceRequests.find(function(m){ return m.id === d.linkedMaintenanceRequestId; }) : null;
       return '<div class="field-row"><span class="k">'+esc(d.description)+' ('+esc(d.category)+')</span>'+
         '<span class="v">'+money(d.amount)+
         (settlement.status==='in_progress' ? ' <button class="text-link" onclick="openMoveOutDeductionModal(\''+settlement.id+'\',\''+d.id+'\')">Edit</button>'+
           ' <button class="text-link" onclick="removeMoveOutDeduction(\''+settlement.id+'\',\''+d.id+'\')">Remove</button>' : '')+
-        '</span></div>';
+        '</span></div>'+
+        (linkedReq ? '<div class="field-row"><span class="k" style="padding-left:12px;color:var(--text-faint);font-size:11.5px;">Evidence</span>'+
+          '<span class="v"><button class="text-link" onclick="openMaintenanceModal(\''+linkedReq.id+'\')">Maintenance request: '+esc(linkedReq.title)+'</button></span></div>' : '');
     }).join('');
     var candidateRowsHtml = (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Outstanding rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill (Unpaid)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('');
@@ -1976,10 +1986,15 @@ import * as entityLinkService from './services/entityLinkService.js';
 
   var moveOutDeductionModalSettlementId = null;
   var moveOutDeductionModalEditId = null;
+  // Evidence photo paths (still living in the `maintenance-photos` bucket — see
+  // onMoveOutDeductionLinkChange) pulled in from a linked Maintenance request, staged here until
+  // Save. Only ever populated when ADDING a deduction (Phase 4 Task 3 links at creation time only).
+  var moveOutDeductionModalLinkedPhotoPaths = [];
 
   function openMoveOutDeductionModal(settlementId, deductionId){
     moveOutDeductionModalSettlementId = settlementId;
     moveOutDeductionModalEditId = deductionId || null;
+    moveOutDeductionModalLinkedPhotoPaths = [];
     var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
     var existing = deductionId && settlement ? settlement.manualDeductions.find(function(d){ return d.id === deductionId; }) : null;
     document.getElementById('move-out-deduction-modal-title').textContent = existing ? 'Edit deduction' : 'Add deduction';
@@ -1990,14 +2005,81 @@ import * as entityLinkService from './services/entityLinkService.js';
     document.getElementById('move-out-deduction-comments').value = existing ? (existing.comments||'') : '';
     document.getElementById('move-out-deduction-photos').value = '';
     document.getElementById('move-out-deduction-modal-error').hidden = true;
+    // "Link to Maintenance request" — optional, and only offered when ADDING a new deduction (the
+    // plan scopes this to deduction-creation time); editing an existing deduction hides it and
+    // leaves whatever link it already has untouched (see saveMoveOutDeductionForm).
+    var linkRow = document.getElementById('move-out-deduction-link-row');
+    var linkSelect = document.getElementById('move-out-deduction-link-request');
+    var linkPreview = document.getElementById('move-out-deduction-link-photos-preview');
+    if (linkRow && linkSelect && linkPreview){
+      linkPreview.innerHTML = '';
+      if (existing){
+        linkRow.hidden = true;
+        linkSelect.innerHTML = '<option value="">— None —</option>';
+        linkSelect.value = '';
+      } else {
+        linkRow.hidden = false;
+        var linkTenant = settlement ? tenantOf(settlement.tenantId) : null;
+        // Only requests for THIS tenant (or, when a request has no tenant_id, this tenant's current
+        // room) — never another tenant's Maintenance history (Review Focus #3).
+        var eligibleRequests = linkTenant ? maintenanceRequests.filter(function(m){
+          return m.tenantId === linkTenant.id || (m.tenantId == null && m.roomId === linkTenant.roomId);
+        }) : [];
+        linkSelect.innerHTML = '<option value="">— None —</option>' + eligibleRequests.map(function(m){
+          return '<option value="'+m.id+'">'+esc(m.title)+' ('+esc(MAINTENANCE_STATUS_LABEL[m.status]||m.status)+')</option>';
+        }).join('');
+        linkSelect.value = '';
+      }
+    }
     document.getElementById('move-out-deduction-modal').hidden = false;
   }
   window.openMoveOutDeductionModal = openMoveOutDeductionModal;
+
+  /** Fired when the admin picks (or clears) a Maintenance request in the optional evidence-link
+   *  selector, while adding a new deduction. Pre-fills description + stages evidence photos for
+   *  save — never touches the amount field (Review Focus #4: the deduction amount stays a manual
+   *  entry, always). Photos are concatenated from all 3 staged sets (before/during/after) — the
+   *  simplest option the plan left to this implementer's judgment — and stay editable: the admin
+   *  can retype the description, or pick "— None —" again to drop the photos, before saving. */
+  function onMoveOutDeductionLinkChange(){
+    var select = document.getElementById('move-out-deduction-link-request');
+    var requestId = select ? select.value : '';
+    if (!requestId){
+      moveOutDeductionModalLinkedPhotoPaths = [];
+      renderMoveOutDeductionLinkedPhotosPreview();
+      return;
+    }
+    var m = maintenanceRequests.find(function(x){ return x.id === requestId; });
+    if (!m) return;
+    document.getElementById('move-out-deduction-description').value = m.title + (m.description ? ' — ' + m.description : '');
+    moveOutDeductionModalLinkedPhotoPaths = (m.photosBefore||[]).concat(m.photosDuring||[]).concat(m.photosAfter||[]);
+    renderMoveOutDeductionLinkedPhotosPreview();
+  }
+  window.onMoveOutDeductionLinkChange = onMoveOutDeductionLinkChange;
+
+  /** Thumbnails for moveOutDeductionModalLinkedPhotoPaths — same signed-URL-thumbnail pattern as
+   *  renderMaintenancePhotosPreview, since these paths are (until Save) still sitting in the
+   *  `maintenance-photos` bucket they were originally uploaded to. */
+  function renderMoveOutDeductionLinkedPhotosPreview(){
+    var box = document.getElementById('move-out-deduction-link-photos-preview');
+    if (!box) return;
+    box.innerHTML = '';
+    var groupId = 'lbg' + (++lightboxGroupSeq);
+    moveOutDeductionModalLinkedPhotoPaths.forEach(function(path, idx){
+      var img = document.createElement('img');
+      img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);';
+      img.title = 'Open photo';
+      registerLightboxImg(img, 'maintenance-photos', path, groupId, idx);
+      getCachedSignedUrl('maintenance-photos', path, 600).then(function(url){ img.src = url; }).catch(function(){ /* ignore a single broken thumbnail */ });
+      box.appendChild(img);
+    });
+  }
 
   function closeMoveOutDeductionModal(){
     document.getElementById('move-out-deduction-modal').hidden = true;
     moveOutDeductionModalSettlementId = null;
     moveOutDeductionModalEditId = null;
+    moveOutDeductionModalLinkedPhotoPaths = [];
   }
   window.closeMoveOutDeductionModal = closeMoveOutDeductionModal;
 
@@ -2011,6 +2093,10 @@ import * as entityLinkService from './services/entityLinkService.js';
     var date = document.getElementById('move-out-deduction-date').value;
     var comments = document.getElementById('move-out-deduction-comments').value.trim();
     var fileInput = document.getElementById('move-out-deduction-photos');
+    // Only read when ADDING (the picker is hidden while editing — see openMoveOutDeductionModal),
+    // so this is '' for every edit regardless of what the (reset, hidden) select currently holds.
+    var linkSelectEl = document.getElementById('move-out-deduction-link-request');
+    var linkedRequestId = (!moveOutDeductionModalEditId && linkSelectEl) ? linkSelectEl.value : '';
     if (!description || !isFinite(amount) || amount <= 0 || !date){
       errorEl.textContent = 'Add a description, a date, and an amount greater than 0.';
       errorEl.hidden = false;
@@ -2031,14 +2117,24 @@ import * as entityLinkService from './services/entityLinkService.js';
         var idx = deductions.findIndex(function(d){ return d.id === moveOutDeductionModalEditId; });
         var prevAmount = idx >= 0 ? deductions[idx].amount : null;
         var existingPhotos = idx >= 0 ? (deductions[idx].photoPaths || []) : [];
+        // Evidence-link fields are creation-time-only — carry forward whatever this deduction
+        // already had rather than the (hidden, reset) picker, so editing never changes the link.
+        var priorLinkedRequestId = idx >= 0 ? (deductions[idx].linkedMaintenanceRequestId || null) : null;
+        var priorLinkedPhotoPaths = idx >= 0 ? (deductions[idx].linkedEvidencePhotoPaths || []) : [];
         deductions[idx] = { id: moveOutDeductionModalEditId, category:category, description:description,
-          amount:round2(amount), date:date, comments:comments, photoPaths: existingPhotos.concat(photoPaths) };
+          amount:round2(amount), date:date, comments:comments, photoPaths: existingPhotos.concat(photoPaths),
+          linkedMaintenanceRequestId: priorLinkedRequestId, linkedEvidencePhotoPaths: priorLinkedPhotoPaths };
         timelineEntries = [{ at:new Date().toISOString(), action:'Admin edited deduction: ' + description,
           amount: round2(amount), detail: prevAmount != null ? ('was ' + money(prevAmount)) : null }];
       } else {
         var newId = 'ded_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+        // linkedMaintenanceRequestId/linkedEvidencePhotoPaths are purely additive fields on the
+        // manual_deductions jsonb entry — no schema change, and every other field/behavior here
+        // (amount above all — Review Focus #4) is exactly what it was before this task.
         deductions.push({ id:newId, category:category, description:description, amount:round2(amount),
-          date:date, comments:comments, photoPaths:photoPaths });
+          date:date, comments:comments, photoPaths:photoPaths,
+          linkedMaintenanceRequestId: linkedRequestId || null,
+          linkedEvidencePhotoPaths: linkedRequestId ? moveOutDeductionModalLinkedPhotoPaths.slice() : [] });
         timelineEntries = [{ at:new Date().toISOString(), action:'Admin added deduction: ' + description, amount: round2(amount) }];
       }
       // If a proposal was already calculated, this invalidates it — see calculateMoveOutSettlement's
@@ -2054,6 +2150,19 @@ import * as entityLinkService from './services/entityLinkService.js';
         await moveOutSettlementService.saveDraftDeductions(settlement.id, deductions, []);
       }
       Object.assign(settlement, saved, { manualDeductions: deductions });
+      // Record the evidence relation in entity_links too (in addition to the fields above), same
+      // "loaded whole, kept in sync locally" pattern as every other entityLinkService caller in
+      // this file. Non-fatal: the deduction itself already saved successfully by this point, so a
+      // failure here is logged rather than surfaced as a save error (avoids the admin retrying and
+      // creating a duplicate deduction).
+      if (linkedRequestId){
+        try {
+          var newLink = await entityLinkService.linkEntities('maintenance_requests', linkedRequestId, 'move_out_settlements', settlement.id, 'deduction_evidence');
+          entityLinks.push(newLink);
+        } catch(linkErr){
+          console.error('Could not record maintenance-request evidence link', linkErr);
+        }
+      }
       closeMoveOutDeductionModal();
       showToast('Deduction saved.', 'success');
       render();
@@ -7265,10 +7374,11 @@ import * as entityLinkService from './services/entityLinkService.js';
 
   /* ---------- Create Issue: turn a severity-tagged inspection comment into a linked Maintenance
    * Task (see entityLinkService.js + docs/superpowers/plans/2026-09-28-property-operations-
-   * phase2-inspection.md Task 3). Cleaning has no ad-hoc single-task creation entry point today
-   * (openCleaningTaskModal only edits the weekly-duty rotation config, see saveCleaningTaskForm) —
-   * per that plan's own instruction this defaults to Maintenance-only; a "Create Cleaning Task"
-   * path is out of scope here. ---------- */
+   * phase2-inspection.md Task 3). Phase 2 shipped Maintenance-only here since Cleaning had no
+   * ad-hoc single-task creation entry point at the time (openCleaningTaskModal only edited the
+   * weekly-duty rotation config, see saveCleaningTaskForm). Phase 4 adds the "Create Cleaning
+   * Task" counterpart below (createCleaningTaskFromFinding / cleaningTaskIdFromFinding), once
+   * cleaningService.createAdHocTask existed to back it. ---------- */
   /** The maintenance_requests id already created from this inspection comment, if any (a finding
    *  is only ever turned into one task — the button is replaced by a click-through once linked). */
   function maintenanceRequestIdFromFinding(commentId){
@@ -7309,6 +7419,50 @@ import * as entityLinkService from './services/entityLinkService.js';
     openMaintenanceModal(null);
   }
   window.createMaintenanceTaskFromFinding = createMaintenanceTaskFromFinding;
+
+  /** The cleaning_tasks id already created from this inspection comment, if any (mirrors
+   *  maintenanceRequestIdFromFinding above — a finding can independently spawn both a
+   *  Maintenance task and a Cleaning task, they're unrelated entity_links rows). */
+  function cleaningTaskIdFromFinding(commentId){
+    var link = entityLinks.find(function(l){ return l.fromTable==='inspection_comments' && l.fromId===commentId && l.toTable==='cleaning_tasks'; });
+    return link ? link.toId : null;
+  }
+
+  /** "Create Cleaning Task" — Phase 4's counterpart to createMaintenanceTaskFromFinding above.
+   *  Unlike Maintenance, cleaning_tasks has no title/description/priority/tenant_id columns
+   *  (see cleaningService.createAdHocTask(propertyId, roomId, dueDate)), so there's no
+   *  prefill-modal step here: the task is created directly from propertyId/roomId plus a
+   *  default due date (3 days out — a reasonable default, not specified by the spec). The exact
+   *  same inspectionSubmissionsFor(tenantId, type) photo-matching call Phase 2 already uses for
+   *  Maintenance is reused here too (Review Focus #2 — no re-derivation), even though
+   *  cleaning_tasks has nowhere to persist photos; it's surfaced only as a photo count in the
+   *  confirmation toast. The finding's "why" is never copied onto the cleaning task — it's
+   *  read back later purely via the entity_links -> inspection_comments relationship (see
+   *  cleaningTaskIdFromFinding above and inspectionSectionHtml's "→ Cleaning task created" link). */
+  async function createCleaningTaskFromFinding(commentId){
+    var c = inspectionComments.find(function(x){ return x.id===commentId; });
+    if (!c) return;
+    // Same tenant+type's submissions only (Review Focus #1/#2) — identical call to
+    // createMaintenanceTaskFromFinding's, not re-derived.
+    var matchingPhotos = inspectionSubmissionsFor(c.tenantId, c.type).reduce(function(paths, s){
+      return paths.concat(s.photoPaths || []);
+    }, []);
+    var d = new Date(TODAY+'T00:00:00');
+    d.setDate(d.getDate() + 3);
+    var dueDate = toIsoLocal(d);
+    try {
+      var created = await cleaningService.createAdHocTask(c.propertyId, c.roomId, dueDate);
+      cleaningTasks.push(created);
+      var newLink = await entityLinkService.linkEntities('inspection_comments', c.id, 'cleaning_tasks', created.id, 'created_from');
+      entityLinks.push(newLink);
+      showToast('Cleaning task created for ' + shortDate(dueDate) + ' (' + matchingPhotos.length + ' photo(s) on file for this finding).', 'success');
+      await refreshOperationsReadModels();
+      render();
+    } catch(err){
+      showToast('Could not create cleaning task. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.createCleaningTaskFromFinding = createCleaningTaskFromFinding;
 
   /** Staff-only "Attach document" control per finding-tagged inspection comment (see
    *  inspectionSectionHtml). Reuses confirmAddDocument's/confirmAddMaintenanceDocument's upload
@@ -7357,6 +7511,15 @@ import * as entityLinkService from './services/entityLinkService.js';
             ? ' <a href="#" onclick="event.preventDefault();openMaintenanceModal(\''+linkedRequestId+'\')" style="font-size:12px;">→ Maintenance task created</a>'
             : ' <button class="mini-btn" style="padding:2px 8px;font-size:12px;" onclick="createMaintenanceTaskFromFinding(\''+c.id+'\')">Create Maintenance Task</button>';
         }
+        // "Create Cleaning Task" — same staff-only/finding-tagged gate as Create Maintenance
+        // Task above, and independent of it (a finding can spawn both).
+        var cleaningHtml = '';
+        if (canComment && c.findingSeverity){
+          var linkedCleaningTaskId = cleaningTaskIdFromFinding(c.id);
+          cleaningHtml = linkedCleaningTaskId
+            ? ' <a href="#" onclick="event.preventDefault();openCleaningDetailModal(\''+linkedCleaningTaskId+'\')" style="font-size:12px;">→ Cleaning task created</a>'
+            : ' <button class="mini-btn" style="padding:2px 8px;font-size:12px;" onclick="createCleaningTaskFromFinding(\''+c.id+'\')">Create Cleaning Task</button>';
+        }
         // "Attach document" — staff-only (canComment), and only for findings (severity set), same
         // gate as "Create Issue" above. inspection_comments.tenant_id is always NOT NULL (unlike
         // Maintenance's optional tenant_id), so no disable-case is needed here.
@@ -7381,7 +7544,7 @@ import * as entityLinkService from './services/entityLinkService.js';
               '<button class="mini-btn" style="padding:2px 8px;font-size:12px;" onclick="confirmAddInspectionDocument(\''+c.id+'\',\''+tenantId+'\')">Attach document</button>'+
             '</div></div>';
         }
-        return '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">💬 '+esc(c.comment)+sevBadge+' <span style="color:var(--text-faint);">· '+shortDate((c.createdAt||'').slice(0,10))+'</span>'+issueHtml+'</p>'+docsHtml;
+        return '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">💬 '+esc(c.comment)+sevBadge+' <span style="color:var(--text-faint);">· '+shortDate((c.createdAt||'').slice(0,10))+'</span>'+issueHtml+cleaningHtml+'</p>'+docsHtml;
       }).join('')+'</div>';
     var commentFormHtml = !canComment ? '' :
       '<div class="form-row" style="margin-top:10px;">'+
@@ -8232,6 +8395,48 @@ import * as entityLinkService from './services/entityLinkService.js';
   window.handlePaymentReportProofFile = handlePaymentReportProofFile;
   window.submitPaymentReport = submitPaymentReport;
 
+  /** Tenant self-upload: file input + a doc_type select limited to the two tenant-safe types
+   *  ('id','other') — must match tenant_documents_tenant_insert's RLS check exactly, so no other
+   *  DOC_TYPE_LABEL keys are offered here (lease/invoice/technician_report/warranty stay
+   *  staff-only, added via the staff doc-modal/confirmAddDocument). */
+  var TENANT_DOC_TYPES = ['id', 'other'];
+  async function confirmAddTenantDocument(){
+    var t = myTenantRecord();
+    if (!t) return;
+    var fileInput = document.getElementById('tenant-doc-file');
+    var file = fileInput && fileInput.files && fileInput.files[0];
+    if (!file){ showToast('Choose a file to upload.', 'error'); return; }
+    var docType = document.getElementById('tenant-doc-type').value;
+    var btn = document.getElementById('tenant-doc-upload-btn');
+    var originalLabel = btn ? btn.textContent : '';
+    if (btn){ btn.disabled = true; btn.textContent = 'Uploading…'; }
+    try {
+      var storagePath = await storageService.uploadDocument(t.id, file);
+      var saved = await tenantDocumentService.create({ tenantId: t.id, docType: docType, storagePath: storagePath, fileName: file.name || 'document' });
+      tenantDocuments.push(saved);
+      var uploadedProperty = propertyOf(t.propertyId);
+      var assignedAdminIds = propertyAssignments.filter(function(a){ return a.propertyId===t.propertyId; }).map(function(a){ return a.profileId; });
+      var staffToNotify = allProfiles.filter(function(p){
+        if (!p.isActive || !p.authUserId) return false;
+        if (p.role === 'super_admin') return true;
+        return p.role === 'administrator' && assignedAdminIds.indexOf(p.id) > -1;
+      });
+      for (var si=0; si<staffToNotify.length; si++){
+        await notificationService.notify(staffToNotify[si].authUserId, 'New document uploaded',
+          (t.fullName || 'A tenant') + ' uploaded a ' + (DOC_TYPE_LABEL[docType] || docType) +
+          ' document' + (uploadedProperty ? ' at ' + uploadedProperty.name : '') + '.', 'tenant_documents', saved.id);
+      }
+      showToast('Document uploaded.', 'success');
+      await refreshOperationsReadModels();
+      render();
+    } catch(err){
+      showToast('Could not upload this document. ' + friendlyErrorMessage(err), 'error');
+    } finally {
+      if (btn){ btn.disabled = false; btn.textContent = originalLabel; }
+    }
+  }
+  window.confirmAddTenantDocument = confirmAddTenantDocument;
+
   function renderTenantDocuments(){
     var t = myTenantRecord();
     var myDocs = t ? tenantDocuments.filter(function(d){ return d.tenantId===t.id; }) : [];
@@ -8241,7 +8446,16 @@ import * as entityLinkService from './services/entityLinkService.js';
           return '<div class="card"><div class="field-row"><span class="k">'+esc(d.fileName||d.docType)+'</span>'+
             '<span class="v"><button class="text-link" onclick="viewReceipt(\'documents\',\''+d.storagePath+'\')">View</button></span></div></div>';
         }).join('');
-    return pageHeader('My Documents', 'Your rental agreement, receipts and other files.') + body;
+    var uploadBox = '<div class="card" style="margin-bottom:10px;">'+
+      '<div class="form-row"><label for="tenant-doc-file">File</label>'+
+      '<input id="tenant-doc-file" type="file" accept="image/*,application/pdf" /></div>'+
+      '<div class="form-row"><label for="tenant-doc-type">Document type</label>'+
+      '<select id="tenant-doc-type">'+TENANT_DOC_TYPES.map(function(k){
+        return '<option value="'+k+'">'+esc(DOC_TYPE_LABEL[k])+'</option>';
+      }).join('')+'</select></div>'+
+      '<button type="button" class="mini-btn primary" id="tenant-doc-upload-btn" onclick="confirmAddTenantDocument()">Upload document</button>'+
+      '</div>';
+    return pageHeader('My Documents', 'Your rental agreement, receipts and other files.') + uploadBox + body;
   }
 
   /* ============ PHASE 15 — CRUD: properties, rooms, tenants, bonds ============ */
@@ -9032,10 +9246,33 @@ import * as entityLinkService from './services/entityLinkService.js';
         '<span class="srch-icon">'+svg('tenants')+'</span>'+
         '<span><div class="name">'+esc(t.fullName)+'</div><div class="meta">'+esc(p?p.name:'')+'</div></span></a>';
     });
-    var all = propMatches.concat(tenantMatches);
+    // Task dispatch mirrors Phase 0's Dashboard taskLink() category → opener mapping exactly
+    // (that function is a local closure inside renderPropertyOperations and isn't reachable
+    // from here, so the same dispatch logic is reproduced rather than re-derived).
+    var taskMatches = (taskIndexRows||[]).filter(function(r){
+      return (r.title||'').toLowerCase().indexOf(q) > -1;
+    }).map(function(r){
+      var opener = r.category === 'maintenance' ? 'openMaintenanceModal'
+        : r.category === 'bin_out' ? 'openBinOutDetailModal'
+        : 'openCleaningDetailModal';
+      var p = propertyOf(r.propertyId);
+      return '<a class="search-result-row" href="#" onclick="event.preventDefault();closeSearchModal();'+opener+'(\''+r.sourceId+'\')">'+
+        '<span class="srch-icon">'+svg('document')+'</span>'+
+        '<span><div class="name">'+(TASK_CATEGORY_ICON[r.category]||'')+' '+esc(r.title)+'</div><div class="meta">'+esc(p?p.name:'')+'</div></span></a>';
+    });
+    var docMatches = (tenantDocuments||[]).filter(function(d){
+      return (d.fileName||'').toLowerCase().indexOf(q) > -1;
+    }).map(function(d){
+      var t = tenantOf(d.tenantId);
+      var p = t ? propertyOf(t.propertyId) : null;
+      return '<a class="search-result-row" href="#" onclick="event.preventDefault();closeSearchModal();viewReceipt(\'documents\',\''+d.storagePath+'\')">'+
+        '<span class="srch-icon">'+svg('document')+'</span>'+
+        '<span><div class="name">'+esc(d.fileName)+'</div><div class="meta">'+esc(p?p.name:'')+'</div></span></a>';
+    });
+    var all = propMatches.concat(tenantMatches).concat(taskMatches).concat(docMatches);
     box.innerHTML = all.length
       ? all.join('')
-      : '<div class="search-empty">No properties or tenants match "'+esc(query.trim())+'".</div>';
+      : '<div class="search-empty">No results match "'+esc(query.trim())+'".</div>';
   }
   window.openSearchModal = openSearchModal;
   window.closeSearchModal = closeSearchModal;
