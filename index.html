@@ -664,37 +664,35 @@
     </div>
   </div>
 
-  <div class="modal-overlay" id="cleaning-task-modal" hidden>
-    <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning rotation</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">The turn passes to the next occupied room every time this interval is up — it keeps going on its own, no need to re-generate it. A vacant room's turn is skipped.</p>
-      <div class="form-row"><label for="cleaning-task-property">Property</label>
-        <select id="cleaning-task-property" onchange="onCleaningTaskPropertyChange()"></select>
+  <div class="modal-overlay" id="duty-rotation-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning &amp; Bin OUT rotation</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Set the order rooms take turns in. Cleaning advances one room every week; Bin OUT advances one room every 2 weeks — both through this same order, independently.</p>
+      <div class="form-row"><label for="duty-rotation-property">Property</label>
+        <select id="duty-rotation-property" onchange="onDutyRotationPropertyChange()"></select>
       </div>
-      <p id="cleaning-task-periodicity" style="font-size:12px;color:var(--text-faint);margin:-6px 0 10px;"></p>
-      <div class="form-row"><label for="cleaning-task-date">Reference date (anchors the cycle)</label><input id="cleaning-task-date" type="date" /></div>
-      <div class="form-row"><label for="cleaning-task-interval">Repeats every (days)</label><input id="cleaning-task-interval" type="number" min="1" max="90" value="7" /></div>
-      <p id="cleaning-task-modal-error" class="form-error" hidden></p>
+      <div class="form-row"><label for="duty-rotation-reference-date">Reference date (anchors the cycle)</label><input id="duty-rotation-reference-date" type="date" /></div>
+      <label style="font-size:12.5px;font-weight:600;display:block;margin:10px 0 4px;">Room order</label>
+      <div id="duty-rotation-room-list" style="margin-bottom:8px;"></div>
+      <div class="form-row"><label for="duty-rotation-add-room">Add room</label>
+        <select id="duty-rotation-add-room"></select>
+      </div>
+      <button type="button" class="mini-btn" id="duty-rotation-add-btn" style="margin:-4px 0 6px;" onclick="rotationEditorAddRoom()">+ Add to rotation</button>
+      <p id="duty-rotation-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
-        <button class="mini-btn" id="cleaning-task-delete-btn" onclick="deleteCleaningRotationConfirm()" hidden>Delete</button>
-        <button class="mini-btn" onclick="closeCleaningTaskModal()">Cancel</button>
-        <button class="mini-btn primary" onclick="saveCleaningTaskForm()">Save</button>
+        <button class="mini-btn" id="duty-rotation-delete-btn" onclick="deleteDutyRotationConfirm()" hidden>Delete</button>
+        <button class="mini-btn" onclick="closeDutyRotationModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveDutyRotationForm()">Save</button>
       </div>
     </div>
   </div>
 
-  <div class="modal-overlay" id="duty-reassign-modal" hidden>
-    <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Reassign this turn</h2>
-      <p id="duty-reassign-title" style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;"></p>
-      <p style="font-size:12px;color:var(--text-faint);margin:-6px 0 10px;">Only this turn changes room — the rotation keeps going from there. Cleaning and any Bin OUT for this period both move to the new room and reset to their starting status.</p>
-      <div class="form-row"><label for="duty-reassign-room">Room</label>
-        <select id="duty-reassign-room"></select>
-      </div>
-      <p id="duty-reassign-modal-error" class="form-error" hidden></p>
+  <div class="modal-overlay" id="cleaning-history-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning history</h2>
+      <div id="cleaning-history-body"></div>
       <div class="modal-actions">
-        <button class="mini-btn" onclick="closeReassignDutyModal()">Cancel</button>
-        <button class="mini-btn primary" onclick="saveReassignDutyForm()">Reassign</button>
+        <button class="mini-btn" onclick="closeCleaningHistoryModal()">Close</button>
       </div>
     </div>
   </div>
@@ -1084,6 +1082,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=90"></script>
+<script type="module" src="app.js?v=92"></script>
 </body>
 </html>
