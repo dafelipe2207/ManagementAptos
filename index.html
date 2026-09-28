@@ -683,6 +683,22 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="duty-reassign-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Reassign this turn</h2>
+      <p id="duty-reassign-title" style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;"></p>
+      <p style="font-size:12px;color:var(--text-faint);margin:-6px 0 10px;">Only this turn changes room — the rotation keeps going from there. Cleaning and any Bin OUT for this period both move to the new room and reset to their starting status.</p>
+      <div class="form-row"><label for="duty-reassign-room">Room</label>
+        <select id="duty-reassign-room"></select>
+      </div>
+      <p id="duty-reassign-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeReassignDutyModal()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveReassignDutyForm()">Reassign</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="notification-compose-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
       <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">New notification</h2>
@@ -1068,6 +1084,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=89"></script>
+<script type="module" src="app.js?v=90"></script>
 </body>
 </html>
