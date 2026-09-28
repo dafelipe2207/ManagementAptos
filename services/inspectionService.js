@@ -60,6 +60,7 @@ function commentFromRow(row) {
     type: row.type,
     authorProfileId: row.author_profile_id || null,
     comment: row.comment,
+    findingSeverity: row.finding_severity || null, // null | 'attention' | 'failed'
     createdAt: row.created_at
   };
 }
@@ -70,11 +71,12 @@ export async function getAllComments() {
   return data.map(commentFromRow);
 }
 
-export async function addComment(propertyId, roomId, tenantId, type, authorProfileId, comment) {
+export async function addComment(propertyId, roomId, tenantId, type, authorProfileId, comment, findingSeverity) {
   const userId = await getCurrentUserId();
   const { data, error } = await supabase.from('inspection_comments').insert({
     user_id: userId, property_id: propertyId, room_id: roomId, tenant_id: tenantId,
-    type: type, author_profile_id: authorProfileId || null, comment: comment
+    type: type, author_profile_id: authorProfileId || null, comment: comment,
+    finding_severity: findingSeverity || null // null | 'attention' | 'failed'
   }).select().single();
   if (error) throw error;
   return commentFromRow(data);
