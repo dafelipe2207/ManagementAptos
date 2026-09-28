@@ -23,12 +23,12 @@ import * as notificationService from './services/notificationService.js';
 import * as paymentReportService from './services/paymentReportService.js';
 import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
-import * as cleaningService from './services/cleaningService.js?v=2';
+import * as cleaningService from './services/cleaningService.js?v=3';
 import * as cleaningRotationService from './services/cleaningRotationService.js';
 import * as trashService from './services/trashService.js';
 import * as inspectionService from './services/inspectionService.js';
-import * as weeklyDutyService from './services/weeklyDutyService.js?v=1';
-import * as binOutTaskService from './services/binOutTaskService.js?v=2';
+import * as weeklyDutyService from './services/weeklyDutyService.js?v=2';
+import * as binOutTaskService from './services/binOutTaskService.js?v=3';
 import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=1';
 import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
@@ -6865,13 +6865,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (subs.length ? ' · '+subs.length+' photo submission'+(subs.length>1?'s':'') : ' · no photos yet')+
         '</p></div>';
     }
-    function dutyRow(duty){
+    function dutyRow(duty, allowReassign){
       var r = roomOf(duty.roomId);
       var occupant = tenants.find(function(x){ return x.roomId===duty.roomId && !tenantHasMovedOut(x); });
       var cleaningTask = cleaningTaskOfWeeklyDuty(duty.id);
       var binTasks = binOutTasksOfWeeklyDuty(duty.id).sort(function(a,b){ return a.pickupDate.localeCompare(b.pickupDate); });
       var binCellHtml = binTasks.length===0 ? '<span style="color:var(--text-faint);font-size:12.5px;">—</span>' :
         binTasks.map(function(bt){ return '<span style="cursor:pointer;display:inline-block;margin:2px 4px 2px 0;" onclick="event.stopPropagation();openBinOutDetailModal(\''+bt.id+'\')">'+binOutStatusBadgeHtml(bt)+'</span>'; }).join('');
+      var reassignBtnHtml = allowReassign
+        ? '<button class="mini-btn" style="margin-top:8px;" onclick="event.stopPropagation();openReassignDutyModal(\''+duty.id+'\')">Reassign</button>' : '';
       return '<div class="card" style="cursor:pointer;" onclick="openCleaningDetailModal(\''+(cleaningTask?cleaningTask.id:'')+'\')">'+
         '<div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;font-size:14px;">'+esc(r?r.name:'—')+' · '+esc(occupant?occupant.fullName:'Vacant')+'</h2>'+
@@ -6879,6 +6881,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<p style="font-size:12.5px;color:var(--text-dim);margin:4px 0;">'+shortDate(duty.periodStart)+' – '+shortDate(duty.periodEnd)+'</p>'+
         '<div class="field-row"><span class="k">Cleaning</span><span class="v">'+(cleaningTask?cleaningStatusBadgeHtml(cleaningTask):'—')+'</span></div>'+
         '<div class="field-row"><span class="k">Bin OUT</span><span class="v">'+binCellHtml+'</span></div>'+
+        reassignBtnHtml +
         '</div>';
     }
     var propIds = properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(p){ return p.id; });
@@ -6893,8 +6896,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         : 'No rotation set up yet.';
       var dutyListHtml = propDuties.length===0
         ? '<p style="font-size:13px;color:var(--text-dim);margin:0;">No weekly duties scheduled yet.</p>'
-        : upcoming.map(dutyRow).join('') +
-          (past.length ? '<h3 style="margin:14px 0 8px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+past.map(dutyRow).join('') : '');
+        : upcoming.map(function(d){ return dutyRow(d, true); }).join('') +
+          (past.length ? '<h3 style="margin:14px 0 8px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+past.map(function(d){ return dutyRow(d, false); }).join('') : '');
       return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+esc(p?p.name:'—')+'</h2>'+
         '<div class="card" style="margin-bottom:10px;">'+
         '<div class="detail-head" style="margin-top:0;align-items:center;"><p style="margin:0;font-size:12.5px;color:var(--text-dim);">'+esc(rotationLine)+'</p>'+
@@ -6933,15 +6936,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">'+comments.map(function(c){
           return '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">💬 '+esc(c.comment)+'</p>';
         }).join('')+'</div>';
-      var effStatus = cleaningTaskEffectiveStatus(cleaningTask);
-      var startBtnHtml = (cleaningTask.status==='pending')
-        ? '<button class="mini-btn" style="margin-top:10px;margin-right:6px;" onclick="markCleaningInProgress(\''+cleaningTask.id+'\')">I started</button>' : '';
-      var addPhotosDisabled = (effStatus==='completed' || effStatus==='not_completed');
       cleaningHtml = '<div class="card">'+
         '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">🧹 Cleaning</h2>'+cleaningStatusBadgeHtml(cleaningTask)+'</div>'+
         '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0 0;">Due: '+shortDate(cleaningTask.scheduledDate)+'</p>'+
         photosHtml + commentsHtml +
-        (addPhotosDisabled ? '' : startBtnHtml + '<button class="mini-btn primary" style="margin-top:10px;" onclick="openCleaningSubmitModal(\''+cleaningTask.id+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>')+
+        '<button class="mini-btn primary" style="margin-top:10px;" onclick="openCleaningSubmitModal(\''+cleaningTask.id+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>'+
         '</div>';
     }
     var binOutHtml = binTasks.map(binOutTaskCardHtml).join('');
@@ -7046,6 +7045,62 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }, { confirmLabel: 'Delete' });
   }
   window.deleteCleaningRotationConfirm = deleteCleaningRotationConfirm;
+
+  /* ---- Staff: reassign one upcoming duty's room (override the auto-rotation for this turn
+   *  only) ---- */
+  var reassignDutyId = null;
+  function openReassignDutyModal(dutyId){
+    var duty = weeklyDutyOf(dutyId);
+    if (!duty) return;
+    reassignDutyId = dutyId;
+    var p = propertyOf(duty.propertyId);
+    var occRooms = roomsOf(duty.propertyId).filter(function(r){ return roomIsOccupied(r.id); }).sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+    var select = document.getElementById('duty-reassign-room');
+    select.innerHTML = occRooms.map(function(r){ return '<option value="'+r.id+'">'+esc(r.name)+'</option>'; }).join('');
+    if (!occRooms.some(function(r){ return r.id===duty.roomId; })){
+      var currentRoom = roomOf(duty.roomId);
+      select.innerHTML += '<option value="'+duty.roomId+'">'+esc(currentRoom?currentRoom.name:'Current room')+'</option>';
+    }
+    select.value = duty.roomId;
+    document.getElementById('duty-reassign-title').textContent = (p?p.name:'Property') + ' · ' + shortDate(duty.periodStart) + ' – ' + shortDate(duty.periodEnd);
+    document.getElementById('duty-reassign-modal-error').hidden = true;
+    document.getElementById('duty-reassign-modal').hidden = false;
+  }
+  window.openReassignDutyModal = openReassignDutyModal;
+
+  function closeReassignDutyModal(){ document.getElementById('duty-reassign-modal').hidden = true; reassignDutyId = null; }
+  window.closeReassignDutyModal = closeReassignDutyModal;
+
+  async function saveReassignDutyForm(){
+    var errorEl = document.getElementById('duty-reassign-modal-error');
+    var duty = weeklyDutyOf(reassignDutyId);
+    if (!duty){ errorEl.textContent = 'Could not find this duty.'; errorEl.hidden = false; return; }
+    var newRoomId = document.getElementById('duty-reassign-room').value;
+    if (!newRoomId){ errorEl.textContent = 'Choose a room.'; errorEl.hidden = false; return; }
+    if (newRoomId === duty.roomId){ closeReassignDutyModal(); return; }
+    try {
+      var savedDuty = await weeklyDutyService.update(duty.id, { roomId: newRoomId });
+      Object.assign(duty, savedDuty);
+      var cleaningTask = cleaningTaskOfWeeklyDuty(duty.id);
+      if (cleaningTask){
+        var savedCleaning = await cleaningService.reassignRoom(cleaningTask.id, newRoomId);
+        Object.assign(cleaningTask, savedCleaning);
+      }
+      var binTasks = binOutTasksOfWeeklyDuty(duty.id);
+      for (var i=0; i<binTasks.length; i++){
+        var savedBin = await binOutTaskService.reassignRoom(binTasks[i].id, newRoomId);
+        Object.assign(binTasks[i], savedBin);
+      }
+      closeReassignDutyModal();
+      showToast('Duty reassigned.', 'success');
+      await refreshOperationsReadModels();
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err);
+      errorEl.hidden = false;
+    }
+  }
+  window.saveReassignDutyForm = saveReassignDutyForm;
 
   /** Every trash_schedule pickup date for `propertyId` that falls within [periodStart, periodEnd],
    *  grouped by date (bins collected the same day become one Bin OUT task, per spec). Reuses
@@ -7309,18 +7364,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var photoPaths = await storageService.uploadCleaningPhotos(files);
       var created = await cleaningService.createSubmission(task.id, task.propertyId, task.roomId, t.id, photoPaths, note);
       cleaningSubmissions.push(created);
-      if (task.status !== 'completed'){
-        try {
-          var savedTask = await cleaningService.setTaskStatus(task.id, 'completed', ['pending','in_progress']);
-          Object.assign(task, savedTask);
-        } catch(statusErr){
-          if (!isStaleStatusError(statusErr)) throw statusErr;
-          // The photos ARE saved (submission created above); only the status flip lost the race.
-          closeCleaningSubmitModal();
-          await reloadAfterStaleStatus('cleaning', 'Photos submitted. This task was already updated elsewhere — reloading.');
-          return;
-        }
-      }
+      // Uploading photos is a free-standing, optional action — it never changes the task's
+      // status. Only the admin (markCleaningTaskReviewed/markCleaningNotCompletedConfirm) does.
       closeCleaningSubmitModal();
       showToast('Photos submitted.', 'success');
       await refreshOperationsReadModels();
@@ -7333,21 +7378,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   window.saveCleaningSubmitForm = saveCleaningSubmitForm;
-
-  async function markCleaningInProgress(taskId){
-    var task = cleaningTasks.find(function(t){ return t.id===taskId; });
-    if (!task || task.status !== 'pending') return;
-    try {
-      var saved = await cleaningService.setTaskStatus(task.id, 'in_progress', ['pending']);
-      Object.assign(task, saved);
-      await refreshOperationsReadModels();
-      render();
-    } catch(err){
-      if (isStaleStatusError(err)){ await reloadAfterStaleStatus('cleaning'); return; }
-      showToast('Could not update status. ' + friendlyErrorMessage(err), 'error');
-    }
-  }
-  window.markCleaningInProgress = markCleaningInProgress;
 
   /* ---- Tenant: mark Bin OUT completed (optional evidence photo, no admin review) ---- */
   var binOutCompleteTaskId = null;
