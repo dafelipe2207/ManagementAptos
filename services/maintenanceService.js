@@ -19,8 +19,15 @@ function fromRow(row) {
     // Multiple photos, most-recent-last — falls back to the single legacy photo_path (pre
     // multi-photo support) so old requests still show their one photo.
     photoPaths: Array.isArray(row.photo_paths) && row.photo_paths.length ? row.photo_paths : (row.photo_path ? [row.photo_path] : []),
+    // Before/during/after staged photos (Phase 1) — jsonb columns default to '[]', so a plain
+    // Array.isArray guard is enough (no legacy single-array fallback needed, unlike photoPaths).
+    photosBefore: Array.isArray(row.photos_before) ? row.photos_before : [],
+    photosDuring: Array.isArray(row.photos_during) ? row.photos_during : [],
+    photosAfter: Array.isArray(row.photos_after) ? row.photos_after : [],
     status: row.status,
     assignedTo: row.assigned_to || null,
+    dueDate: row.due_date || null,
+    resolutionNotes: row.resolution_notes || '',
     createdBy: row.created_by || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -35,11 +42,17 @@ function toRow(m) {
     title: m.title,
     description: m.description || null,
     category: m.category || 'other',
-    priority: m.priority || 'normal',
-    photo_path: m.photoPath || (m.photoPaths && m.photoPaths[0]) || null,
-    photo_paths: m.photoPaths || [],
-    status: m.status || 'open',
-    assigned_to: m.assignedTo || null
+    priority: m.priority || 'medium',
+    // photo_path/photo_paths (the old flat single-array shape) are intentionally not written
+    // here anymore — they stay in the DB as read-only historical data (Phase 1 replaced them
+    // with the 3 staged arrays below).
+    photos_before: m.photosBefore || [],
+    photos_during: m.photosDuring || [],
+    photos_after: m.photosAfter || [],
+    status: m.status || 'reported',
+    assigned_to: m.assignedTo || null,
+    due_date: m.dueDate || null,
+    resolution_notes: m.resolutionNotes || null
   };
 }
 
