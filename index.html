@@ -949,6 +949,11 @@
           <option value="other">Other agreed charge</option>
         </select>
       </div>
+      <div class="form-row" id="move-out-deduction-link-row"><label for="move-out-deduction-link-request">Link to Maintenance request (optional)</label>
+        <select id="move-out-deduction-link-request" onchange="onMoveOutDeductionLinkChange()">
+          <option value="">— None —</option>
+        </select></div>
+      <div id="move-out-deduction-link-photos-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 8px;"></div>
       <div class="form-row"><label for="move-out-deduction-description">Description</label>
         <input id="move-out-deduction-description" type="text" placeholder="e.g. Wall damage in bedroom" /></div>
       <div class="form-row"><label for="move-out-deduction-amount">Amount</label>
@@ -1037,6 +1042,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=86"></script>
+<script type="module" src="app.js?v=88"></script>
 </body>
 </html>
