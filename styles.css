@@ -474,6 +474,15 @@
   .room-line{display:flex;align-items:center;gap:4px;border-top:1px solid var(--border);}
   .room-line:first-child{margin-top:10px;}
   .room-line .room-row{border:none;padding:7px 0;margin-top:0;flex:1;min-width:0;}
+  .task-row{display:flex;align-items:center;font-size:13px;padding:7px 0;
+    border-top:1px solid var(--border);}
+  .task-row:first-of-type{border-top:1px solid var(--border);margin-top:10px;}
+  .activity-timeline{display:flex;flex-direction:column;}
+  .activity-row{display:flex;align-items:baseline;gap:10px;font-size:13px;padding:7px 0;
+    border-top:1px solid var(--border);}
+  .activity-row:first-of-type{border-top:1px solid var(--border);margin-top:10px;}
+  .activity-date{flex-shrink:0;width:72px;color:var(--text-faint);font-size:12px;}
+  .activity-desc{color:var(--text-dim);}
   .icon-mini-btn{
     border:none;background:none;color:var(--text-dim);cursor:pointer;font-size:14px;
     padding:4px 7px;border-radius:6px;flex-shrink:0;line-height:1;
