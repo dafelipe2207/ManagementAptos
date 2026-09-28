@@ -1,10 +1,10 @@
 // services/weeklyDutyService.js
-// The Weekly Duty container: one row per (room, period) — the parent that Cleaning and Bin OUT
-// tasks (and any future per-turn task type) both link to via weekly_duty_id, so the app can
-// always show them grouped by the same period without either one owning the other. See
-// cleaningService.js and binOutTaskService.js for the sub-tasks themselves; this file only
-// creates/reads the container. RLS mirrors cleaning_tasks: is_staff()/can_manage_property() for
-// staff, current-room match for a tenant's own read.
+// Cleaning's own period container — one row per (room, period), advancing weekly through the
+// property's admin-curated room order (see propertyDutyRotationService.js). Bin OUT has its own,
+// separate container (bin_duties/binDutyService.js) since it advances on a different, fortnightly
+// cadence through that same room order. See cleaningService.js for the cleaning_tasks that link
+// here via weekly_duty_id; this file only creates/reads the container. RLS mirrors cleaning_tasks:
+// is_staff()/can_manage_property() for staff, current-room match for a tenant's own read.
 import { supabase } from '../lib/supabaseClient.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
@@ -25,8 +25,8 @@ export async function getAll() {
   return data.map(fromRow);
 }
 
-/** Bulk-creates weekly_duties rows — used by the generator alongside their child
- *  cleaning_tasks/bin_out_tasks rows (see ensureWeeklyDutiesUpToDate in app.js). */
+/** Bulk-creates weekly_duties rows — used by the generator alongside its child cleaning_tasks
+ *  rows (see ensureCleaningDutiesUpToDate in app.js). */
 export async function createTasksBulk(rows) {
   const userId = await getCurrentUserId();
   const dbRows = rows.map(function(r){
@@ -35,14 +35,4 @@ export async function createTasksBulk(rows) {
   const { data, error } = await supabase.from('weekly_duties').insert(dbRows).select();
   if (error) throw error;
   return data.map(fromRow);
-}
-
-/** Admin reassigns which room is on duty for one specific period — e.g. correcting the
- *  auto-rotation's pick, or handling a swap between tenants. This only updates the container;
- *  cascading to that duty's cleaning_tasks/bin_out_tasks rows is the caller's job (see
- *  reassignRoom in cleaningService.js / binOutTaskService.js). */
-export async function update(id, e) {
-  const { data, error } = await supabase.from('weekly_duties').update({ room_id: e.roomId }).eq('id', id).select().single();
-  if (error) throw error;
-  return fromRow(data);
 }
