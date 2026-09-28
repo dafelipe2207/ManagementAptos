@@ -36,3 +36,13 @@ export async function createTasksBulk(rows) {
   if (error) throw error;
   return data.map(fromRow);
 }
+
+/** Admin reassigns which room is on duty for one specific period — e.g. correcting the
+ *  auto-rotation's pick, or handling a swap between tenants. This only updates the container;
+ *  cascading to that duty's cleaning_tasks/bin_out_tasks rows is the caller's job (see
+ *  reassignRoom in cleaningService.js / binOutTaskService.js). */
+export async function update(id, e) {
+  const { data, error } = await supabase.from('weekly_duties').update({ room_id: e.roomId }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
