@@ -77,3 +77,15 @@ export async function markNotCompleted(id) {
   if (!data) throw staleStatusError();
   return fromRow(data);
 }
+
+/** Admin reassigns which room this Bin OUT task belongs to (mirrors
+ *  cleaningService.reassignRoom) — resets to 'upcoming'/'due_today'/'overdue' (computed from
+ *  pickup_date once status is no longer completed/not_completed) and clears any prior completion,
+ *  since it's now a different tenant's responsibility. Unguarded, like reassignRoom above. */
+export async function reassignRoom(id, roomId) {
+  const { data, error } = await supabase.from('bin_out_tasks').update({
+    room_id: roomId, status: 'upcoming', completed_at: null, completed_by_tenant_id: null, evidence_photo_path: null
+  }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
