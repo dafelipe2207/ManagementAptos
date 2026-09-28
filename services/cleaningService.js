@@ -105,16 +105,6 @@ export async function markNotCompleted(id) {
   return taskFromRow(data);
 }
 
-/** Admin reassigns which room this task belongs to (e.g. correcting the auto-rotation for one
- *  turn) — always resets status back to 'pending' since it's now a different tenant's
- *  responsibility, regardless of any prior progress/completion. Unguarded (admin action, not a
- *  tenant-facing status transition), unlike setTaskStatus/markNotCompleted above. */
-export async function reassignRoom(id, roomId) {
-  const { data, error } = await supabase.from('cleaning_tasks').update({ room_id: roomId, status: 'pending' }).eq('id', id).select().single();
-  if (error) throw error;
-  return taskFromRow(data);
-}
-
 export async function removeTask(id) {
   const { error } = await supabase.from('cleaning_tasks').delete().eq('id', id);
   if (error) throw error;
