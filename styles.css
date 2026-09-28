@@ -109,6 +109,11 @@
   .nav a.active{background:var(--accent-bg);color:var(--accent);}
   .nav a:hover:not(.active){background:var(--border);color:var(--text);}
   .nav a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .nav-section-header{
+    padding:14px 12px 4px;
+    font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--text-faint);
+  }
   .sidebar-foot{padding:14px 20px;font-size:11.5px;color:var(--text-faint);border-top:1px solid var(--border);}
 
   /* ---------- Main column ---------- */
