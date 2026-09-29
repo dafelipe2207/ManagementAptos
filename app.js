@@ -882,9 +882,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
     { hash:'#/documents', label:'Documents', icon:'document', primary:true },
-    { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
-    { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
-    { hash:'#/inspection', label:'Inspection', icon:'document', primary:false },
+    { hash:'#/maintenance', label:'🔧 Maintenance', icon:'document', primary:false },
+    { hash:'#/cleaning', label:'🧹🗑️ Cleaning', icon:'document', primary:false },
+    { hash:'#/inspection', label:'🔍 Inspection', icon:'document', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
   ];
@@ -1175,11 +1175,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  simply preset this tab before rendering the hub, so existing links keep working. */
   var propertyOperationsTab = 'overview';
   var PROPERTY_OPERATIONS_TABS = [
-    { key:'overview', label:'Overview' },
-    { key:'maintenance', label:'Maintenance' },
-    { key:'cleaning', label:'Cleaning & Bin' },
-    { key:'inspection', label:'Inspection' },
-    { key:'documents', label:'Documents' }
+    { key:'overview', label:'🏠 Overview' },
+    { key:'maintenance', label:'🔧 Maintenance' },
+    { key:'cleaning', label:'🧹🗑️ Cleaning & Bin' },
+    { key:'inspection', label:'🔍 Inspection' },
+    { key:'documents', label:'📄 Documents' }
   ];
   function setPropertyOperationsTab(tab){
     propertyOperationsTab = tab;
