@@ -77,3 +77,13 @@ export async function markNotCompleted(id) {
   if (!data) throw staleStatusError();
   return fromRow(data);
 }
+
+/** Admin override from the Cleaning calendar: keeps every pickup task in this bin_duty's 2-week
+ *  block in step with it after a reassignment (see binDutyService.updateRoom) — called right
+ *  after it, never on its own. There can be more than one pickup date per block, so this updates
+ *  all of them in one call. */
+export async function updateTasksRoom(binDutyId, roomId) {
+  const { data, error } = await supabase.from('bin_out_tasks').update({ room_id: roomId }).eq('bin_duty_id', binDutyId).select();
+  if (error) throw error;
+  return data.map(fromRow);
+}
