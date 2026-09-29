@@ -1,9 +1,11 @@
 // services/binDutyService.js
 // Bin OUT's own period container — one row per (room, period), advancing on its own fortnightly
-// cadence through the property's admin-curated room order (see propertyDutyRotationService.js).
-// Split out from weekly_duties (which now belongs to Cleaning alone) because the two duties no
-// longer share a cadence: Cleaning is weekly, Bin OUT is fortnightly, so the same room-order list
-// lands on a different room for each at any given time. bin_out_tasks link here via bin_duty_id.
+// cadence. The room for each not-yet-reached period is suggested by round-robin over the
+// property's rooms (see ensureBinDutiesUpToDate in app.js), and the admin can override it per
+// 2-week block from the Cleaning calendar (see updateRoom below). Split out from weekly_duties
+// (which belongs to Cleaning alone) because the two duties don't share a cadence: Cleaning is
+// weekly, Bin OUT is fortnightly, so the same room order lands on a different room for each at
+// any given time. bin_out_tasks link here via bin_duty_id.
 import { supabase } from '../lib/supabaseClient.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
@@ -34,4 +36,13 @@ export async function createTasksBulk(rows) {
   const { data, error } = await supabase.from('bin_duties').insert(dbRows).select();
   if (error) throw error;
   return data.map(fromRow);
+}
+
+/** Admin override from the Cleaning calendar: reassigns which room this 2-week block falls to.
+ *  Callers must also update every linked bin_out_tasks row's room_id (see
+ *  binOutTaskService.updateTasksRoom) so the two stay consistent. */
+export async function updateRoom(id, roomId) {
+  const { data, error } = await supabase.from('bin_duties').update({ room_id: roomId }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
 }
