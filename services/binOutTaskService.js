@@ -87,3 +87,24 @@ export async function updateTasksRoom(binDutyId, roomId) {
   if (error) throw error;
   return data.map(fromRow);
 }
+
+/** Admin override from the Cleaning calendar's date field: shifts every pickup date in this
+ *  bin_duty's block by the same number of days as the block's own date edit (see
+ *  binDutyService.updatePeriod), so a task originally due on day N of the block is still due on
+ *  day N after the move. Each row can land on a different new date, so this updates them one at a
+ *  time rather than in a single bulk write. */
+export async function shiftTasksByDays(binDutyId, deltaDays) {
+  const { data: existing, error: getErr } = await supabase.from('bin_out_tasks').select('id, pickup_date').eq('bin_duty_id', binDutyId);
+  if (getErr) throw getErr;
+  const results = [];
+  for (const row of existing) {
+    const d = new Date(row.pickup_date + 'T00:00:00');
+    d.setDate(d.getDate() + deltaDays);
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    const newDate = y + '-' + m + '-' + day;
+    const { data, error } = await supabase.from('bin_out_tasks').update({ pickup_date: newDate }).eq('id', row.id).select().single();
+    if (error) throw error;
+    results.push(data);
+  }
+  return results.map(fromRow);
+}
