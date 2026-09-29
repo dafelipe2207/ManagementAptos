@@ -46,3 +46,14 @@ export async function updateRoom(id, roomId) {
   if (error) throw error;
   return fromRow(data);
 }
+
+/** Admin override from the Cleaning calendar's date field: moves this 2-week block to start on a
+ *  different date, keeping its 14-day length. Callers must also shift every linked bin_out_tasks
+ *  row's pickup_date by the same delta (see binOutTaskService.shiftTasksByDays) so the two stay
+ *  consistent, and should cascade the same delta through every later block for the property so the
+ *  fortnightly cadence stays unbroken (see reassignDutyRoom in app.js). */
+export async function updatePeriod(id, periodStart, periodEnd) {
+  const { data, error } = await supabase.from('bin_duties').update({ period_start: periodStart, period_end: periodEnd }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
