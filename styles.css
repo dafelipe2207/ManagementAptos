@@ -1,4 +1,4 @@
-:root{
+  :root{
     color-scheme: light dark;
     --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -402,6 +402,10 @@
   .cal-pill.overdue{background:var(--status-overdue-bg);color:var(--status-overdue);}
   .cal-pill.due{background:var(--status-due-bg);color:var(--status-due);}
   .cal-pill.move{background:var(--status-move-bg);color:var(--status-move);}
+  .cal-pill.cleaning{background:var(--status-paid-bg);color:var(--status-paid);}
+  .cal-pill.bin{background:var(--status-upcoming-bg);color:var(--status-upcoming);}
+  .cal-pill.cleaning.past, .cal-pill.bin.past{cursor:default;opacity:.65;}
+  button.cal-pill{border:none;width:100%;text-align:left;cursor:pointer;font-family:inherit;}
   .cal-more{font-size:9px;color:var(--text-faint);padding:0 3px;}
   .cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11.5px;color:var(--text-dim);}
   .cal-legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;position:relative;top:-1px;}
