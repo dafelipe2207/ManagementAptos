@@ -1,4 +1,4 @@
-  :root{
+:root{
     color-scheme: light dark;
     --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -206,10 +206,11 @@
 
   .card{
     background:var(--bg-elevated);border:1px solid var(--border);
-    border-radius:10px;padding:17px;
+    border-radius:12px;padding:17px;box-shadow:var(--shadow);
   }
-  a.card{display:block;transition:border-color .15s ease,box-shadow .15s ease;}
-  a.card:hover{border-color:var(--accent);}
+  a.card{display:block;transition:border-color .15s ease,box-shadow .15s ease,transform .1s ease;}
+  a.card:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(20,30,25,.09);}
+  a.card:active{transform:scale(0.995);}
   a.card:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .prop-card{transition:border-color .15s ease;}
   .prop-card:has(.prop-head:hover){border-color:var(--accent);}
@@ -333,7 +334,7 @@
   .form-row input, .form-row select{
     width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--border);
     background:var(--bg);color:var(--text);font-size:14px;font-family:inherit;
-    min-height:38px;
+    min-height:38px;transition:border-color .15s ease,box-shadow .15s ease;
   }
   .form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   @media (max-width:360px){ .form-row-2{grid-template-columns:1fr;} }
@@ -384,7 +385,7 @@
     position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
     background:rgba(10,12,18,0.5);padding:16px;
   }
-  .modal-card{width:100%;max-width:320px;max-height:80vh;overflow-y:auto;}
+  .modal-card{width:100%;max-width:min(360px,92vw);max-height:85vh;overflow-y:auto;border-radius:14px;box-shadow:0 12px 40px rgba(10,12,18,.18);}
   .modal-card h2{margin-top:0;}
   /* Bill/invoice preview — sized to fill most of whatever screen it's viewed on (phone or
      desktop), instead of the small fixed-width modal card used for forms. */
@@ -407,37 +408,48 @@
   .upcoming-row .date{width:52px;flex-shrink:0;color:var(--text-faint);font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
   .upcoming-row .title{font-weight:550;}
 
-  .cal-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
-  .cal-month-label{flex:1;text-align:center;font-weight:650;font-size:14.5px;}
-  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
-  .cal-weekday{text-align:center;font-size:11px;font-weight:600;color:var(--text-faint);
-    padding-bottom:6px;}
-  .cal-days{margin-bottom:12px;}
+  .cal-toolbar{
+    display:flex;align-items:center;gap:8px;margin-bottom:14px;
+    background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:6px;
+  }
+  .cal-toolbar .mini-btn{border-color:transparent;background:transparent;min-height:30px;padding:6px 11px;}
+  .cal-toolbar .mini-btn:hover{background:var(--bg-elevated);}
+  .cal-month-label{flex:1;text-align:center;font-weight:700;font-size:14.5px;letter-spacing:-.005em;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+  .cal-weekday{text-align:center;font-size:10.5px;font-weight:700;color:var(--text-faint);
+    letter-spacing:.04em;text-transform:uppercase;padding-bottom:8px;}
+  .cal-days{margin-bottom:14px;}
   .cal-daycell{
-    border:1px solid var(--border);border-radius:8px;min-height:44px;padding:3px 3px;
-    display:flex;flex-direction:column;gap:2px;overflow:hidden;background:var(--bg);
+    border:1px solid var(--border);border-radius:10px;min-height:52px;padding:4px 4px;
+    display:flex;flex-direction:column;gap:2px;overflow:hidden;background:var(--bg-elevated);
+    transition:border-color .15s ease,box-shadow .15s ease,background-color .15s ease;
   }
   .cal-daycell.empty{border-color:transparent;background:none;}
-  .cal-daycell.today{border-color:var(--accent);border-width:1.5px;}
-  .cal-daynum{font-size:10.5px;color:var(--text-faint);font-weight:600;font-family:var(--font-mono);padding:0 1px;}
+  .cal-daycell.today{background:var(--accent-bg);border-color:var(--accent);border-width:1.5px;}
+  .cal-daycell:not(.empty):has(button.cal-pill:hover){border-color:var(--accent);box-shadow:0 2px 8px rgba(20,30,25,.08);}
+  .cal-daynum{font-size:11px;color:var(--text-faint);font-weight:700;font-family:var(--font-mono);padding:0 1px;}
   .cal-daycell.today .cal-daynum{color:var(--accent);}
   .cal-pill{
-    display:block;font-size:9px;line-height:1.5;padding:0 3px;border-radius:4px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;font-weight:600;
-    transition:opacity .15s ease;
+    display:block;font-size:10px;line-height:1.6;padding:1px 4px;border-radius:5px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;font-weight:700;
+    transition:filter .15s ease,transform .1s ease;
   }
-  .cal-pill:hover, .cal-pill:focus-visible{opacity:.7;}
-  .cal-daycell{transition:border-color .15s ease;}
+  .cal-pill:hover, .cal-pill:focus-visible{filter:brightness(0.94);}
+  .cal-pill:active{transform:scale(0.97);}
   .cal-pill.overdue{background:var(--status-overdue-bg);color:var(--status-overdue);}
   .cal-pill.due{background:var(--status-due-bg);color:var(--status-due);}
   .cal-pill.move{background:var(--status-move-bg);color:var(--status-move);}
   .cal-pill.cleaning{background:var(--status-paid-bg);color:var(--status-paid);}
   .cal-pill.bin{background:var(--status-upcoming-bg);color:var(--status-upcoming);}
-  .cal-pill.cleaning.past, .cal-pill.bin.past{cursor:default;opacity:.65;}
-  button.cal-pill{border:none;width:100%;text-align:left;cursor:pointer;font-family:inherit;}
+  .cal-pill.cleaning.past, .cal-pill.bin.past{cursor:default;opacity:.55;filter:none;}
+  button.cal-pill{border:none;width:100%;text-align:left;cursor:pointer;font-family:inherit;box-shadow:0 1px 1px rgba(20,30,25,.05);}
   .cal-more{font-size:9px;color:var(--text-faint);padding:0 3px;}
-  .cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11.5px;color:var(--text-dim);}
-  .cal-legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;position:relative;top:-1px;}
+  .cal-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .cal-legend span{
+    display:inline-flex;align-items:center;font-size:11px;font-weight:600;color:var(--text-dim);
+    background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:4px 10px 4px 8px;
+  }
+  .cal-legend .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;position:relative;top:0;flex-shrink:0;}
   .cal-legend .dot.overdue{background:var(--status-overdue);}
   .cal-legend .dot.due{background:var(--status-due);}
   .cal-legend .dot.move{background:var(--status-move);}
@@ -475,9 +487,9 @@
   .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin-left:auto;border-radius:999px;background:var(--status-overdue);color:#fff;font-size:10.5px;font-weight:700;line-height:1;}
   .card > a, .card.prop-card > a:first-child{transition:opacity .15s ease;}
   @media (min-width:640px){
-    .cal-daycell{min-height:78px;padding:5px 5px;gap:3px;}
-    .cal-daynum{font-size:12px;}
-    .cal-pill{font-size:11px;padding:1px 5px;border-radius:5px;}
+    .cal-daycell{min-height:92px;padding:6px 6px;gap:3px;}
+    .cal-daynum{font-size:12.5px;}
+    .cal-pill{font-size:11.5px;padding:2px 6px;border-radius:6px;}
     .cal-more{font-size:10.5px;}
   }
 
@@ -597,6 +609,14 @@
 
   a{color:inherit;}
   ::selection{background:var(--accent-bg);}
+
+  /* Bigger touch targets on phones/small tablets — mouse-sized controls (34–38px) stay dense on
+     desktop, but a finger needs closer to 44px, per the platform's own touch-target guidance. */
+  @media (max-width:640px){
+    .mini-btn, .chip{min-height:40px;}
+    .form-row input, .form-row select{min-height:42px;}
+    .icon-btn{width:38px;height:38px;}
+  }
 
 /* ---------- Toast (loading/success/error feedback for async Supabase actions) ---------- */
 .toast{
