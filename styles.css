@@ -92,12 +92,41 @@
   .brand{display:flex;align-items:center;gap:10px;padding:20px 20px 16px;}
   .brand-mark{
     width:36px;height:36px;border-radius:10px;flex-shrink:0;
-    background:var(--text);color:var(--bg);
     display:flex;align-items:center;justify-content:center;
-    font-weight:700;font-size:13px;
   }
   .brand-name{font-size:14px;font-weight:600;line-height:1.2;}
   .brand-sub{font-size:12px;color:var(--text-faint);}
+
+  /* ---- Logo mark: a little apartment building, since that's what this app runs ----
+   * .logo-body is the block itself, .logo-window each unit, .logo-door the entry. The static
+   * sidebar copy just has two windows lit for a lived-in look; the loading-screen copy adds the
+   * .loading-logo modifier, which sets every window chasing through .winChase in sequence (like
+   * dusk falling over the block) and gives the whole building a slow float — one deliberate
+   * animated moment, not scattered motion. Tapping a window (tapLogoWindow in index.html, a plain
+   * inline script so it works before app.js's module has loaded) flips it with .logo-tap for a
+   * quick playful bounce, independent of the automatic chase. */
+  .logo-mark .logo-body{fill:var(--accent);}
+  .logo-mark .logo-door{fill:var(--bg-elevated);}
+  .logo-mark .logo-window{fill:var(--accent-bg);}
+  .logo-mark .logo-window.lit{fill:var(--status-paid);}
+
+  .loading-logo{width:104px;height:104px;margin:0 auto 16px;display:block;animation:logoFloat 2.6s ease-in-out infinite;}
+  @keyframes logoFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px);}}
+  .loading-logo .logo-window{cursor:pointer;transform-box:fill-box;transform-origin:center;animation:winChase 2.4s ease-in-out infinite;}
+  .loading-logo .logo-window.logo-tap{animation:winTap .5s ease-out;}
+  @keyframes winChase{
+    0%, 91.6%, 100%{fill:var(--accent-bg);}
+    4.2%, 16.6%{fill:var(--status-paid);}
+  }
+  @keyframes winTap{
+    0%{fill:var(--status-upcoming);transform:scale(1.35);}
+    100%{fill:var(--status-paid);transform:scale(1);}
+  }
+  .loading-caption{text-align:center;color:var(--text-dim);font-size:13.5px;}
+  .loading-caption .dot{animation:dotFade 1.4s infinite;}
+  .loading-caption .dot:nth-child(2){animation-delay:.2s;}
+  .loading-caption .dot:nth-child(3){animation-delay:.4s;}
+  @keyframes dotFade{0%,80%,100%{opacity:.25;}40%{opacity:1;}}
   .nav{flex:1;padding:4px 12px;display:flex;flex-direction:column;gap:2px;}
   .nav a{
     display:flex;align-items:center;gap:12px;
