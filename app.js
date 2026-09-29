@@ -24,7 +24,6 @@ import * as paymentReportService from './services/paymentReportService.js';
 import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js?v=3';
-import * as propertyDutyRotationService from './services/propertyDutyRotationService.js';
 import * as trashService from './services/trashService.js';
 import * as inspectionService from './services/inspectionService.js';
 import * as weeklyDutyService from './services/weeklyDutyService.js?v=3';
@@ -67,7 +66,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var cleaningTasks = [];
   var cleaningSubmissions = [];
   var cleaningComments = [];
-  var propertyDutyRotations = []; // admin-curated room order per property; see propertyDutyRotationService.js
   var trashSchedule = [];
   var weeklyDuties = []; // Cleaning's own (room, period) container, weekly cadence; see weeklyDutyService.js
   var binDuties = []; // Bin OUT's own (room, period) container, fortnightly cadence; see binDutyService.js
@@ -6754,9 +6752,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /* ============ Cleaning organizer + trash agenda ============
    * cleaningTasks: one row per (room, scheduled date) — "it's this room's turn on this date",
-   * generated as a weekly rotation across the property's admin-curated room order (see
-   * saveDutyRotationForm/ensureCleaningDutiesUpToDate) so each room's turn repeats every N weeks
-   * (N = rooms in the rotation).
+   * generated as a weekly rotation, round-robin over the property's own rooms (see
+   * ensureCleaningDutiesUpToDate), adjustable per week from the Cleaning calendar
+   * (reassignDutyRoom) so each room's turn repeats every N weeks (N = rooms in the property).
    * cleaningSubmissions: the tenant's photos of how it turned out (a task can have more than one,
    * if they add photos more than once). cleaningComments: the admin's observations on those
    * photos.
@@ -6801,9 +6799,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /* ============ Cleaning duty (weekly) + Bin duty (fortnightly): independent containers ============
    * weekly_duties is Cleaning's own (room, period) container; bin_duties is Bin OUT's own,
-   * separate one — they used to share one container, but Cleaning and Bin OUT now advance through
-   * the property's admin-curated room order (see propertyDutyRotationService.js) on different
-   * cadences, so a shared period no longer makes sense. Neither ever reads the other's status —
+   * separate one — they used to share one container, but Cleaning and Bin OUT now advance
+   * (independently, on different cadences) through a room order that's derived on the fly by
+   * round-robin over the property's own rooms (roomsOf, sorted by name) rather than an
+   * admin-maintained list; see ensureCleaningDutiesUpToDate/ensureBinDutiesUpToDate below. The
+   * admin can override any not-yet-past week's suggested room directly from the Cleaning calendar
+   * (renderCleaningStaff) via weeklyDutyService.updateRoom/binDutyService.updateRoom. Neither ever
+   * reads the other's status —
    * every card/row/notification reads cleaningTaskEffectiveStatus() and binOutTaskEffectiveStatus()
    * independently. Both are pure functions of stored status + TODAY, computed on read (same
    * pattern as billEffectiveStatus) — 'overdue'/'due_today'/'upcoming' are never written to the
@@ -6859,8 +6861,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return isStaff() ? renderCleaningStaff() : renderCleaningTenant();
   }
 
-  function propertyDutyRotationOf(propertyId){ return propertyDutyRotations.find(function(r){ return r.propertyId===propertyId; }); }
-
+  /** Read-only history row for a past (already-ended) week — no select, just what happened. */
   function cleaningDutyRow(duty){
     var r = roomOf(duty.roomId);
     var occupant = tenants.find(function(x){ return x.roomId===duty.roomId && !tenantHasMovedOut(x); });
@@ -6892,9 +6893,56 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var cleaningStaffPropertyFilter = 'all';
   function setCleaningStaffPropertyFilter(v){ cleaningStaffPropertyFilter = v; renderPreservingScroll(); }
 
-  /** Grouped by property (each with its own admin-curated rotation and task lists), same
-   *  convention as Inspection's staff view — an admin with several properties thinks property by
-   *  property. The "View" filter narrows this to one property at a time. */
+  /** One <select> of a property's rooms, used inline in a calendar row. `onChangeAttr` is the
+   *  literal onchange handler string (kept out of this shared builder so callers can name their
+   *  own reassignment function). */
+  function roomSelectHtml(propertyId, selectedRoomId, onChangeAttr){
+    var propRooms = roomsOf(propertyId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+    return '<select onchange="'+onChangeAttr+'">'+
+      propRooms.map(function(r){ return '<option value="'+r.id+'"'+(r.id===selectedRoomId?' selected':'')+'>'+esc(r.name)+'</option>'; }).join('')+
+      '</select>';
+  }
+
+  /** One row of the 8-week calendar for a property: the week's date range, an editable Cleaning
+   *  room select, and — only on the fortnight the bin period actually falls in — an editable Bin
+   *  collection room select spanning both of that fortnight's weekly rows. A past week (already
+   *  ended) is read-only: a plain room name plus that duty's status, not a select, since it's
+   *  history rather than something left to plan. */
+  function calendarWeekRowHtml(propertyId, weekStart, weekEnd, cleaningDuty, binDuty){
+    var isPast = weekEnd < TODAY;
+    var cleaningCellHtml;
+    if (!cleaningDuty){
+      cleaningCellHtml = '<span style="color:var(--text-faint);">—</span>';
+    } else if (isPast){
+      var r1 = roomOf(cleaningDuty.roomId);
+      var cleaningTask = cleaningTaskOfWeeklyDuty(cleaningDuty.id);
+      cleaningCellHtml = esc(r1?r1.name:'—') + (cleaningTask ? ' ' + cleaningStatusBadgeHtml(cleaningTask) : '');
+    } else {
+      cleaningCellHtml = roomSelectHtml(propertyId, cleaningDuty.roomId, 'reassignDutyRoom(\'cleaning\',\''+cleaningDuty.id+'\',this.value)');
+    }
+    var binCellHtml;
+    if (!binDuty){
+      binCellHtml = '<span style="color:var(--text-faint);">—</span>';
+    } else if (isPast){
+      var r2 = roomOf(binDuty.roomId);
+      binCellHtml = esc(r2?r2.name:'—');
+    } else {
+      binCellHtml = roomSelectHtml(propertyId, binDuty.roomId, 'reassignDutyRoom(\'bin\',\''+binDuty.id+'\',this.value)');
+    }
+    return '<div class="field-row" style="align-items:center;">'+
+      '<span class="k">'+shortDate(weekStart)+' – '+shortDate(weekEnd)+'</span>'+
+      '<span class="v" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">'+
+      '<span>🧹 '+cleaningCellHtml+'</span>'+
+      '<span>🗑️ '+binCellHtml+'</span>'+
+      '</span></div>';
+  }
+
+  /** Grouped by property, same convention as Inspection's staff view — an admin with several
+   *  properties thinks property by property. The "View" filter narrows this to one property at a
+   *  time. Each property shows an 8-week calendar (current week + 7 ahead) with an editable room
+   *  per week for Cleaning and, on its fortnight, Bin collection — the suggested room already
+   *  filled in by ensureCleaningDutiesUpToDate/ensureBinDutiesUpToDate's round-robin, adjustable
+   *  per week via reassignDutyRoom. A short read-only history sits below for the last 10 weeks. */
   function renderCleaningStaff(){
     var sortedProps = properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
     var visibleProps = cleaningStaffPropertyFilter==='all' ? sortedProps : sortedProps.filter(function(p){ return p.id===cleaningStaffPropertyFilter; });
@@ -6906,42 +6954,70 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var sectionsHtml = visibleProps.map(function(p){
       var propId = p.id;
-      var rot = propertyDutyRotationOf(propId);
-      var rotationLine = (rot && rot.roomOrder.length)
-        ? 'Order: ' + rot.roomOrder.map(function(id){ var rr=roomOf(id); return rr?rr.name:'?'; }).join(' → ') + ' · starting ' + shortDate(rot.referenceDate)
-        : 'No rotation set up yet.';
+      var propRooms = roomsOf(propId);
+      var weekStart = startOfWeekIso(TODAY);
+      var calendarHtml;
+      if (propRooms.length===0){
+        calendarHtml = '<p style="font-size:13px;color:var(--text-dim);margin:0;">No rooms in this property yet.</p>';
+      } else {
+        var rowsHtml = '';
+        for (var w=0; w<8; w++){
+          var rowStart = stepDateIso(weekStart, w*7);
+          var rowEnd = stepDateIso(rowStart, 6);
+          var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && d.periodStart===rowStart; });
+          var bd = binDuties.find(function(d){ return d.propertyId===propId && rowStart >= d.periodStart && rowStart <= d.periodEnd; });
+          rowsHtml += calendarWeekRowHtml(propId, rowStart, rowEnd, cd, bd);
+        }
+        calendarHtml = '<div class="card">'+rowsHtml+'</div>';
+      }
 
-      var cleaningDuties = weeklyDuties.filter(function(w){ return w.propertyId===propId; }).sort(function(a,b){ return a.periodEnd.localeCompare(b.periodEnd); });
-      var cleaningUpcoming = cleaningDuties.filter(function(w){ return w.periodEnd >= TODAY; });
-      var cleaningPast = cleaningDuties.filter(function(w){ return w.periodEnd < TODAY; }).reverse().slice(0, 10);
-      var cleaningListHtml = cleaningDuties.length===0
-        ? '<p style="font-size:13px;color:var(--text-dim);margin:0;">No cleaning turns scheduled yet.</p>'
-        : cleaningUpcoming.map(cleaningDutyRow).join('') +
-          (cleaningPast.length ? '<h3 style="margin:14px 0 8px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+cleaningPast.map(cleaningDutyRow).join('') : '');
-
-      var binDutiesOfProp = binDuties.filter(function(w){ return w.propertyId===propId; }).sort(function(a,b){ return a.periodEnd.localeCompare(b.periodEnd); });
-      var binUpcoming = binDutiesOfProp.filter(function(w){ return w.periodEnd >= TODAY; });
-      var binPast = binDutiesOfProp.filter(function(w){ return w.periodEnd < TODAY; }).reverse().slice(0, 10);
-      var binListHtml = binDutiesOfProp.length===0
-        ? '<p style="font-size:13px;color:var(--text-dim);margin:0;">No Bin OUT turns scheduled yet.</p>'
-        : binUpcoming.map(binDutyRow).join('') +
-          (binPast.length ? '<h3 style="margin:14px 0 8px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Past</h3>'+binPast.map(binDutyRow).join('') : '');
+      var cleaningPast = weeklyDuties.filter(function(w){ return w.propertyId===propId && w.periodEnd < TODAY; })
+        .sort(function(a,b){ return b.periodEnd.localeCompare(a.periodEnd); }).slice(0, 10);
+      var binPast = binDuties.filter(function(w){ return w.propertyId===propId && w.periodEnd < TODAY; })
+        .sort(function(a,b){ return b.periodEnd.localeCompare(a.periodEnd); }).slice(0, 10);
+      var historyHtml = (cleaningPast.length===0 && binPast.length===0) ? '' :
+        '<h3 style="margin:14px 0 8px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">History</h3>'+
+        cleaningPast.map(cleaningDutyRow).join('') + binPast.map(binDutyRow).join('');
 
       return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+esc(p.name)+'</h2>'+
-        '<div class="card" style="margin-bottom:10px;">'+
-        '<div class="detail-head" style="margin-top:0;align-items:center;"><p style="margin:0;font-size:12.5px;color:var(--text-dim);">'+esc(rotationLine)+'</p>'+
-        '<button class="mini-btn" onclick="openDutyRotationModal(\''+propId+'\')">'+(rot?'Edit rotation':'Set up rotation')+'</button></div></div>'+
-        '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:10px 0 6px;">🧹 Cleaning (weekly)</h3>'+
-        cleaningListHtml+
-        '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">🗑️ Bin OUT (every 2 weeks)</h3>'+
-        binListHtml;
+        calendarHtml + historyHtml;
     }).join('');
 
-    return pageHeader('Cleaning & Bin OUT', "Admin-assigned room rotation — Cleaning weekly, Bin OUT every 2 weeks.") +
+    return pageHeader('Cleaning & Bin OUT', "8-week roster — pick who's on Cleaning and Bin collection each week.") +
       filterHtml +
       (sectionsHtml || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No properties yet.</p></div>') +
       '<p style="font-size:12px;color:var(--text-faint);margin:14px 0 0;">The trash pickup calendar itself still lives on each property\'s page (Properties → open a property).</p>';
   }
+
+  /** Reassigns one calendar week's room (staff only) — updates the duty row plus its linked
+   *  task(s) so both stay consistent, then re-renders. `kind` is 'cleaning' (weekly_duties +
+   *  its one cleaning_tasks row) or 'bin' (bin_duties + every bin_out_tasks row in that
+   *  fortnight). */
+  async function reassignDutyRoom(kind, dutyId, roomId){
+    try {
+      if (kind === 'cleaning'){
+        var savedDuty = await weeklyDutyService.updateRoom(dutyId, roomId);
+        weeklyDuties = weeklyDuties.map(function(d){ return d.id===dutyId ? savedDuty : d; });
+        var task = cleaningTaskOfWeeklyDuty(dutyId);
+        if (task){
+          var savedTask = await cleaningService.updateTaskRoom(task.id, roomId);
+          cleaningTasks = cleaningTasks.map(function(t){ return t.id===savedTask.id ? savedTask : t; });
+        }
+      } else {
+        var savedBinDuty = await binDutyService.updateRoom(dutyId, roomId);
+        binDuties = binDuties.map(function(d){ return d.id===dutyId ? savedBinDuty : d; });
+        var savedBinTasks = await binOutTaskService.updateTasksRoom(dutyId, roomId);
+        var savedIds = savedBinTasks.map(function(t){ return t.id; });
+        binOutTasks = binOutTasks.map(function(t){ return savedIds.indexOf(t.id)>=0 ? savedBinTasks.find(function(s){ return s.id===t.id; }) : t; });
+      }
+      showToast('Roster updated.', 'success');
+      render();
+    } catch(err){
+      showToast(friendlyErrorMessage(err), 'error');
+      render();
+    }
+  }
+  window.reassignDutyRoom = reassignDutyRoom;
 
   function binOutTaskCardHtml(task){
     var typeLabels = task.binTypes.map(function(bt){ return TRASH_TYPE_LABEL[bt] || bt; }).join(' & ');
@@ -7008,128 +7084,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="card">'+trashHtml+'</div>';
   }
 
-  /* ---- Staff: admin-curated room rotation order (shared by Cleaning + Bin OUT) ----
-   * One ordered list of room ids per property, plus an anchor date. Cleaning advances one room
-   * per week through this list; Bin OUT advances one room every 2 weeks through the SAME list,
-   * independently (see ensureCleaningDutiesUpToDate/ensureBinDutiesUpToDate below). The admin
-   * edits the list directly here — there's no automatic occupied-room detection any more. */
-  var rotationEditorPropertyId = null;
-  var rotationEditorRoomOrder = []; // working copy, edited in the modal before Save
-
-  function renderRotationEditorRoomList(){
-    var container = document.getElementById('duty-rotation-room-list');
-    container.innerHTML = rotationEditorRoomOrder.length===0
-      ? '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No rooms in the rotation yet — add one below.</p>'
-      : rotationEditorRoomOrder.map(function(roomId, idx){
-          var r = roomOf(roomId);
-          return '<div class="field-row" style="align-items:center;"><span class="k">'+(idx+1)+'. '+esc(r?r.name:'—')+'</span>'+
-            '<span class="v">'+
-            '<button type="button" class="icon-mini-btn" title="Move up" '+(idx===0?'disabled':'')+' onclick="rotationEditorMoveRoom('+idx+',-1)">▲</button>'+
-            '<button type="button" class="icon-mini-btn" title="Move down" '+(idx===rotationEditorRoomOrder.length-1?'disabled':'')+' onclick="rotationEditorMoveRoom('+idx+',1)">▼</button>'+
-            '<button type="button" class="icon-mini-btn danger" title="Remove" onclick="rotationEditorRemoveRoom('+idx+')">✕</button>'+
-            '</span></div>';
-        }).join('');
-    var addSelect = document.getElementById('duty-rotation-add-room');
-    var propRooms = roomsOf(rotationEditorPropertyId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-    var available = propRooms.filter(function(r){ return rotationEditorRoomOrder.indexOf(r.id) < 0; });
-    addSelect.innerHTML = available.map(function(r){ return '<option value="'+r.id+'">'+esc(r.name)+'</option>'; }).join('');
-    document.getElementById('duty-rotation-add-btn').disabled = available.length===0;
+  /** Monday of the week containing `iso` (Mon–Sun weeks, matching the calendar grid). */
+  function startOfWeekIso(iso){
+    var d = new Date(iso + 'T00:00:00');
+    var daysSinceMonday = (d.getDay() + 6) % 7; // Mon=0..Sun=6
+    return stepDateIso(iso, -daysSinceMonday);
   }
-
-  function onDutyRotationPropertyChange(){
-    rotationEditorPropertyId = document.getElementById('duty-rotation-property').value;
-    var rot = propertyDutyRotationOf(rotationEditorPropertyId);
-    rotationEditorRoomOrder = rot ? rot.roomOrder.filter(function(id){ return !!roomOf(id); }).slice() : [];
-    document.getElementById('duty-rotation-reference-date').value = rot ? rot.referenceDate : nextWeekdayIso(TODAY, 6);
-    document.getElementById('duty-rotation-delete-btn').hidden = !rot;
-    renderRotationEditorRoomList();
-  }
-  window.onDutyRotationPropertyChange = onDutyRotationPropertyChange;
-
-  function openDutyRotationModal(propertyId){
-    var propSelect = document.getElementById('duty-rotation-property');
-    propSelect.innerHTML = properties.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
-    propSelect.value = propertyId && properties.some(function(p){ return p.id===propertyId; }) ? propertyId : (properties[0] ? properties[0].id : '');
-    onDutyRotationPropertyChange();
-    document.getElementById('duty-rotation-modal-error').hidden = true;
-    document.getElementById('duty-rotation-modal').hidden = false;
-  }
-  window.openDutyRotationModal = openDutyRotationModal;
-
-  function closeDutyRotationModal(){ document.getElementById('duty-rotation-modal').hidden = true; }
-  window.closeDutyRotationModal = closeDutyRotationModal;
-
-  function rotationEditorMoveRoom(idx, dir){
-    var target = idx + dir;
-    if (target < 0 || target >= rotationEditorRoomOrder.length) return;
-    var tmp = rotationEditorRoomOrder[idx];
-    rotationEditorRoomOrder[idx] = rotationEditorRoomOrder[target];
-    rotationEditorRoomOrder[target] = tmp;
-    renderRotationEditorRoomList();
-  }
-  window.rotationEditorMoveRoom = rotationEditorMoveRoom;
-
-  function rotationEditorRemoveRoom(idx){
-    rotationEditorRoomOrder.splice(idx, 1);
-    renderRotationEditorRoomList();
-  }
-  window.rotationEditorRemoveRoom = rotationEditorRemoveRoom;
-
-  function rotationEditorAddRoom(){
-    var select = document.getElementById('duty-rotation-add-room');
-    if (!select.value) return;
-    rotationEditorRoomOrder.push(select.value);
-    renderRotationEditorRoomList();
-  }
-  window.rotationEditorAddRoom = rotationEditorAddRoom;
-
-  async function saveDutyRotationForm(){
-    var errorEl = document.getElementById('duty-rotation-modal-error');
-    var referenceDate = document.getElementById('duty-rotation-reference-date').value;
-    if (!rotationEditorPropertyId || !referenceDate){
-      errorEl.textContent = 'Choose a property and a reference date.';
-      errorEl.hidden = false;
-      return;
-    }
-    if (rotationEditorRoomOrder.length===0){
-      errorEl.textContent = 'Add at least one room to the rotation.';
-      errorEl.hidden = false;
-      return;
-    }
-    try {
-      var existing = propertyDutyRotationOf(rotationEditorPropertyId);
-      var saved = await propertyDutyRotationService.upsertForProperty(existing, { propertyId: rotationEditorPropertyId, roomOrder: rotationEditorRoomOrder.slice(), referenceDate: referenceDate });
-      if (existing){
-        propertyDutyRotations = propertyDutyRotations.map(function(r){ return r.id===saved.id ? saved : r; });
-      } else {
-        propertyDutyRotations = propertyDutyRotations.concat([saved]);
-      }
-      closeDutyRotationModal();
-      await ensureCleaningDutiesUpToDate();
-      await ensureBinDutiesUpToDate();
-      await refreshOperationsReadModels();
-      showToast('Rotation saved.', 'success');
-      render();
-    } catch(err){
-      errorEl.textContent = friendlyErrorMessage(err);
-      errorEl.hidden = false;
-    }
-  }
-  window.saveDutyRotationForm = saveDutyRotationForm;
-
-  async function deleteDutyRotationConfirm(){
-    var rot = propertyDutyRotationOf(rotationEditorPropertyId);
-    if (!rot) return;
-    var p = propertyOf(rotationEditorPropertyId);
-    openConfirmModal('Delete rotation?', 'This stops auto-generating Cleaning and Bin OUT turns for ' + esc(p ? p.name : 'this property') + '. Existing scheduled turns are kept.', async function(){
-      await propertyDutyRotationService.remove(rot.id);
-      propertyDutyRotations = propertyDutyRotations.filter(function(r){ return r.id !== rot.id; });
-      closeDutyRotationModal();
-      showToast('Rotation deleted.', 'success');
-      render();
-    }, { confirmLabel: 'Delete' });
-  }
-  window.deleteDutyRotationConfirm = deleteDutyRotationConfirm;
 
   /** Every trash_schedule pickup date for `propertyId` that falls within [periodStart, periodEnd],
    *  grouped by date (bins collected the same day become one Bin OUT task, per spec). Reuses
@@ -7152,37 +7112,41 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return Object.keys(byDate).sort().map(function(d){ return { pickupDate: d, binTypes: byDate[d] }; });
   }
 
-  /** Shared by both generators below: given a property's rotation and the room ids already used
-   *  (so a room removed from the list mid-cycle doesn't throw things off), returns the next room
-   *  id after `lastRoomId` in `roomOrder`, wrapping around. A room no longer in the list (index
-   *  -1) restarts the cycle from the top, rather than erroring — a reasonable fallback for an
-   *  admin edit mid-cycle, not a data problem worth surfacing. */
+  /** Shared by both generators below: given a property's rooms (sorted by name — the natural,
+   *  no-setup-required order the calendar's round-robin suggestion follows) and the room id last
+   *  assigned, returns the next room after it, wrapping around. A room no longer in the property
+   *  (e.g. removed) restarts the cycle from the top rather than erroring. */
   function nextRoomInOrder(roomOrder, lastRoomId){
     var lastIdx = lastRoomId ? roomOrder.indexOf(lastRoomId) : -1;
     return roomOrder[(lastIdx + 1 + roomOrder.length) % roomOrder.length];
   }
 
-  /** Extends each property's Cleaning rotation by exactly one weekly_duty (+ its cleaning_tasks
-   *  row) once its current 7-day cycle is up, advancing through the property's admin-curated room
-   *  order (see propertyDutyRotationService.js). Safe to call repeatedly (on bootstrap, on
-   *  rotation save): a no-op once every property already has a future weekly_duty queued. */
+  var CALENDAR_HORIZON_DAYS = 56; // 8 weeks — keeps the calendar always showing 8 editable weeks ahead
+
+  /** Extends each property's Cleaning schedule with weekly_duty (+ its cleaning_tasks row) slots
+   *  so the calendar always has CALENDAR_HORIZON_DAYS of future weeks to show, suggesting each new
+   *  slot's room by round-robin over the property's own rooms (sorted by name), continuing from
+   *  whichever room was last assigned — the admin can still override any of these from the
+   *  calendar (reassignDutyRoom). Safe to call repeatedly (on bootstrap, after a reassignment): a
+   *  no-op once every property is already generated through the horizon. */
   async function ensureCleaningDutiesUpToDate(){
+    var horizonEnd = stepDateIso(TODAY, CALENDAR_HORIZON_DAYS);
     var newRows = []; // [{propertyId, roomId, periodStart, periodEnd}]
-    for (var i=0; i<propertyDutyRotations.length; i++){
-      var rot = propertyDutyRotations[i];
-      var roomOrder = rot.roomOrder.filter(function(id){ return !!roomOf(id); });
+    for (var i=0; i<properties.length; i++){
+      var propId = properties[i].id;
+      var roomOrder = roomsOf(propId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(r){ return r.id; });
       if (roomOrder.length===0) continue;
-      var propDuties = weeklyDuties.concat(newRows).filter(function(w){ return w.propertyId===rot.propertyId; });
+      var propDuties = weeklyDuties.concat(newRows).filter(function(w){ return w.propertyId===propId; });
       var lastDuty = propDuties.reduce(function(best, w){ return (!best || w.periodEnd > best.periodEnd) ? w : best; }, null);
       var guard = 0;
-      while (guard++ < 12){
-        var nextEnd = lastDuty ? stepDateIso(lastDuty.periodEnd, 7) : rot.referenceDate;
-        if (lastDuty && nextEnd > TODAY) break; // already have a future turn queued
-        var nextStart = lastDuty ? stepDateIso(lastDuty.periodEnd, 1) : stepDateIso(nextEnd, -6);
-        var row = { propertyId: rot.propertyId, roomId: nextRoomInOrder(roomOrder, lastDuty?lastDuty.roomId:null), periodStart: nextStart, periodEnd: nextEnd };
+      while (guard++ < 20){
+        var nextStart = lastDuty ? stepDateIso(lastDuty.periodEnd, 1) : startOfWeekIso(TODAY);
+        if (lastDuty && nextStart > horizonEnd) break; // already generated through the horizon
+        var nextEnd = stepDateIso(nextStart, 6);
+        var row = { propertyId: propId, roomId: nextRoomInOrder(roomOrder, lastDuty?lastDuty.roomId:null), periodStart: nextStart, periodEnd: nextEnd };
         newRows.push(row);
         lastDuty = row;
-        if (nextEnd >= TODAY) break; // caught up to now — don't pre-generate further ahead
+        if (nextStart > horizonEnd) break;
       }
     }
     if (!newRows.length) return;
@@ -7198,27 +7162,28 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   /** Mirrors ensureCleaningDutiesUpToDate, but for Bin OUT: a 14-day (fortnightly) cycle,
-   *  advancing through the SAME room order independently of Cleaning's weekly one — so at any
-   *  given time the two duties can (and usually will) land on different rooms. Each new bin_duty
-   *  then gets its own bin_out_tasks rows, one per trash_schedule pickup date inside that
+   *  advancing through the same round-robin order independently of Cleaning's weekly one — so at
+   *  any given time the two duties can (and usually will) land on different rooms. Each new
+   *  bin_duty then gets its own bin_out_tasks rows, one per trash_schedule pickup date inside that
    *  fortnight (trashPickupsInWindow, unchanged). */
   async function ensureBinDutiesUpToDate(){
+    var horizonEnd = stepDateIso(TODAY, CALENDAR_HORIZON_DAYS);
     var newRows = []; // [{propertyId, roomId, periodStart, periodEnd}]
-    for (var i=0; i<propertyDutyRotations.length; i++){
-      var rot = propertyDutyRotations[i];
-      var roomOrder = rot.roomOrder.filter(function(id){ return !!roomOf(id); });
+    for (var i=0; i<properties.length; i++){
+      var propId = properties[i].id;
+      var roomOrder = roomsOf(propId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(r){ return r.id; });
       if (roomOrder.length===0) continue;
-      var propDuties = binDuties.concat(newRows).filter(function(w){ return w.propertyId===rot.propertyId; });
+      var propDuties = binDuties.concat(newRows).filter(function(w){ return w.propertyId===propId; });
       var lastDuty = propDuties.reduce(function(best, w){ return (!best || w.periodEnd > best.periodEnd) ? w : best; }, null);
       var guard = 0;
-      while (guard++ < 12){
-        var nextEnd = lastDuty ? stepDateIso(lastDuty.periodEnd, 14) : rot.referenceDate;
-        if (lastDuty && nextEnd > TODAY) break; // already have a future turn queued
-        var nextStart = lastDuty ? stepDateIso(lastDuty.periodEnd, 1) : stepDateIso(nextEnd, -13);
-        var row = { propertyId: rot.propertyId, roomId: nextRoomInOrder(roomOrder, lastDuty?lastDuty.roomId:null), periodStart: nextStart, periodEnd: nextEnd };
+      while (guard++ < 20){
+        var nextStart = lastDuty ? stepDateIso(lastDuty.periodEnd, 1) : startOfWeekIso(TODAY);
+        if (lastDuty && nextStart > horizonEnd) break; // already generated through the horizon
+        var nextEnd = stepDateIso(nextStart, 13);
+        var row = { propertyId: propId, roomId: nextRoomInOrder(roomOrder, lastDuty?lastDuty.roomId:null), periodStart: nextStart, periodEnd: nextEnd };
         newRows.push(row);
         lastDuty = row;
-        if (nextEnd >= TODAY) break; // caught up to now — don't pre-generate further ahead
+        if (nextStart > horizonEnd) break;
       }
     }
     if (!newRows.length) return;
@@ -7606,8 +7571,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /* ---------- Create Issue: turn a severity-tagged inspection comment into a linked Maintenance
    * Task (see entityLinkService.js + docs/superpowers/plans/2026-09-28-property-operations-
    * phase2-inspection.md Task 3). Phase 2 shipped Maintenance-only here since Cleaning had no
-   * ad-hoc single-task creation entry point at the time (openDutyRotationModal only edited the
-   * rotation config, see saveDutyRotationForm). Phase 4 adds the "Create Cleaning
+   * ad-hoc single-task creation entry point at the time (the Cleaning calendar only ever edits an
+   * already-scheduled week's room, see reassignDutyRoom). Phase 4 adds the "Create Cleaning
    * Task" counterpart below (createCleaningTaskFromFinding / cleaningTaskIdFromFinding), once
    * cleaningService.createAdHocTask existed to back it. ---------- */
   /** The maintenance_requests id already created from this inspection comment, if any (a finding
@@ -10741,7 +10706,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       cleaningService.getAllComments(),
       trashService.getAll(),
       inspectionService.getAll(),
-      propertyDutyRotationService.getAll(),
       inspectionService.getAllComments(),
       paymentReportService.getAll(),
       moveOutSettlementService.getAll(),
@@ -10774,17 +10738,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     cleaningComments = results[14];
     trashSchedule = results[15];
     inspectionSubmissions = results[16];
-    propertyDutyRotations = results[17];
-    inspectionComments = results[18];
-    paymentReports = results[19];
-    moveOutSettlements = results[20];
-    weeklyDuties = results[21];
-    binOutTasks = results[22];
-    taskIndexRows = results[23];
-    activityLogRows = results[24];
-    entityLinks = results[25];
-    roomIncludedBills = results[26];
-    binDuties = results[27];
+    inspectionComments = results[17];
+    paymentReports = results[18];
+    moveOutSettlements = results[19];
+    weeklyDuties = results[20];
+    binOutTasks = results[21];
+    taskIndexRows = results[22];
+    activityLogRows = results[23];
+    entityLinks = results[24];
+    roomIncludedBills = results[25];
+    binDuties = results[26];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
