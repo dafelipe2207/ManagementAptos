@@ -6977,12 +6977,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  (skipped entirely when the property doesn't need Bin OUT — binDutyRequired===false). Today
    *  or a future date's pill is a real <button> that opens the reassign modal; a past date's pill
    *  is inert (plain text) — it's history, not something left to plan. */
-  /** The weekly (cleaning) duty whose week contains `iso` — the same single source of truth the
-   *  Roster table uses for both Aseo and Bin, so the calendar never disagrees with it. */
-  function weeklyDutyForDate(propId, iso){
-    return weeklyDuties.find(function(d){ return d.propertyId===propId && iso >= d.periodStart && iso <= d.periodEnd; }) || null;
-  }
-
   function propertyCleaningMonthGridHtml(p, monthStr){
     var propId = p.id;
     var cells = buildMonthGrid(monthStr);
@@ -6999,7 +6993,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var isToday = iso === TODAY;
       var pillsHtml = '';
 
-      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && nextWeekdayIso(d.periodStart, 0)===iso; });
+      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && d.periodStart===iso; });
       if (cd){
         var isPast = cd.periodEnd < TODAY;
         var r1 = roomOf(cd.roomId);
@@ -7011,13 +7005,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
       var binTypesToday = pickupsByDate[iso];
       if (binTypesToday && binTypesToday.length){
-        var bd = weeklyDutyForDate(propId, iso);
+        var bd = binDuties.find(function(d){ return d.propertyId===propId && iso >= d.periodStart && iso <= d.periodEnd; });
         var r2 = bd ? roomOf(bd.roomId) : null;
         var dots = binTypesToday.map(function(bt){ return TRASH_TYPE_DOT[bt] || '⚪'; }).join('');
         var binLabel = dots + ' ' + (r2?r2.name:'—');
         var binIsPast = bd && bd.periodEnd < TODAY;
         pillsHtml += (bd && !binIsPast)
-          ? '<button type="button" class="cal-pill bin" onclick="openWeekReassignModal(\'cleaning\',\''+bd.id+'\')">'+esc(binLabel)+'</button>'
+          ? '<button type="button" class="cal-pill bin" onclick="openWeekReassignModal(\'bin\',\''+bd.id+'\')">'+esc(binLabel)+'</button>'
           : '<span class="cal-pill bin past">'+esc(binLabel)+'</span>';
       }
 
@@ -7029,10 +7023,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /** The simple roster table the admin actually wants: one row per week, Aseo (the Sunday inside
    *  that week — some properties' weeklyDuty periods run Mon→Sun, others Sun→Sat, so the Sunday
-   *  is located with nextWeekdayIso rather than assumed to be periodStart or periodEnd), Bin (that
-   *  week's Wednesday, found the same way) with its actual colors from trash_schedule for that
-   *  exact date, and the single Room both operations use that week. Cleaning's weekly rotation is
-   *  the source of truth for the room; Bin reuses it rather than reading its own (fortnightly)
+   *  is located with nextWeekdayIso rather than assumed to be periodStart or periodEnd), Bin (the
+   *  real pickup date + colors for that week) and the single Room both operations use that week.
+   *  Bin's actual collection weekday differs per property (confirmed: Belmont is Wednesday,
+   *  Kewdale is Tuesday) and real council calendars aren't always a clean fixed-interval
+   *  alternation (occasional back-to-back same-color weeks happen), so this reads the real,
+   *  already-generated binOutTasks row for the week instead of assuming a weekday or trusting the
+   *  trash_schedule formula to predict it — whatever's actually on record is what's shown. Falls
+   *  back to '—' when nothing's been generated yet for that week (property has no trash_schedule
+   *  set up, or the week is beyond the generation horizon). Cleaning's weekly rotation is the
+   *  source of truth for the room; Bin reuses it rather than reading its own (fortnightly)
    *  bin_duties container, since the two are meant to always match for a given week. Clicking a
    *  row opens the same reassign modal as before (Room + Date), which still cascades forward. */
   function propertyScheduleTableHtml(p){
@@ -7046,16 +7046,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var room = roomOf(d.roomId);
       var roomName = room ? room.name : '—';
       var aseoDate = nextWeekdayIso(d.periodStart, 0); // Sunday within this week
-      var binDate = nextWeekdayIso(d.periodStart, 3); // Wednesday within this week
-      var binTypes = showBin ? trashPickupsInWindow(propId, binDate, binDate).reduce(function(acc,x){ return acc.concat(x.binTypes); }, []) : [];
-      var binTypesHtml = binTypes.length ? binTypes.map(function(bt){
+      var binTask = showBin ? binOutTasks.filter(function(b){
+        return b.propertyId===propId && b.pickupDate >= d.periodStart && b.pickupDate <= d.periodEnd;
+      }).sort(function(a,b2){ return a.pickupDate.localeCompare(b2.pickupDate); })[0] : null;
+      var binDateHtml = binTask ? shortDate(binTask.pickupDate) : '—';
+      var binTypesHtml = (binTask && binTask.binTypes && binTask.binTypes.length) ? binTask.binTypes.map(function(bt){
         return '<span class="bin-dot" title="'+esc(TRASH_TYPE_LABEL[bt]||bt)+'">'+(TRASH_TYPE_DOT[bt]||'⚪')+'</span>';
       }).join('') : '—';
       var clickable = !isPast;
       var rowAttrs = clickable ? ' class="roster-row" onclick="openWeekReassignModal(\'cleaning\',\''+d.id+'\')" tabindex="0" role="button"' : ' class="roster-row past"';
       return '<tr'+rowAttrs+'>'+
         '<td>'+shortDate(aseoDate)+'</td>'+
-        (showBin ? '<td>'+shortDate(binDate)+'</td><td>'+binTypesHtml+'</td>' : '')+
+        (showBin ? '<td>'+binDateHtml+'</td><td>'+binTypesHtml+'</td>' : '')+
         '<td>'+esc(roomName)+'</td>'+
         '</tr>';
     }).join('');
@@ -7082,14 +7084,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rows = [];
     cells.forEach(function(iso){
       if (!iso) return;
-      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && nextWeekdayIso(d.periodStart, 0)===iso; });
+      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && d.periodStart===iso; });
       if (cd){
         var r1 = roomOf(cd.roomId);
         rows.push({ date: iso, operation: 'Cleaning', room: r1 ? r1.name : '—' });
       }
       var binTypesToday = pickupsByDate[iso];
       if (binTypesToday && binTypesToday.length){
-        var bd = weeklyDutyForDate(propId, iso);
+        var bd = binDuties.find(function(d){ return d.propertyId===propId && iso >= d.periodStart && iso <= d.periodEnd; });
         var r2 = bd ? roomOf(bd.roomId) : null;
         var opLabel = 'Bin OUT — ' + binTypesToday.map(function(bt){ return TRASH_TYPE_LABEL[bt] || bt; }).join(', ');
         rows.push({ date: iso, operation: opLabel, room: r2 ? r2.name : '—' });
@@ -7291,140 +7293,31 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       binTasks.map(binOutTaskCardHtml).join('');
   }
 
-  /** Wheelie-bin illustration (inline SVG, no external image) — dark body with the lid in the
-   *  bin's own colour: red Garbage, yellow Recycling, green Organic, as used in Australian councils. */
-  var TRASH_TYPE_LID = { garbage:'#e0413a', recycling:'#f2b705', organic:'#3fae5a' };
-  function binIconSvg(type, px){
-    var lid = TRASH_TYPE_LID[type] || '#9aa3a0';
-    px = px || 34;
-    return '<svg class="bin-icon" width="'+px+'" height="'+px+'" viewBox="0 0 48 48" role="img" aria-label="'+esc(TRASH_TYPE_LABEL[type]||type)+'">'+
-      '<rect x="12" y="9" width="24" height="3" rx="1.5" fill="'+lid+'" opacity=".55"/>'+
-      '<path d="M9 12h30l-1.2 4H10.2z" fill="'+lid+'"/>'+
-      '<path d="M11.5 16h25l-2.6 24.5a2 2 0 0 1-2 1.8H16.1a2 2 0 0 1-2-1.8z" fill="#3b4a45"/>'+
-      '<path d="M17 20l1.2 17M24 20v17M31 20l-1.2 17" stroke="#56675f" stroke-width="1.6" stroke-linecap="round"/>'+
-      '<circle cx="15.5" cy="42.5" r="3" fill="#232c29"/><circle cx="15.5" cy="42.5" r="1.1" fill="#8b9692"/>'+
-      '<rect x="19" y="17.5" width="10" height="4" rx="1" fill="'+lid+'" opacity=".9"/>'+
-      '</svg>';
-  }
-
-  /** Tenant's read-only month grid of their property: same data and placement as the admin
-   *  calendar (Cleaning on the week's Sunday, Bin OUT on each pickup date, room from the weekly
-   *  roster), but the tenant's own turns are highlighted as "You" and everyone else's are dimmed. */
-  function tenantCleaningMonthGridHtml(p, monthStr, myRoomId){
-    var propId = p.id;
-    var cells = buildMonthGrid(monthStr);
-    var gridStart = cells.find(function(c){ return !!c; });
-    var gridEnd = cells.slice().reverse().find(function(c){ return !!c; });
-    var pickupsByDate = {};
-    if (p.binDutyRequired !== false && gridStart && gridEnd){
-      trashPickupsInWindow(propId, gridStart, gridEnd).forEach(function(x){ pickupsByDate[x.pickupDate] = x.binTypes; });
-    }
-    return '<div class="cal-grid cal-days">' + cells.map(function(iso){
-      if (!iso) return '<div class="cal-daycell empty"></div>';
-      var pillsHtml = '';
-      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && nextWeekdayIso(d.periodStart, 0)===iso; });
-      if (cd){
-        var mine1 = cd.roomId===myRoomId;
-        var r1 = roomOf(cd.roomId);
-        pillsHtml += '<span class="cal-pill cleaning '+(mine1?'mine':'other')+(iso<TODAY?' past':'')+'">🧹 '+esc(mine1?'You':(r1?r1.name:'—'))+'</span>';
-      }
-      var types = pickupsByDate[iso];
-      if (types && types.length){
-        var bd = weeklyDutyForDate(propId, iso);
-        var mine2 = bd && bd.roomId===myRoomId;
-        var r2 = bd ? roomOf(bd.roomId) : null;
-        var icons = types.map(function(bt){ return binIconSvg(bt, 14); }).join('');
-        pillsHtml += '<span class="cal-pill bin '+(mine2?'mine':'other')+(iso<TODAY?' past':'')+'"><span class="bin-icons">'+icons+'</span>'+esc(mine2?'You':(r2?r2.name:'—'))+'</span>';
-      }
-      var hasMine = pillsHtml.indexOf(' mine')>=0;
-      return '<div class="cal-daycell'+(iso===TODAY?' today':'')+(hasMine?' has-mine':'')+'"><div class="cal-daynum">'+parseInt(iso.slice(8,10),10)+'</div>'+pillsHtml+'</div>';
-    }).join('') + '</div>';
-  }
-
-  /** One card per week the tenant's room is on duty, from the current week forward (oldest
-   *  first): the Cleaning turn (Sunday) with its photo upload, and every Bin OUT pickup that week
-   *  with the bin illustrations and — when a Bin OUT task exists for that date — its status and
-   *  "Mark completed" button. */
-  function tenantWeekCardHtml(p, duty){
-    var aseoDate = nextWeekdayIso(duty.periodStart, 0);
-    var isCurrent = duty.periodStart <= TODAY && duty.periodEnd >= TODAY;
-    var cleaningTask = cleaningTaskOfWeeklyDuty(duty.id);
-    var subs = cleaningTask ? cleaningTaskSubmissions(cleaningTask.id) : [];
-    var photosHtml = subs.length===0 ? '' :
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'+subs.map(function(s){ return cleaningPhotoThumbsHtml(s.photoPaths); }).join('')+'</div>';
-    var cleaningHtml = '<div class="duty-row">'+
-      '<div class="duty-art cleaning-art">🧹</div>'+
-      '<div class="duty-body">'+
-        '<div class="duty-title">Cleaning <span class="duty-date">'+shortDate(aseoDate)+'</span>'+(cleaningTask?cleaningStatusBadgeHtml(cleaningTask):'')+'</div>'+
-        '<div class="duty-sub">Common areas · week '+shortDate(duty.periodStart)+' – '+shortDate(duty.periodEnd)+'</div>'+
-        photosHtml+
-        (cleaningTask ? '<button class="mini-btn primary" style="margin-top:8px;" onclick="openCleaningSubmitModal(\''+cleaningTask.id+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>' : '')+
-      '</div></div>';
-
-    var binHtml = '';
-    if (p && p.binDutyRequired !== false){
-      binHtml = trashPickupsInWindow(p.id, duty.periodStart, duty.periodEnd).map(function(x){
-        var task = binOutTasks.find(function(b){ return b.propertyId===p.id && b.pickupDate===x.pickupDate; });
-        var effStatus = task ? binOutTaskEffectiveStatus(task) : null;
-        var canComplete = task && effStatus !== 'completed' && effStatus !== 'not_completed';
-        var names = x.binTypes.map(function(bt){ return (TRASH_TYPE_LABEL[bt]||bt).replace(/ \(.*\)$/,''); }).join(' & ');
-        return '<div class="duty-row">'+
-          '<div class="duty-art bin-art">'+x.binTypes.map(function(bt){ return binIconSvg(bt, 34); }).join('')+'</div>'+
-          '<div class="duty-body">'+
-            '<div class="duty-title">Bin OUT <span class="duty-date">'+shortDate(x.pickupDate)+'</span>'+(task?binOutStatusBadgeHtml(task):'')+'</div>'+
-            '<div class="duty-sub">'+esc(names)+' — put out the night before</div>'+
-            (canComplete ? '<button class="mini-btn primary" style="margin-top:8px;" onclick="openBinOutCompleteModal(\''+task.id+'\')">Mark Bin OUT completed</button>' : '')+
-          '</div></div>';
-      }).join('');
-    }
-    return '<div class="card tenant-week'+(isCurrent?' current':'')+'">'+
-      '<div class="tenant-week-head">'+(isCurrent?'<span class="week-chip">This week</span>':'')+
-      '<span>'+shortDate(duty.periodStart)+' – '+shortDate(duty.periodEnd)+'</span></div>'+
-      cleaningHtml + binHtml +
-      '</div>';
-  }
-
   function renderCleaningTenant(){
     var t = myTenantRecord();
     if (!t || !t.roomId){
       return pageHeader('Cleaning', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
     }
-    var p = properties.find(function(x){ return x.id===t.propertyId; }) || { id: t.propertyId };
-    // Most recent (current week) first, then the future weeks in order.
-    var myWeeks = weeklyDuties.filter(function(w){ return w.roomId===t.roomId && w.periodEnd >= TODAY; })
-      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+    var myCleaningDuties = weeklyDuties.filter(function(w){ return w.roomId===t.roomId; }).sort(function(a,b){ return b.periodEnd.localeCompare(a.periodEnd); });
+    var myBinDuties = binDuties.filter(function(w){ return w.roomId===t.roomId; }).sort(function(a,b){ return b.periodEnd.localeCompare(a.periodEnd); });
 
-    var year = parseInt(cleaningCalendarMonth.slice(0,4), 10);
-    var month = parseInt(cleaningCalendarMonth.slice(5,7), 10) - 1;
-    var toolbarHtml = '<div class="cal-toolbar">'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(-1)" aria-label="Previous month">‹</button>'+
-      '<div class="cal-month-label">'+CALENDAR_MONTH_NAMES[month]+' '+year+'</div>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(1)" aria-label="Next month">›</button>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarGoToday()" style="margin-left:auto;">Today</button>'+
-      '</div>';
-    var weekdayHtml = '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){
-      return '<div class="cal-weekday">'+w+'</div>';
-    }).join('') + '</div>';
-    var legendHtml = '<div class="cal-legend">'+
-      '<span><span class="dot" style="background:var(--accent);"></span>Your turn</span>'+
-      '<span>🧹&nbsp;Cleaning</span>'+
-      (p.binDutyRequired===false ? '' : ['garbage','recycling','organic'].map(function(bt){
-        return '<span>'+binIconSvg(bt, 16)+'&nbsp;'+esc((TRASH_TYPE_LABEL[bt]||bt).replace(/ \(.*\)$/,''))+'</span>';
-      }).join(''))+
-      '</div>';
-    var calendarHtml = '<div class="card">'+toolbarHtml+weekdayHtml+tenantCleaningMonthGridHtml(p, cleaningCalendarMonth, t.roomId)+legendHtml+'</div>';
+    var cleaningHtml = '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">🧹 Cleaning</h2>'+
+      (myCleaningDuties.length===0
+        ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No cleaning turns scheduled for your room yet.</p></div>'
+        : myCleaningDuties.map(cleaningDutyCardHtml).join(''));
 
-    var weeksHtml = myWeeks.length===0
-      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No upcoming turns for your room yet.</p></div>'
-      : myWeeks.map(function(w){ return tenantWeekCardHtml(p, w); }).join('');
+    var binHtml = myBinDuties.length===0
+      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No Bin OUT turns scheduled for your room yet.</p></div>'
+      : myBinDuties.map(binDutyCardHtml).join('');
 
-    var sectionTitle = function(txt){ return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+txt+'</h2>'; };
-    return pageHeader('My Weekly Responsibilities', "Your room's cleaning and bin turns.") +
+    var trashHtml = trashScheduleListHtml(t.propertyId, false);
+
+    return pageHeader('My Weekly Responsibilities', "Your room's cleaning turn and bin duty, independently.") +
       '<button class="mini-btn" style="margin-bottom:14px;" onclick="openCleaningHistoryModal()">Cleaning history</button>'+
-      calendarHtml +
-      sectionTitle('My turns') + weeksHtml +
-      sectionTitle('Property trash calendar') +
-      '<div class="card">'+trashScheduleListHtml(t.propertyId, false)+'</div>';
+      cleaningHtml +
+      binHtml +
+      '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">Property trash calendar</h2>'+
+      '<div class="card">'+trashHtml+'</div>';
   }
 
   /** Monday of the week containing `iso` (Mon–Sun weeks, matching the calendar grid). */
