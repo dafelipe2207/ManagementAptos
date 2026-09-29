@@ -871,10 +871,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/properties', label:'Properties', icon:'building', primary:false },
     { header:true, label:'Property Operations' },
     { hash:'#/property-operations', label:'Property Operations', icon:'building', primary:false },
-    { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
-    { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
-    { hash:'#/inspection', label:'Inspection', icon:'document', primary:false },
-    { hash:'#/documents', label:'Documents', icon:'document', primary:false },
     { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { hash:'#/users', label:'Users', icon:'tenants', primary:false, superAdminOnly:true },
@@ -1170,7 +1166,43 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.openRoomActivityModal = openRoomActivityModal;
   window.closeRoomActivityModal = closeRoomActivityModal;
 
+  /** The four operational sections (Maintenance, Cleaning, Inspection, Documents) used to be
+   *  separate top-level nav items; they're now tabs inside this single "Property Operations" hub
+   *  so the sidebar has one entry instead of five. `propertyOperationsTab` is plain UI state (not
+   *  tied to location.hash) — switching tabs just re-renders in place, the same pattern used for
+   *  cleaningStaffPropertyFilter/cleaningCalendarMonth elsewhere in this file. The four old flat
+   *  hashes (#/maintenance etc., still used by notification deep-links) stay mapped in ROUTES and
+   *  simply preset this tab before rendering the hub, so existing links keep working. */
+  var propertyOperationsTab = 'overview';
+  var PROPERTY_OPERATIONS_TABS = [
+    { key:'overview', label:'Overview' },
+    { key:'maintenance', label:'Maintenance' },
+    { key:'cleaning', label:'Cleaning & Bin' },
+    { key:'inspection', label:'Inspection' },
+    { key:'documents', label:'Documents' }
+  ];
+  function setPropertyOperationsTab(tab){
+    propertyOperationsTab = tab;
+    renderPreservingScroll();
+  }
+  window.setPropertyOperationsTab = setPropertyOperationsTab; // inline onclick= runs in global scope — must be exposed here
+  function propertyOperationsTabBarHtml(){
+    return '<div class="po-tabbar">' + PROPERTY_OPERATIONS_TABS.map(function(t){
+      return '<button type="button" class="po-tab'+(t.key===propertyOperationsTab?' active':'')+'" onclick="setPropertyOperationsTab(\''+t.key+'\')">'+esc(t.label)+'</button>';
+    }).join('') + '</div>';
+  }
   function renderPropertyOperations(){
+    var body;
+    switch(propertyOperationsTab){
+      case 'maintenance': body = renderMaintenance(); break;
+      case 'cleaning': body = renderCleaning(); break;
+      case 'inspection': body = renderInspection(); break;
+      case 'documents': body = renderDocuments(); break;
+      default: body = renderPropertyOperationsOverview();
+    }
+    return propertyOperationsTabBarHtml() + body;
+  }
+  function renderPropertyOperationsOverview(){
     var header = pageHeader('Property Operations', "Today's tasks and what needs attention, across Cleaning, Maintenance and Bin OUT.");
     if (properties.length === 0){
       return header + emptyState('building', 'No properties yet', 'Add a property to start tracking operations.', '');
@@ -6791,6 +6823,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * trashSchedule: property-level (not per-room) — which bin type is collected, from a reference
    * date, repeating every `intervalDays` days (not every property has this set up at all). */
   var TRASH_TYPE_LABEL = { garbage:'Garbage (red bin)', recycling:'Recycling (yellow bin)', organic:'Organic (green bin)' };
+  var TRASH_TYPE_DOT = { garbage:'🔴', recycling:'🟡', organic:'🟢' };
   var NOTIFICATION_CATEGORY_META = {
     check_in: { emoji: '🏠', label: 'Check-in' },
     check_out: { emoji: '🚪', label: 'Check-out' },
@@ -6953,7 +6986,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (p.binDutyRequired !== false && gridStart && gridEnd){
       trashPickupsInWindow(propId, gridStart, gridEnd).forEach(function(x){ pickupsByDate[x.pickupDate] = x.binTypes; });
     }
-    var TRASH_TYPE_DOT = { garbage:'🔴', recycling:'🟡', organic:'🟢' };
 
     var cellsHtml = '<div class="cal-grid cal-days">' + cells.map(function(iso){
       if (!iso) return '<div class="cal-daycell empty"></div>';
@@ -6991,12 +7023,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /** The simple roster table the admin actually wants: one row per week, Aseo (the Sunday inside
    *  that week — some properties' weeklyDuty periods run Mon→Sun, others Sun→Sat, so the Sunday
-   *  is located with nextWeekdayIso rather than assumed to be periodStart or periodEnd) and Bin
-   *  (that week's Wednesday, found the same way) sharing the single Room both operations use that
-   *  week. Cleaning's weekly rotation is the source of truth for the room; Bin reuses it rather
-   *  than reading its own (fortnightly) bin_duties container, since the two are meant to always
-   *  match for a given week. Clicking a row opens the same reassign modal as before (Room + Date),
-   *  which still cascades forward. */
+   *  is located with nextWeekdayIso rather than assumed to be periodStart or periodEnd), Bin (that
+   *  week's Wednesday, found the same way) with its actual colors from trash_schedule for that
+   *  exact date, and the single Room both operations use that week. Cleaning's weekly rotation is
+   *  the source of truth for the room; Bin reuses it rather than reading its own (fortnightly)
+   *  bin_duties container, since the two are meant to always match for a given week. Clicking a
+   *  row opens the same reassign modal as before (Room + Date), which still cascades forward. */
   function propertyScheduleTableHtml(p){
     var propId = p.id;
     var showBin = p.binDutyRequired !== false;
@@ -7009,16 +7041,20 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var roomName = room ? room.name : '—';
       var aseoDate = nextWeekdayIso(d.periodStart, 0); // Sunday within this week
       var binDate = nextWeekdayIso(d.periodStart, 3); // Wednesday within this week
+      var binTypes = showBin ? trashPickupsInWindow(propId, binDate, binDate).reduce(function(acc,x){ return acc.concat(x.binTypes); }, []) : [];
+      var binTypesHtml = binTypes.length ? binTypes.map(function(bt){
+        return '<span class="bin-dot" title="'+esc(TRASH_TYPE_LABEL[bt]||bt)+'">'+(TRASH_TYPE_DOT[bt]||'⚪')+'</span>';
+      }).join('') : '—';
       var clickable = !isPast;
       var rowAttrs = clickable ? ' class="roster-row" onclick="openWeekReassignModal(\'cleaning\',\''+d.id+'\')" tabindex="0" role="button"' : ' class="roster-row past"';
       return '<tr'+rowAttrs+'>'+
         '<td>'+shortDate(aseoDate)+'</td>'+
-        (showBin ? '<td>'+shortDate(binDate)+'</td>' : '')+
+        (showBin ? '<td>'+shortDate(binDate)+'</td><td>'+binTypesHtml+'</td>' : '')+
         '<td>'+esc(roomName)+'</td>'+
         '</tr>';
     }).join('');
     return '<div class="roster-table-wrap"><table class="roster-table">'+
-      '<thead><tr><th>Aseo</th>'+(showBin?'<th>Bin</th>':'')+'<th>Habitación</th></tr></thead>'+
+      '<thead><tr><th>Aseo</th>'+(showBin?'<th>Bin</th><th>Tipo</th>':'')+'<th>Habitación</th></tr></thead>'+
       '<tbody>'+bodyRows+'</tbody></table></div>';
   }
 
@@ -7077,6 +7113,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       sortedProps.map(function(p){ return '<option value="'+p.id+'"'+(cleaningStaffPropertyFilter===p.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('')+
       '</select></div>';
 
+    var year = parseInt(cleaningCalendarMonth.slice(0,4), 10);
+    var month = parseInt(cleaningCalendarMonth.slice(5,7), 10) - 1;
+    var monthLabel = CALENDAR_MONTH_NAMES[month] + ' ' + year;
+    var toolbarHtml = '<div class="cal-toolbar">'+
+      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(-1)" aria-label="Previous month">‹</button>'+
+      '<div class="cal-month-label">'+monthLabel+'</div>'+
+      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(1)" aria-label="Next month">›</button>'+
+      '<button class="mini-btn" type="button" onclick="cleaningCalendarGoToday()" style="margin-left:auto;">Today</button>'+
+      '</div>';
+    var weekdayHtml = '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){
+      return '<div class="cal-weekday">'+w+'</div>';
+    }).join('') + '</div>';
+    var legendHtml = '<div class="cal-legend">'+
+      '<span><span class="dot" style="background:var(--status-paid);"></span>Cleaning</span>'+
+      '<span><span class="dot" style="background:var(--status-upcoming);"></span>Bin OUT (🔴 Garbage 🟡 Recycling 🟢 Organic)</span>'+
+      '</div>';
+
     var sectionsHtml = visibleProps.map(function(p){
       var propId = p.id;
       var propRooms = roomsOf(propId);
@@ -7084,8 +7137,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (propRooms.length===0){
         calendarHtml = '<p style="font-size:13px;color:var(--text-dim);margin:0;">No rooms in this property yet.</p>';
       } else {
-        calendarHtml = '<div class="card">'+
-          (p.binDutyRequired===false ? '<p style="font-size:12px;color:var(--text-faint);margin:0 0 10px;">This property doesn\'t need Bin OUT duty.</p>' : '')+
+        calendarHtml = '<div class="card">'+toolbarHtml+weekdayHtml+propertyCleaningMonthGridHtml(p, cleaningCalendarMonth)+legendHtml+
+          (p.binDutyRequired===false ? '<p style="font-size:12px;color:var(--text-faint);margin:10px 0 0;">This property doesn\'t need Bin OUT duty.</p>' : '')+
+          '</div>'+
+          '<div class="card" style="margin-top:10px;">'+
+          '<h3 style="margin:0 0 10px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Roster</h3>'+
           propertyScheduleTableHtml(p)+
           '</div>';
       }
@@ -9743,20 +9799,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (e.key === 'Escape' && !document.getElementById('search-modal').hidden) closeSearchModal();
   });
 
+  /** The four flat hashes still exist (notification deep-links, old bookmarks) but now just
+   *  preset propertyOperationsTab and render the same hub as '#/property-operations'. */
+  function routeToOperationsTab(tab){ return function(){ propertyOperationsTab = tab; return renderPropertyOperations(); }; }
   var STAFF_ROUTES = {
     '#/': renderDashboard,
     '#/properties': renderProperties,
-    '#/property-operations': renderPropertyOperations,
+    '#/property-operations': routeToOperationsTab('overview'),
     '#/tenants': renderTenants,
     '#/payments': renderPayments,
     '#/bills': renderBills,
-    '#/maintenance': renderMaintenance,
-    '#/cleaning': renderCleaning,
-    '#/inspection': renderInspection,
+    '#/maintenance': routeToOperationsTab('maintenance'),
+    '#/cleaning': routeToOperationsTab('cleaning'),
+    '#/inspection': routeToOperationsTab('inspection'),
     '#/calendar': renderCalendar,
     '#/reports': renderReports,
     '#/profits': renderProfits,
-    '#/documents': renderDocuments,
+    '#/documents': routeToOperationsTab('documents'),
     '#/notifications': function(){ return isTenantRole() ? renderNotifications() : renderNotificationsStaff(); },
     '#/users': renderUsers,
     '#/audit-log': renderAuditLog,
