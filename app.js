@@ -6989,12 +6989,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return cellsHtml;
   }
 
-  /** The simple roster table the admin actually wants: one row per week, Aseo (the Sunday the
-   *  cleaning falls due — weeklyDuty.periodEnd), Bin (that week's Wednesday pickup, always 3 days
-   *  after Aseo) and the single Room both operations share that week. Cleaning's weekly rotation
-   *  is the source of truth for the room; Bin reuses it rather than reading its own (fortnightly)
-   *  bin_duties container, since the two are meant to always match for a given week. Clicking a
-   *  row opens the same reassign modal as before (Room + Date), which still cascades forward. */
+  /** The simple roster table the admin actually wants: one row per week, Aseo (the Sunday inside
+   *  that week — some properties' weeklyDuty periods run Mon→Sun, others Sun→Sat, so the Sunday
+   *  is located with nextWeekdayIso rather than assumed to be periodStart or periodEnd) and Bin
+   *  (that week's Wednesday, found the same way) sharing the single Room both operations use that
+   *  week. Cleaning's weekly rotation is the source of truth for the room; Bin reuses it rather
+   *  than reading its own (fortnightly) bin_duties container, since the two are meant to always
+   *  match for a given week. Clicking a row opens the same reassign modal as before (Room + Date),
+   *  which still cascades forward. */
   function propertyScheduleTableHtml(p){
     var propId = p.id;
     var showBin = p.binDutyRequired !== false;
@@ -7005,11 +7007,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var isPast = d.periodEnd < TODAY;
       var room = roomOf(d.roomId);
       var roomName = room ? room.name : '—';
-      var binDate = stepDateIso(d.periodEnd, 3);
+      var aseoDate = nextWeekdayIso(d.periodStart, 0); // Sunday within this week
+      var binDate = nextWeekdayIso(d.periodStart, 3); // Wednesday within this week
       var clickable = !isPast;
       var rowAttrs = clickable ? ' class="roster-row" onclick="openWeekReassignModal(\'cleaning\',\''+d.id+'\')" tabindex="0" role="button"' : ' class="roster-row past"';
       return '<tr'+rowAttrs+'>'+
-        '<td>'+shortDate(d.periodEnd)+'</td>'+
+        '<td>'+shortDate(aseoDate)+'</td>'+
         (showBin ? '<td>'+shortDate(binDate)+'</td>' : '')+
         '<td>'+esc(roomName)+'</td>'+
         '</tr>';
