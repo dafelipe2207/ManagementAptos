@@ -6989,6 +6989,36 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return cellsHtml;
   }
 
+  /** The simple roster table the admin actually wants: one row per week, Aseo (the Sunday the
+   *  cleaning falls due — weeklyDuty.periodEnd), Bin (that week's Wednesday pickup, always 3 days
+   *  after Aseo) and the single Room both operations share that week. Cleaning's weekly rotation
+   *  is the source of truth for the room; Bin reuses it rather than reading its own (fortnightly)
+   *  bin_duties container, since the two are meant to always match for a given week. Clicking a
+   *  row opens the same reassign modal as before (Room + Date), which still cascades forward. */
+  function propertyScheduleTableHtml(p){
+    var propId = p.id;
+    var showBin = p.binDutyRequired !== false;
+    var rows = weeklyDuties.filter(function(d){ return d.propertyId===propId; })
+      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+    if (!rows.length) return '<p style="font-size:13px;color:var(--text-dim);margin:0;">No cleaning weeks scheduled yet.</p>';
+    var bodyRows = rows.map(function(d){
+      var isPast = d.periodEnd < TODAY;
+      var room = roomOf(d.roomId);
+      var roomName = room ? room.name : '—';
+      var binDate = stepDateIso(d.periodEnd, 3);
+      var clickable = !isPast;
+      var rowAttrs = clickable ? ' class="roster-row" onclick="openWeekReassignModal(\'cleaning\',\''+d.id+'\')" tabindex="0" role="button"' : ' class="roster-row past"';
+      return '<tr'+rowAttrs+'>'+
+        '<td>'+shortDate(d.periodEnd)+'</td>'+
+        (showBin ? '<td>'+shortDate(binDate)+'</td>' : '')+
+        '<td>'+esc(roomName)+'</td>'+
+        '</tr>';
+    }).join('');
+    return '<div class="roster-table-wrap"><table class="roster-table">'+
+      '<thead><tr><th>Aseo</th>'+(showBin?'<th>Bin</th>':'')+'<th>Habitación</th></tr></thead>'+
+      '<tbody>'+bodyRows+'</tbody></table></div>';
+  }
+
   /** A plain-text agenda for the same month the grid above shows — one row per day that has a
    *  Cleaning or Bin OUT event, spelling out what the pill's icon only hints at: the date, which
    *  operation it is (Cleaning, or Bin OUT naming every color due that day), and which room it
@@ -7044,23 +7074,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       sortedProps.map(function(p){ return '<option value="'+p.id+'"'+(cleaningStaffPropertyFilter===p.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('')+
       '</select></div>';
 
-    var year = parseInt(cleaningCalendarMonth.slice(0,4), 10);
-    var month = parseInt(cleaningCalendarMonth.slice(5,7), 10) - 1;
-    var monthLabel = CALENDAR_MONTH_NAMES[month] + ' ' + year;
-    var toolbarHtml = '<div class="cal-toolbar">'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(-1)" aria-label="Previous month">‹</button>'+
-      '<div class="cal-month-label">'+monthLabel+'</div>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(1)" aria-label="Next month">›</button>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarGoToday()" style="margin-left:auto;">Today</button>'+
-      '</div>';
-    var weekdayHtml = '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){
-      return '<div class="cal-weekday">'+w+'</div>';
-    }).join('') + '</div>';
-    var legendHtml = '<div class="cal-legend">'+
-      '<span><span class="dot" style="background:var(--status-paid);"></span>Cleaning</span>'+
-      '<span><span class="dot" style="background:var(--status-upcoming);"></span>Bin OUT (🔴 Garbage 🟡 Recycling 🟢 Organic)</span>'+
-      '</div>';
-
     var sectionsHtml = visibleProps.map(function(p){
       var propId = p.id;
       var propRooms = roomsOf(propId);
@@ -7068,9 +7081,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (propRooms.length===0){
         calendarHtml = '<p style="font-size:13px;color:var(--text-dim);margin:0;">No rooms in this property yet.</p>';
       } else {
-        calendarHtml = '<div class="card">'+toolbarHtml+weekdayHtml+propertyCleaningMonthGridHtml(p, cleaningCalendarMonth)+legendHtml+
-          (p.binDutyRequired===false ? '<p style="font-size:12px;color:var(--text-faint);margin:10px 0 0;">This property doesn\'t need Bin OUT duty.</p>' : '')+
-          propertyAgendaListHtml(p, cleaningCalendarMonth)+
+        calendarHtml = '<div class="card">'+
+          (p.binDutyRequired===false ? '<p style="font-size:12px;color:var(--text-faint);margin:0 0 10px;">This property doesn\'t need Bin OUT duty.</p>' : '')+
+          propertyScheduleTableHtml(p)+
           '</div>';
       }
 
