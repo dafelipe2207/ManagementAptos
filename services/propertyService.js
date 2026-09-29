@@ -2,7 +2,8 @@
 // Maps the app's camelCase `property` shape ({id, name, address, bedrooms,
 // bathrooms, notes, leasePaymentDay, leasePaymentAmount, leaseEndDate,
 // leasePaymentMethod, bpayBillerCode, bpayReference, bankAccountName,
-// bankBsb, bankAccountNumber, hasParking, parkingCost, parkingTenantId})
+// bankBsb, bankAccountNumber, hasParking, parkingCost, parkingTenantId,
+// binDutyRequired})
 // to/from the `properties` table. Every create() sets user_id explicitly
 // from the current session (RLS requires it).
 //
@@ -41,7 +42,8 @@ function fromRow(row) {
     whatsappGroupLink: row.whatsapp_group_link || '',
     hasParking: !!row.has_parking,
     parkingCost: row.parking_cost != null ? Number(row.parking_cost) : null,
-    parkingTenantId: row.parking_tenant_id || null
+    parkingTenantId: row.parking_tenant_id || null,
+    binDutyRequired: row.bin_duty_required !== false
   };
 }
 
@@ -67,7 +69,8 @@ function toRow(p) {
     whatsapp_group_link: p.whatsappGroupLink || null,
     has_parking: !!p.hasParking,
     parking_cost: p.hasParking && p.parkingCost != null && p.parkingCost !== '' ? p.parkingCost : null,
-    parking_tenant_id: p.hasParking && p.parkingTenantId ? p.parkingTenantId : null
+    parking_tenant_id: p.hasParking && p.parkingTenantId ? p.parkingTenantId : null,
+    bin_duty_required: p.binDutyRequired !== false
   };
 }
 
