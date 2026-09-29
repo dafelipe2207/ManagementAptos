@@ -9799,23 +9799,34 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (e.key === 'Escape' && !document.getElementById('search-modal').hidden) closeSearchModal();
   });
 
-  /** The four flat hashes still exist (notification deep-links, old bookmarks) but now just
-   *  preset propertyOperationsTab and render the same hub as '#/property-operations'. */
-  function routeToOperationsTab(tab){ return function(){ propertyOperationsTab = tab; return renderPropertyOperations(); }; }
+  /** The four flat hashes still exist (notification deep-links, old bookmarks) and preset
+   *  propertyOperationsTab to match — but only on an actual hash change. Clicking a tab
+   *  (setPropertyOperationsTab) re-renders via renderPreservingScroll() without touching
+   *  location.hash, so ROUTES[hash] runs again with the SAME hash; without the lastOperationsHash
+   *  guard this would force propertyOperationsTab back to the hash's tab on every click,
+   *  overriding whichever tab the click just selected. */
+  var lastOperationsHash = null;
+  function routeToOperationsTab(hash, tab){
+    return function(){
+      if (lastOperationsHash !== hash) propertyOperationsTab = tab;
+      lastOperationsHash = hash;
+      return renderPropertyOperations();
+    };
+  }
   var STAFF_ROUTES = {
     '#/': renderDashboard,
     '#/properties': renderProperties,
-    '#/property-operations': routeToOperationsTab('overview'),
+    '#/property-operations': routeToOperationsTab('#/property-operations', 'overview'),
     '#/tenants': renderTenants,
     '#/payments': renderPayments,
     '#/bills': renderBills,
-    '#/maintenance': routeToOperationsTab('maintenance'),
-    '#/cleaning': routeToOperationsTab('cleaning'),
-    '#/inspection': routeToOperationsTab('inspection'),
+    '#/maintenance': routeToOperationsTab('#/maintenance', 'maintenance'),
+    '#/cleaning': routeToOperationsTab('#/cleaning', 'cleaning'),
+    '#/inspection': routeToOperationsTab('#/inspection', 'inspection'),
     '#/calendar': renderCalendar,
     '#/reports': renderReports,
     '#/profits': renderProfits,
-    '#/documents': routeToOperationsTab('documents'),
+    '#/documents': routeToOperationsTab('#/documents', 'documents'),
     '#/notifications': function(){ return isTenantRole() ? renderNotifications() : renderNotificationsStaff(); },
     '#/users': renderUsers,
     '#/audit-log': renderAuditLog,
