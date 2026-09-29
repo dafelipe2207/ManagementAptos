@@ -6977,6 +6977,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  (skipped entirely when the property doesn't need Bin OUT — binDutyRequired===false). Today
    *  or a future date's pill is a real <button> that opens the reassign modal; a past date's pill
    *  is inert (plain text) — it's history, not something left to plan. */
+  /** The weekly (cleaning) duty whose week contains `iso` — the same single source of truth the
+   *  Roster table uses for both Aseo and Bin, so the calendar never disagrees with it. */
+  function weeklyDutyForDate(propId, iso){
+    return weeklyDuties.find(function(d){ return d.propertyId===propId && iso >= d.periodStart && iso <= d.periodEnd; }) || null;
+  }
+
   function propertyCleaningMonthGridHtml(p, monthStr){
     var propId = p.id;
     var cells = buildMonthGrid(monthStr);
@@ -6993,7 +6999,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var isToday = iso === TODAY;
       var pillsHtml = '';
 
-      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && d.periodStart===iso; });
+      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && nextWeekdayIso(d.periodStart, 0)===iso; });
       if (cd){
         var isPast = cd.periodEnd < TODAY;
         var r1 = roomOf(cd.roomId);
@@ -7005,13 +7011,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
       var binTypesToday = pickupsByDate[iso];
       if (binTypesToday && binTypesToday.length){
-        var bd = binDuties.find(function(d){ return d.propertyId===propId && iso >= d.periodStart && iso <= d.periodEnd; });
+        var bd = weeklyDutyForDate(propId, iso);
         var r2 = bd ? roomOf(bd.roomId) : null;
         var dots = binTypesToday.map(function(bt){ return TRASH_TYPE_DOT[bt] || '⚪'; }).join('');
         var binLabel = dots + ' ' + (r2?r2.name:'—');
         var binIsPast = bd && bd.periodEnd < TODAY;
         pillsHtml += (bd && !binIsPast)
-          ? '<button type="button" class="cal-pill bin" onclick="openWeekReassignModal(\'bin\',\''+bd.id+'\')">'+esc(binLabel)+'</button>'
+          ? '<button type="button" class="cal-pill bin" onclick="openWeekReassignModal(\'cleaning\',\''+bd.id+'\')">'+esc(binLabel)+'</button>'
           : '<span class="cal-pill bin past">'+esc(binLabel)+'</span>';
       }
 
@@ -7076,14 +7082,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rows = [];
     cells.forEach(function(iso){
       if (!iso) return;
-      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && d.periodStart===iso; });
+      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && nextWeekdayIso(d.periodStart, 0)===iso; });
       if (cd){
         var r1 = roomOf(cd.roomId);
         rows.push({ date: iso, operation: 'Cleaning', room: r1 ? r1.name : '—' });
       }
       var binTypesToday = pickupsByDate[iso];
       if (binTypesToday && binTypesToday.length){
-        var bd = binDuties.find(function(d){ return d.propertyId===propId && iso >= d.periodStart && iso <= d.periodEnd; });
+        var bd = weeklyDutyForDate(propId, iso);
         var r2 = bd ? roomOf(bd.roomId) : null;
         var opLabel = 'Bin OUT — ' + binTypesToday.map(function(bt){ return TRASH_TYPE_LABEL[bt] || bt; }).join(', ');
         rows.push({ date: iso, operation: opLabel, room: r2 ? r2.name : '—' });
