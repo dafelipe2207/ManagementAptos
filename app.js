@@ -2487,8 +2487,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var paymentsTenantFilter = 'all';
   var paymentsPropertyFilter = 'all';
   var paymentsMonthFilter = TODAY.slice(0,7); // 'YYYY-MM', or 'all' — default = current month
+  // 'active' (default) = today's normal view: active tenants + any moved-out tenant who still
+  // owes something (never hidden while they owe). 'moved_out' = every moved-out tenant, settled
+  // or not — a dedicated place to review who's left, since a settled one otherwise drops off
+  // the default view entirely (see groupTenants below).
+  var paymentsTenantStatusFilter = 'active';
   function setPaymentsMonthFilter(v){ paymentsMonthFilter = v; renderPreservingScroll(); }
   window.setPaymentsMonthFilter = setPaymentsMonthFilter;
+  function setPaymentsTenantStatusFilter(v){ paymentsTenantStatusFilter = v; renderPreservingScroll(); }
+  window.setPaymentsTenantStatusFilter = setPaymentsTenantStatusFilter;
   var paymentsDateSort = 'desc'; // 'desc' = most recent first, 'asc' = oldest first
   var PAYMENTS_FILTERS = [['all','All'], ['paid','Paid'], ['due','Due'], ['overdue','Overdue']];
   function setPaymentsFilter(f){ paymentsFilter = f; renderPreservingScroll(); }
@@ -2566,6 +2573,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div style="flex:1;min-width:160px;">'+
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by month</label>'+
       '<select class="modal-input" onchange="setPaymentsMonthFilter(this.value)">'+monthOptionsHtml+'</select>'+
+      '</div>'+
+      '<div style="flex:1;min-width:160px;">'+
+      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Tenant status</label>'+
+      '<select class="modal-input" onchange="setPaymentsTenantStatusFilter(this.value)">'+
+      '<option value="active"'+(paymentsTenantStatusFilter==='active'?' selected':'')+'>Active</option>'+
+      '<option value="moved_out"'+(paymentsTenantStatusFilter==='moved_out'?' selected':'')+'>Moved out</option>'+
+      '</select>'+
       '</div>'+
       '<button type="button" class="mini-btn" style="flex:1;min-width:160px;" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
       '</div>';
@@ -2671,12 +2685,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         unpaidBillAllocationsFor(t.id).length > 0;
     }
     // A tenant who's moved out (or been deactivated) and is fully settled has nothing left to
-    // track here, so they drop off the list entirely — only kept around while they still owe
-    // rent or a bill. A currently-active tenant always stays, even with zero charges yet, so
-    // the admin can see them (and their next upcoming period, added below) from day one.
-    // Picking a specific tenant from the dropdown always shows that one regardless.
+    // track here, so they drop off the default ("Active") view entirely — only kept around
+    // while they still owe rent or a bill. A currently-active tenant always stays, even with
+    // zero charges yet, so the admin can see them (and their next upcoming period, added below)
+    // from day one. The "Moved out" status filter is the dedicated place to review every
+    // moved-out tenant, settled or not, since the default view otherwise hides a settled one.
+    // Picking a specific tenant from the dropdown always shows that one regardless of either filter.
     var groupTenants = (paymentsPropertyFilter==='all' ? tenants : tenantPool).filter(function(t){
         if (paymentsTenantFilter !== 'all') return paymentsTenantFilter === t.id;
+        if (paymentsTenantStatusFilter === 'moved_out') return tenantHasMovedOut(t);
         return !tenantHasMovedOut(t) || tenantOwesSomething(t);
       })
       .sort(function(a,b){ return a.fullName.localeCompare(b.fullName); });
