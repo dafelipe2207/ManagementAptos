@@ -664,29 +664,6 @@
     </div>
   </div>
 
-  <div class="modal-overlay" id="duty-rotation-modal" hidden>
-    <div class="card modal-card" style="max-width:420px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning &amp; Bin OUT rotation</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Set the order rooms take turns in. Cleaning advances one room every week; Bin OUT advances one room every 2 weeks — both through this same order, independently.</p>
-      <div class="form-row"><label for="duty-rotation-property">Property</label>
-        <select id="duty-rotation-property" onchange="onDutyRotationPropertyChange()"></select>
-      </div>
-      <div class="form-row"><label for="duty-rotation-reference-date">Reference date (anchors the cycle)</label><input id="duty-rotation-reference-date" type="date" /></div>
-      <label style="font-size:12.5px;font-weight:600;display:block;margin:10px 0 4px;">Room order</label>
-      <div id="duty-rotation-room-list" style="margin-bottom:8px;"></div>
-      <div class="form-row"><label for="duty-rotation-add-room">Add room</label>
-        <select id="duty-rotation-add-room"></select>
-      </div>
-      <button type="button" class="mini-btn" id="duty-rotation-add-btn" style="margin:-4px 0 6px;" onclick="rotationEditorAddRoom()">+ Add to rotation</button>
-      <p id="duty-rotation-modal-error" class="form-error" hidden></p>
-      <div class="modal-actions">
-        <button class="mini-btn" id="duty-rotation-delete-btn" onclick="deleteDutyRotationConfirm()" hidden>Delete</button>
-        <button class="mini-btn" onclick="closeDutyRotationModal()">Cancel</button>
-        <button class="mini-btn primary" onclick="saveDutyRotationForm()">Save</button>
-      </div>
-    </div>
-  </div>
-
   <div class="modal-overlay" id="cleaning-history-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
       <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning history</h2>
@@ -1082,6 +1059,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=92"></script>
+<script type="module" src="app.js?v=93"></script>
 </body>
 </html>
