@@ -6989,6 +6989,44 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return cellsHtml;
   }
 
+  /** A plain-text agenda for the same month the grid above shows — one row per day that has a
+   *  Cleaning or Bin OUT event, spelling out what the pill's icon only hints at: the date, which
+   *  operation it is (Cleaning, or Bin OUT naming every color due that day), and which room it
+   *  falls to. Reads the same weeklyDuties/trashPickupsInWindow data as the grid, so the two never
+   *  disagree — this is just the same information written out in full. */
+  function propertyAgendaListHtml(p, monthStr){
+    var propId = p.id;
+    var cells = buildMonthGrid(monthStr);
+    var gridStart = cells.find(function(c){ return !!c; });
+    var gridEnd = cells.slice().reverse().find(function(c){ return !!c; });
+    if (!gridStart || !gridEnd) return '';
+    var pickupsByDate = {};
+    if (p.binDutyRequired !== false){
+      trashPickupsInWindow(propId, gridStart, gridEnd).forEach(function(x){ pickupsByDate[x.pickupDate] = x.binTypes; });
+    }
+    var rows = [];
+    cells.forEach(function(iso){
+      if (!iso) return;
+      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && d.periodStart===iso; });
+      if (cd){
+        var r1 = roomOf(cd.roomId);
+        rows.push({ date: iso, operation: 'Cleaning', room: r1 ? r1.name : '—' });
+      }
+      var binTypesToday = pickupsByDate[iso];
+      if (binTypesToday && binTypesToday.length){
+        var bd = binDuties.find(function(d){ return d.propertyId===propId && iso >= d.periodStart && iso <= d.periodEnd; });
+        var r2 = bd ? roomOf(bd.roomId) : null;
+        var opLabel = 'Bin OUT — ' + binTypesToday.map(function(bt){ return TRASH_TYPE_LABEL[bt] || bt; }).join(', ');
+        rows.push({ date: iso, operation: opLabel, room: r2 ? r2.name : '—' });
+      }
+    });
+    if (!rows.length) return '<p style="font-size:12.5px;color:var(--text-dim);margin:10px 0 0;">No Cleaning or Bin OUT dates this month.</p>';
+    return '<div style="margin-top:10px;">' + rows.map(function(r){
+      return '<div class="field-row"><span class="k">'+shortDate(r.date)+'</span>'+
+        '<span class="v" style="font-weight:400;text-align:right;">'+esc(r.operation)+' · '+esc(r.room)+'</span></div>';
+    }).join('') + '</div>';
+  }
+
   /** Grouped by property, same convention as Inspection's staff view — an admin with several
    *  properties thinks property by property. The "View" filter narrows this to one property at a
    *  time. Each property shows a real month calendar (◀ ▶ to navigate, current month by default)
@@ -7032,6 +7070,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       } else {
         calendarHtml = '<div class="card">'+toolbarHtml+weekdayHtml+propertyCleaningMonthGridHtml(p, cleaningCalendarMonth)+legendHtml+
           (p.binDutyRequired===false ? '<p style="font-size:12px;color:var(--text-faint);margin:10px 0 0;">This property doesn\'t need Bin OUT duty.</p>' : '')+
+          propertyAgendaListHtml(p, cleaningCalendarMonth)+
           '</div>';
       }
 
