@@ -47,3 +47,14 @@ export async function updateRoom(id, roomId) {
   if (error) throw error;
   return fromRow(data);
 }
+
+/** Admin override from the Cleaning calendar's date field: moves this week's period to start on
+ *  a different date, keeping its 7-day length. Callers must also shift the linked cleaning_tasks
+ *  row's scheduled_date by the same delta (see cleaningService.updateTaskDate) so the two stay
+ *  consistent, and should cascade the same delta through every later week for the property so the
+ *  weekly cadence stays unbroken (see reassignDutyRoom in app.js). */
+export async function updatePeriod(id, periodStart, periodEnd) {
+  const { data, error } = await supabase.from('weekly_duties').update({ period_start: periodStart, period_end: periodEnd }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
