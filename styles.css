@@ -454,6 +454,27 @@
   .cal-pill.cleaning.past, .cal-pill.bin.past{cursor:default;opacity:.55;filter:none;}
   button.cal-pill{border:none;width:100%;text-align:left;cursor:pointer;font-family:inherit;box-shadow:0 1px 1px rgba(20,30,25,.05);}
   .cal-more{font-size:9px;color:var(--text-faint);padding:0 3px;}
+  /* Tenant calendar + turn cards */
+  .cal-pill.other{opacity:.45;font-weight:600;}
+  .cal-pill.mine{box-shadow:inset 0 0 0 1.5px currentColor;}
+  .cal-pill.mine.past, .cal-pill.other.past{opacity:.35;}
+  .cal-daycell.has-mine{border-color:var(--accent);}
+  .cal-pill .bin-icons{display:inline-flex;gap:1px;margin-right:3px;vertical-align:-2px;}
+  .bin-icon{display:inline-block;flex-shrink:0;vertical-align:middle;}
+  .cal-legend span .bin-icon{margin-right:2px;}
+  .tenant-week{padding-top:12px;}
+  .tenant-week.current{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
+  .tenant-week-head{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text-dim);font-family:var(--font-mono);margin-bottom:6px;}
+  .week-chip{font-family:inherit;background:var(--accent);color:#fff;border-radius:999px;padding:2px 8px;font-size:10.5px;letter-spacing:.03em;text-transform:uppercase;}
+  .duty-row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--border);}
+  .tenant-week-head + .duty-row{border-top:none;}
+  .duty-art{flex-shrink:0;min-width:52px;height:52px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:2px;padding:0 6px;}
+  .cleaning-art{background:var(--status-paid-bg);font-size:26px;}
+  .bin-art{background:var(--status-upcoming-bg);}
+  .duty-body{flex:1;min-width:0;}
+  .duty-title{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:14px;font-weight:700;}
+  .duty-date{font-size:12.5px;font-weight:600;color:var(--text-dim);font-family:var(--font-mono);}
+  .duty-sub{font-size:12.5px;color:var(--text-dim);margin-top:2px;}
   .cal-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
   .cal-legend span{
     display:inline-flex;align-items:center;font-size:11px;font-weight:600;color:var(--text-dim);
