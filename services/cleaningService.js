@@ -119,6 +119,15 @@ export async function updateTaskRoom(id, roomId) {
   return taskFromRow(data);
 }
 
+/** Admin override from the Cleaning calendar's date field: keeps this task's own scheduled_date in
+ *  step with its weekly_duty's new period_end after a date edit (see weeklyDutyService.updatePeriod)
+ *  — called right after it, never on its own. */
+export async function updateTaskDate(id, scheduledDate) {
+  const { data, error } = await supabase.from('cleaning_tasks').update({ scheduled_date: scheduledDate }).eq('id', id).select().single();
+  if (error) throw error;
+  return taskFromRow(data);
+}
+
 /** A tenant's photos for a task — inserts a new submission (a room can be cleaned more than
  *  once before its next scheduled date, so this doesn't upsert). */
 export async function createSubmission(taskId, propertyId, roomId, tenantId, photoPaths, note) {
