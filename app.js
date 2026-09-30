@@ -24,6 +24,7 @@ import * as paymentReportService from './services/paymentReportService.js';
 import * as rentPaymentReportService from './services/rentPaymentReportService.js';
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
+import * as realEstateInspectionService from './services/realEstateInspectionService.js';
 import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js?v=3';
@@ -69,6 +70,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var rentPaymentReports = []; // tenant "I paid my rent" reports (pending until staff confirm) — rentPaymentReportService.js
   var houseRules = []; // one per property — houseRulesService.js
   var maintenanceLog = []; // create/edit/delete history of maintenance requests — maintenanceLogService.js
+  var realEstateInspections = []; // agency inspection visits per property — realEstateInspectionService.js
   var cleaningTasks = [];
   var cleaningSubmissions = [];
   var cleaningComments = [];
@@ -788,6 +790,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
       if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: tenantMode ? '#/payments' : ('#/tenants/' + t.id) });
     });
+    realEstateInspections.forEach(function(i){
+      if (i.status !== 'scheduled') return;
+      var p = propertyOf(i.propertyId);
+      events.push({ date: i.date, kind: 'overdue', title: (tenantMode ? '' : (p?p.name+' — ':'')) + '🏢 Real estate inspection' + (i.startTime ? ' ' + reiTimeText(i) : ''), href: tenantMode ? '#/' : '#/inspection' });
+    });
     if (!tenantMode){
       // The landlord's own lease payments/inspections with the real estate agent — never a
       // tenant concern, and never something a tenant should see the numbers for.
@@ -801,9 +808,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             href: '#/properties/' + p.id
           });
         }
-        if (p.nextInspectionDate){
-          events.push({ date: p.nextInspectionDate, kind: 'move', title: p.name + ' — Real estate inspection', href: '#/properties/' + p.id });
-        }
+
       });
     }
     return events;
@@ -855,6 +860,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     plus:'<path d="M12 5v14M5 12h14"/>',
     inbox:'<path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13l3 7v8a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-8z"/>',
     edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    refresh:'<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20.5V16h-4.5"/>',
     logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
     rules:'<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/><path d="M9 11.5l3-2.5 3 2.5V15H9z"/>',
     wrench:'<path d="M14.5 5.5a4.5 4.5 0 0 1 5.9-1.3l-3 3 .9 2.5 2.5.9 3-3a4.5 4.5 0 0 1-6.2 5.6L9.7 21.1a2.3 2.3 0 0 1-3.2-3.2l7.9-7.9a4.5 4.5 0 0 1 .1-4.5z"/>',
@@ -1073,7 +1079,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           }).join('')
       ) + '</div>';
 
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + statHtml + needsHtml + upcomingHtml;
+    var reiHtml = realEstateInspectionBannerHtml(false) ||
+      '<div class="rei-empty">🏢 No real estate inspection scheduled <button type="button" class="text-link" onclick="openReiModal(null)">+ Schedule one</button></div>';
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + needsHtml + upcomingHtml;
   }
 
   /** Makes the Dashboard's summary tiles clickable: each one jumps to the page (and filter) that
@@ -1245,8 +1253,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           && r.statusFamily !== 'completed' && r.statusFamily !== 'not_completed';
         return isOverdue || isUrgentMaintenance;
       });
-      var inspectionDueLine = (p.nextInspectionDate && p.nextInspectionDate <= TODAY)
-        ? '<div class="task-row">🟡 <a href="#/properties/'+p.id+'">Inspection due</a></div>' : '';
+      var nextRei = upcomingRealEstateInspections(p.id)[0];
+      var inspectionDueLine = (nextRei && daysBetween(TODAY, nextRei.date) <= 7)
+        ? '<div class="task-row">🏢 <a href="#/properties/'+p.id+'">Real estate inspection '+(nextRei.date===TODAY?'today':shortDate(nextRei.date))+'</a></div>' : '';
       var attentionHtml = attentionRows.map(taskLink).join('') + inspectionDueLine;
       return '<div class="card"><h2>'+esc(p.name)+'</h2>'+
         '<h3 style="margin:12px 0 6px;font-size:13px;color:var(--text-dim);">Today\'s tasks</h3>'+
@@ -1388,7 +1397,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  amount, next inspection, contract end date and payment method) — only shown if
    *  something has been configured. */
   function leasePaymentCardHtml(p){
-    var hasAny = p.leasePaymentDay || p.leasePaymentAmount != null || p.leaseEndDate || p.leasePaymentMethod || p.nextInspectionDate || p.lastLeasePaymentDate;
+    var hasAny = p.leasePaymentDay || p.leasePaymentAmount != null || p.leaseEndDate || p.leasePaymentMethod || p.lastLeasePaymentDate;
     if (!hasAny) return '';
     var rows = '';
     var nextDue = nextLeaseDueDate(p, TODAY);
@@ -1408,11 +1417,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       rows += '<div class="field-row"><span class="k">Next payment due</span><span class="v" style="font-weight:400;color:var(--text-faint);">Mark a payment below to start tracking</span></div>';
     }
     if (p.leasePaymentAmount != null) rows += '<div class="field-row"><span class="k">Amount to pay</span><span class="v">'+money(p.leasePaymentAmount)+'</span></div>';
-    if (p.nextInspectionDate){
-      var daysToInspection = daysBetween(TODAY, p.nextInspectionDate);
-      rows += '<div class="field-row"><span class="k">Next inspection</span><span class="v">'+fullDate(p.nextInspectionDate)+
-        (daysToInspection >= 0 && daysToInspection <= 7 ? ' ' + badge('due','Coming up') : (daysToInspection < 0 ? ' ' + badge('overdue','Past date') : ''))+'</span></div>';
-    }
     if (p.leaseEndDate) rows += '<div class="field-row"><span class="k">Lease contract ends</span><span class="v">'+fullDate(p.leaseEndDate)+'</span></div>';
     if (p.leasePaymentMethod === 'bpay'){
       rows += '<div class="field-row"><span class="k">Payment method</span><span class="v">BPay</span></div>'+
@@ -1460,6 +1464,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="actions-row">'+
       (p.whatsappGroupLink ? '<a class="mini-btn" href="'+esc(whatsAppBusinessLink(p.whatsappGroupLink))+'" target="_blank" rel="noopener">Open WhatsApp group</a>' : '')+
       '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
+      '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">🏢 Schedule inspection</button>'+
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
       '</div>'+
       '<div class="card"><div class="field-list">'+
@@ -1468,7 +1473,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k">Parking</span><span class="v" style="font-weight:400;">'+parkingSummary(p)+'</span></div>'+
       (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
       '</div></div>'+
+      realEstateInspectionBannerHtml(false, p.id)+
       leasePaymentCardHtml(p)+
+      propertyInspectionHistoryHtml(p)+
       '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Trash collection</h2>'+
       '<button class="mini-btn primary" onclick="openTrashModal(\''+p.id+'\')">+ Add</button></div>'+
       trashScheduleListHtml(p.id, true)+'</div>'+
@@ -6642,6 +6649,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       openCall = 'location.hash=\'#/inspection\'';
     } else if (n.relatedTable === 'rent_payment_reports'){
       openCall = 'location.hash=\'#/payments\'';
+    } else if (n.relatedTable === 'real_estate_inspections'){
+      openCall = isTenantRole() ? 'location.hash=\'#/\'' : 'location.hash=\'#/inspection\'';
     } else if (n.relatedTable === 'house_rules'){
       openCall = 'location.hash=\'#/rules\'';
     }
@@ -8621,7 +8630,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var t = myTenantRecord();
     if (!t) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
     if (!t.roomId) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
-    return pageHeaderIcon('Inspection', 'Photos of the room when you moved in, and again when you move out.', 'inspect', 'inspection') +
+    return pageHeaderIcon('Inspection', 'Photos of the room when you moved in, and again when you move out.', 'inspect', 'inspection') + realEstateInspectionBannerHtml(true) +
       inspectionSectionHtml(t.id, 'move_in', true, false) +
       inspectionSectionHtml(t.id, 'move_out', true, false);
   }
@@ -8638,7 +8647,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var pa = propertyOf(a), pb = propertyOf(b);
       return (pa?pa.name:'').localeCompare(pb?pb.name:'');
     });
-    if (!propIds.length) return pageHeaderIcon('Inspection', "Move-in and move-out condition photos, per tenant.", 'inspect', 'inspection') +
+    if (!propIds.length) return pageHeaderIcon('Inspection', "Move-in and move-out condition photos, per tenant.", 'inspect', 'inspection') + realEstateInspectionsSectionHtml() +
       '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No tenants yet.</p></div>';
     var sectionsHtml = propIds.map(function(propId){
       var p = propertyOf(propId);
@@ -8655,7 +8664,244 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }).join('');
       return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+esc(p?p.name:'—')+'</h2>'+rows;
     }).join('');
-    return pageHeaderIcon('Inspection', "Move-in and move-out condition photos, per property.", 'inspect', 'inspection') + sectionsHtml;
+    return pageHeaderIcon('Inspection', "Real estate visits, and move-in / move-out condition photos per property.", 'inspect', 'inspection') + realEstateInspectionsSectionHtml() + sectionsHtml;
+  }
+
+  /* ============ Real estate inspections ============
+   * Visits booked by the property's real estate agency. Staff schedule them (date, optional time
+   * window, agency, a message for tenants); tenants are notified straight away and reminded the
+   * evening before. Upcoming ones sit at the very top of both dashboards until the day passes. */
+  var REI_DEFAULT_NOTES = "The real estate agent is coming to inspect the property. Before the visit, please:\n• Tidy your room and make the bed\n• Leave the kitchen, bathroom and living areas clean\n• Take out the rubbish and clear the benches\n• Put away valuables — you don't need to be home";
+  function upcomingRealEstateInspections(propertyId){
+    return realEstateInspections.filter(function(i){
+      return i.status==='scheduled' && i.date >= TODAY && (!propertyId || i.propertyId===propertyId);
+    }).sort(function(a,b){ return (a.date+(a.startTime||'')).localeCompare(b.date+(b.startTime||'')); });
+  }
+  function reiTimeText(i){
+    function fmt(t){ var p = t.split(':'); var h = +p[0]; return (h%12||12) + (p[1]!=='00' ? ':'+p[1] : '') + (h<12?' am':' pm'); }
+    if (i.startTime && i.endTime) return fmt(i.startTime)+' – '+fmt(i.endTime);
+    if (i.startTime) return 'from '+fmt(i.startTime);
+    return 'time to be confirmed';
+  }
+  function reiWhenText(i){
+    var d = new Date(i.date+'T00:00:00');
+    return d.toLocaleDateString('en-AU', { weekday:'long', day:'numeric', month:'long' }) + ' · ' + reiTimeText(i);
+  }
+  function reiCountdown(i){
+    var n = daysBetween(TODAY, i.date);
+    if (n <= 0) return { big:'Today', small:'', urgent:true };
+    if (n === 1) return { big:'Tomorrow', small:'', urgent:true };
+    return { big:String(n), small:'days to go', urgent:n <= 3 };
+  }
+  /** The pinned banner(s) at the top of a dashboard. Staff see every property; a tenant only
+   *  their own (RLS already limits the rows). */
+  function realEstateInspectionBannerHtml(forTenant, onlyPropertyId){
+    var t = forTenant ? myTenantRecord() : null;
+    var list = upcomingRealEstateInspections(t ? t.propertyId : (onlyPropertyId || null));
+    if (!list.length) return '';
+    return list.map(function(i){
+      var p = propertyOf(i.propertyId);
+      var cd = reiCountdown(i);
+      var notes = forTenant ? (i.notes || REI_DEFAULT_NOTES) : '';
+      var notified = i.notifiedAt
+        ? '<span class="rei-flag ok">✓ Tenants notified '+shortDate(i.notifiedAt.slice(0,10))+'</span>'
+        : '<button type="button" class="rei-flag warn" onclick="notifyRealEstateInspection(\''+i.id+'\', this)">Tenants not notified yet — notify now</button>';
+      return '<div class="rei-banner'+(cd.urgent?' urgent':'')+'">'+
+        '<div class="rei-count"><b>'+cd.big+'</b>'+(cd.small?'<span>'+cd.small+'</span>':'')+'</div>'+
+        '<div class="rei-main">'+
+          '<div class="rei-kicker">🏢 Real estate inspection'+(forTenant ? '' : ' · '+esc(p?p.name:''))+'</div>'+
+          '<div class="rei-when">'+esc(reiWhenText(i))+'</div>'+
+          (i.agency ? '<div class="rei-agency">'+esc(i.agency)+'</div>' : '')+
+          (forTenant ? '<div class="rei-notes">'+esc(notes).replace(/\n/g,'<br>')+'</div>'
+            : '<div class="rei-actions">'+notified+'<button type="button" class="mini-btn" onclick="openReiModal(\''+i.id+'\')">Edit</button></div>')+
+        '</div></div>';
+    }).join('');
+  }
+
+  var reiEditId = null;
+  function openReiModal(id, presetPropertyId){
+    var i = id ? realEstateInspections.find(function(x){ return x.id===id; }) : null;
+    reiEditId = i ? i.id : null;
+    var sel = document.getElementById('rei-property');
+    sel.innerHTML = properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); })
+      .map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('');
+    sel.value = i ? i.propertyId : (presetPropertyId || sel.value);
+    sel.disabled = !!i;
+    document.getElementById('rei-modal-title').textContent = i ? 'Edit real estate inspection' : 'Schedule real estate inspection';
+    document.getElementById('rei-date').value = i ? i.date : '';
+    document.getElementById('rei-start').value = i ? i.startTime : '';
+    document.getElementById('rei-end').value = i ? i.endTime : '';
+    document.getElementById('rei-agency').value = i ? i.agency : '';
+    document.getElementById('rei-notes').value = i ? (i.notes || REI_DEFAULT_NOTES) : REI_DEFAULT_NOTES;
+    document.getElementById('rei-notify').checked = true;
+    document.getElementById('rei-notify-label').textContent = i ? 'Tell the tenants about the change' : 'Notify the tenants now';
+    document.getElementById('rei-remind').checked = true;
+    document.getElementById('rei-outcome').value = i ? (i.outcome || '') : '';
+    document.getElementById('rei-cancel-btn').hidden = !(i && i.status==='scheduled' && i.date >= TODAY);
+    reiDateChanged();
+    document.getElementById('rei-modal-error').hidden = true;
+    document.getElementById('rei-modal').hidden = false;
+  }
+  /** Past date = recording history: hide the notify/remind options, show "how it went". */
+  function reiDateChanged(){
+    var d = document.getElementById('rei-date').value;
+    var past = !!d && d < TODAY;
+    var today = !!d && d <= TODAY;
+    document.getElementById('rei-notify-row').hidden = past;
+    document.getElementById('rei-remind-row').hidden = past;
+    document.getElementById('rei-outcome-row').hidden = !today;
+    document.getElementById('rei-past-hint').hidden = !past;
+  }
+  window.reiDateChanged = reiDateChanged;
+  function closeReiModal(){ document.getElementById('rei-modal').hidden = true; reiEditId = null; }
+  window.openReiModal = openReiModal;
+  window.closeReiModal = closeReiModal;
+
+  function reiTenantsOf(propertyId){ return tenants.filter(function(t){ return t.propertyId===propertyId && !tenantHasMovedOut(t) && t.rentAmount > 0; }); }
+  async function reiSyncPropertyDate(propertyId){
+    var next = upcomingRealEstateInspections(propertyId)[0];
+    try {
+      await realEstateInspectionService.syncPropertyNextDate(propertyId, next ? next.date : null);
+      var p = propertyOf(propertyId); if (p) p.nextInspectionDate = next ? next.date : null;
+    } catch(_e){ /* the dashboard/tenant views use the inspections list, this is only for the property page */ }
+  }
+  async function reiScheduleReminder(i){
+    try { await realEstateInspectionService.cancelReminders(i.id); } catch(_e){}
+    var when = new Date(stepDateIso(i.date, -1) + 'T18:00:00');
+    if (when <= new Date()) return; // too late for a "tomorrow" reminder
+    await notificationService.notifyProperty(i.propertyId, reiTenantsOf(i.propertyId), '⏰ Inspection tomorrow',
+      'The real estate inspection is tomorrow, '+reiWhenText(i)+'. Please make sure your room and the common areas are tidy.',
+      'important_notice', { relatedTable:'real_estate_inspections', relatedId:i.id, scheduledFor: when.toISOString(),
+        dedupKeyForTenant: function(t){ return 'rei-remind-'+i.id+'-'+i.date+'-'+t.id; } });
+  }
+  async function reiNotify(i, title, body){
+    var res = await notificationService.notifyProperty(i.propertyId, reiTenantsOf(i.propertyId), title, body,
+      'important_notice', { relatedTable:'real_estate_inspections', relatedId:i.id });
+    return res.filter(function(x){ return x.sent; }).length;
+  }
+  async function saveRealEstateInspection(){
+    var errorEl = document.getElementById('rei-modal-error');
+    var draft = {
+      propertyId: document.getElementById('rei-property').value,
+      date: document.getElementById('rei-date').value,
+      startTime: document.getElementById('rei-start').value,
+      endTime: document.getElementById('rei-end').value,
+      agency: document.getElementById('rei-agency').value.trim(),
+      notes: document.getElementById('rei-notes').value.trim()
+    };
+    if (!draft.propertyId || !draft.date){ errorEl.textContent = 'Choose the property and the date.'; errorEl.hidden = false; return; }
+    var isPast = draft.date < TODAY;
+    draft.outcome = document.getElementById('rei-outcome').value.trim();
+    if (draft.startTime && draft.endTime && draft.endTime <= draft.startTime){ errorEl.textContent = 'The end time must be after the start time.'; errorEl.hidden = false; return; }
+    var notify = !isPast && document.getElementById('rei-notify').checked;
+    var remind = !isPast && document.getElementById('rei-remind').checked;
+    var btn = document.getElementById('rei-save-btn'); var label = btn.textContent; btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      var existing = reiEditId ? realEstateInspections.find(function(x){ return x.id===reiEditId; }) : null;
+      var changedWhen = existing && (existing.date!==draft.date || existing.startTime!==draft.startTime || existing.endTime!==draft.endTime);
+      var saved = existing ? await realEstateInspectionService.update(existing.id, draft)
+        : await realEstateInspectionService.create(draft, currentProfile ? currentProfile.id : null);
+      realEstateInspections = realEstateInspections.filter(function(x){ return x.id!==saved.id; }).concat([saved]);
+      var sent = 0;
+      if (notify){
+        var title = existing ? (changedWhen ? '📅 Inspection rescheduled' : '📝 Inspection details updated') : '🏢 Real estate inspection scheduled';
+        sent = await reiNotify(saved, title, 'The real estate agent will inspect the property on '+reiWhenText(saved)+'. Open your dashboard for the details and how to prepare.');
+        saved = await realEstateInspectionService.markNotified(saved.id);
+        realEstateInspections = realEstateInspections.filter(function(x){ return x.id!==saved.id; }).concat([saved]);
+      }
+      if (remind) await reiScheduleReminder(saved);
+      else { try { await realEstateInspectionService.cancelReminders(saved.id); } catch(_e){} }
+      await reiSyncPropertyDate(saved.propertyId);
+      closeReiModal();
+      showToast((existing ? 'Inspection updated.' : (isPast ? 'Past inspection added to the history.' : 'Inspection scheduled.')) + (notify ? (sent ? ' '+sent+' tenant'+(sent>1?'s':'')+' notified.' : ' No tenant with an account to notify.') : ''), 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err); errorEl.hidden = false;
+    } finally { btn.disabled = false; btn.textContent = label; }
+  }
+  window.saveRealEstateInspection = saveRealEstateInspection;
+
+  function cancelRealEstateInspection(){
+    var i = realEstateInspections.find(function(x){ return x.id===reiEditId; });
+    if (!i) return;
+    openConfirmModal('Cancel this inspection?', 'The '+reiWhenText(i)+' inspection will be removed and the tenants will be told it\'s cancelled.', async function(){
+      var saved = await realEstateInspectionService.setStatus(i.id, 'cancelled');
+      Object.assign(i, saved);
+      try { await realEstateInspectionService.cancelReminders(i.id); } catch(_e){}
+      if (i.notifiedAt) await reiNotify(i, '❌ Inspection cancelled', 'The real estate inspection planned for '+reiWhenText(i)+' has been cancelled.');
+      await reiSyncPropertyDate(i.propertyId);
+      closeReiModal();
+      showToast('Inspection cancelled.', 'success');
+      render();
+    }, { confirmLabel:'Cancel inspection', danger:true });
+  }
+  window.cancelRealEstateInspection = cancelRealEstateInspection;
+
+  async function notifyRealEstateInspection(id, btn){
+    var i = realEstateInspections.find(function(x){ return x.id===id; });
+    if (!i) return;
+    if (btn){ btn.disabled = true; btn.textContent = 'Notifying…'; }
+    try {
+      var sent = await reiNotify(i, '🏢 Real estate inspection scheduled', 'The real estate agent will inspect the property on '+reiWhenText(i)+'. Open your dashboard for the details and how to prepare.');
+      var saved = await realEstateInspectionService.markNotified(i.id);
+      Object.assign(i, saved);
+      await reiScheduleReminder(i);
+      showToast(sent ? sent+' tenant'+(sent>1?'s':'')+' notified.' : 'No tenant with an account to notify at this property.', sent ? 'success' : 'info');
+      render();
+    } catch(err){
+      showToast('Could not notify the tenants. ' + friendlyErrorMessage(err), 'error');
+      if (btn){ btn.disabled = false; btn.textContent = 'Tenants not notified yet — notify now'; }
+    }
+  }
+  window.notifyRealEstateInspection = notifyRealEstateInspection;
+
+  /** Property page: every real estate inspection for this property — upcoming first (soonest
+   *  first), then the ones already done (newest first) and cancelled ones, with time window,
+   *  agency and what was noted after the visit. */
+  function propertyInspectionHistoryHtml(p){
+    var all = realEstateInspections.filter(function(i){ return i.propertyId===p.id; });
+    var upcoming = all.filter(function(i){ return i.status==='scheduled' && i.date >= TODAY; })
+      .sort(function(a,b){ return (a.date+a.startTime).localeCompare(b.date+b.startTime); });
+    var past = all.filter(function(i){ return !(i.status==='scheduled' && i.date >= TODAY); })
+      .sort(function(a,b){ return b.date.localeCompare(a.date); });
+    function item(i, isUpcoming){
+      var cd = isUpcoming ? reiCountdown(i) : null;
+      var state = isUpcoming ? badge(cd.urgent?'overdue':'upcoming', cd.small ? 'In '+cd.big+' days' : cd.big)
+        : (i.status==='cancelled' ? badge('neutral','Cancelled') : badge('paid','Done'));
+      return '<div class="rei-hist-item'+(isUpcoming?' up':'')+(i.status==='cancelled'?' cancelled':'')+'" onclick="openReiModal(\''+i.id+'\')" onkeydown="if(event.key===\'Enter\')openReiModal(\''+i.id+'\')" role="button" tabindex="0">'+
+        '<div class="rei-hist-date"><b>'+new Date(i.date+'T00:00:00').getDate()+'</b><span>'+new Date(i.date+'T00:00:00').toLocaleDateString('en-AU',{month:'short', year:'2-digit'})+'</span></div>'+
+        '<div class="rei-hist-body"><div class="rei-hist-top">'+esc(new Date(i.date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'long'}))+' · '+esc(reiTimeText(i))+' '+state+'</div>'+
+          (i.agency ? '<div class="rei-hist-sub">'+esc(i.agency)+'</div>' : '')+
+          (isUpcoming ? '<div class="rei-hist-sub">'+(i.notifiedAt ? '✓ Tenants notified '+shortDate(i.notifiedAt.slice(0,10)) : '⚠️ Tenants not notified yet')+'</div>' : '')+
+          (!isUpcoming && i.outcome ? '<div class="rei-hist-outcome">📝 '+esc(i.outcome)+'</div>' : '')+
+          (!isUpcoming && !i.outcome && i.status!=='cancelled' ? '<div class="rei-hist-sub">Add how it went →</div>' : '')+
+        '</div></div>';
+    }
+    return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Real estate inspections</h2>'+
+      '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">+ Schedule</button></div>'+
+      (all.length ? '' : '<p style="font-size:13px;color:var(--text-dim);margin:0;">No inspections on record. Schedule the next one, or add a past one to keep the history.</p>')+
+      (upcoming.length ? '<div class="rei-hist-group">Upcoming</div>'+upcoming.map(function(i){ return item(i, true); }).join('') : '')+
+      (past.length ? '<div class="rei-hist-group">History</div>'+past.map(function(i){ return item(i, false); }).join('') : '')+
+      '</div>';
+  }
+
+  /** Staff Inspection page section: upcoming visits + the last few past/cancelled ones. */
+  function realEstateInspectionsSectionHtml(){
+    var up = upcomingRealEstateInspections();
+    var past = realEstateInspections.filter(function(i){ return !(i.status==='scheduled' && i.date >= TODAY); })
+      .sort(function(a,b){ return b.date.localeCompare(a.date); }).slice(0, 5);
+    return '<div class="card rei-section"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;border:none;padding:0;">🏢 Real estate inspections</h2>'+
+      '<button class="mini-btn primary" onclick="openReiModal(null)">+ Schedule inspection</button></div>'+
+      (up.length ? up.map(function(i){
+        var p = propertyOf(i.propertyId); var cd = reiCountdown(i);
+        return '<div class="field-row" style="cursor:pointer;" onclick="openReiModal(\''+i.id+'\')"><span class="k"><b style="color:var(--text);">'+esc(p?p.name:'')+'</b> · '+esc(reiWhenText(i))+'</span>'+
+          '<span class="v">'+badge(cd.urgent?'overdue':'upcoming', cd.small ? cd.big+' days' : cd.big)+(i.notifiedAt?'':' '+badge('due','Not notified'))+'</span></div>';
+      }).join('') : '<p style="font-size:13px;color:var(--text-dim);margin:6px 0 0;">No inspection scheduled. When the agency sends a date, add it here — tenants are told straight away.</p>')+
+      (past.length ? '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12.5px;color:var(--text-dim);">Past & cancelled</summary>'+past.map(function(i){
+        var p = propertyOf(i.propertyId);
+        return '<div class="field-row"><span class="k">'+esc(p?p.name:'')+' · '+fullDate(i.date)+'</span><span class="v">'+badge('neutral', i.status==='cancelled'?'Cancelled':'Done')+'</span></div>';
+      }).join('')+'</details>' : '')+
+      '</div>';
   }
 
   function openInspectionDetailModal(tenantId){
@@ -9242,7 +9488,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return '<div class="field-row" style="padding-left:12px;"><span class="k" style="font-size:12.5px;">'+esc(x.bill.provider||x.bill.billType||'Bill')+' · due '+shortDate(x.bill.dueDate)+'</span><span class="v" style="font-size:12.5px;">'+money(x.alloc.amount)+'</span></div>';
       }).join('')+
       '</details>';
-    return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') +
+    return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') + realEstateInspectionBannerHtml(true) +
       '<div class="card">'+
       '<div class="field-row"><span class="k">Property</span><span class="v">'+(p?esc(p.address||p.name):'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Room</span><span class="v">'+(r?esc(r.name):'—')+'</span></div>'+
@@ -10014,7 +10260,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('property-lease-day').value = (p && p.leasePaymentDay) ? p.leasePaymentDay : '';
     document.getElementById('property-lease-amount').value = (p && p.leasePaymentAmount != null) ? p.leasePaymentAmount : '';
     document.getElementById('property-lease-end').value = (p && p.leaseEndDate) ? p.leaseEndDate : '';
-    document.getElementById('property-inspection-date').value = (p && p.nextInspectionDate) ? p.nextInspectionDate : '';
     document.getElementById('property-payment-method').value = (p && p.leasePaymentMethod) ? p.leasePaymentMethod : '';
     document.getElementById('property-bpay-biller').value = p ? (p.bpayBillerCode||'') : '';
     document.getElementById('property-bpay-reference').value = p ? (p.bpayReference||'') : '';
@@ -10067,7 +10312,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var leaseAmountRaw = document.getElementById('property-lease-amount').value;
     var leasePaymentAmount = leaseAmountRaw ? parseFloat(leaseAmountRaw) : null;
     var leaseEndDate = document.getElementById('property-lease-end').value || null;
-    var nextInspectionDate = document.getElementById('property-inspection-date').value || null;
     var leasePaymentMethod = document.getElementById('property-payment-method').value || null;
     var bpayBillerCode = document.getElementById('property-bpay-biller').value.trim();
     var bpayReference = document.getElementById('property-bpay-reference').value.trim();
@@ -10106,7 +10350,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         whatsappGroupLink:whatsappGroupLink, binDutyRequired:binDutyRequired,
         hasParking:hasParking, parkingCost:hasParking?parkingCost:null, parkingTenantId:hasParking?parkingTenantId:null,
         leasePaymentDay:leasePaymentDay, leasePaymentAmount:leasePaymentAmount, leaseEndDate:leaseEndDate,
-        leasePaymentFrequency:leasePaymentFrequency, nextInspectionDate:nextInspectionDate,
+        leasePaymentFrequency:leasePaymentFrequency,
+        // Real estate inspections are managed with "Schedule inspection" (real_estate_inspections);
+        // this form keeps whatever date the property already had.
+        nextInspectionDate: existingForEdit ? existingForEdit.nextInspectionDate : null,
         // last_lease_payment_date is only changed via the "Mark lease payment as paid" button —
         // this form doesn't touch it, so the value it already had is preserved.
         lastLeasePaymentDate: existingForEdit ? existingForEdit.lastLeasePaymentDate : null,
@@ -11983,7 +12230,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       binDutyService.getAll(),
       rentPaymentReportService.getAll().catch(function(e){ console.error('rent reports', e); return []; }),
       houseRulesService.getAll().catch(function(e){ console.error('house rules', e); return []; }),
-      maintenanceLogService.getAll().catch(function(e){ console.error('maintenance log', e); return []; })
+      maintenanceLogService.getAll().catch(function(e){ console.error('maintenance log', e); return []; }),
+      realEstateInspectionService.getAll().catch(function(e){ console.error('real estate inspections', e); return []; })
     ]);
     properties = results[0];
     rooms = results[1];
@@ -12019,6 +12267,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     rentPaymentReports = results[27];
     houseRules = results[28];
     maintenanceLog = results[29];
+    realEstateInspections = results[30];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
@@ -12094,6 +12343,27 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   window.refreshAllData = refreshAllData;
+
+  /** The ↻ button in the top bar: reloads everything from the server on demand, with a spinning
+   *  icon while it works and a confirmation when done. */
+  async function manualRefresh(){
+    var btn = document.getElementById('refresh-btn');
+    if (isRefreshingData){ return; }
+    if (btn){ btn.classList.add('spinning'); btn.disabled = true; }
+    isRefreshingData = true;
+    try {
+      await withTimeout(bootstrapData(), 30000, 'The server took too long to answer. Check your connection and try again.');
+      render(true);
+      var now = new Date().toLocaleTimeString('en-AU', { hour:'numeric', minute:'2-digit' });
+      showToast('Up to date · ' + now, 'success');
+    } catch(err){
+      showToast('Could not refresh. ' + friendlyErrorMessage(err), 'error');
+    } finally {
+      isRefreshingData = false;
+      if (btn){ btn.classList.remove('spinning'); btn.disabled = false; }
+    }
+  }
+  window.manualRefresh = manualRefresh;
 
   var autoRefreshSetupDone = false;
   /** Three triggers to keep everything synced "immediately" between users, without
@@ -12301,6 +12571,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   var signoutBtn = document.getElementById('signout-btn');
   if (signoutBtn) signoutBtn.innerHTML = svg('logout');
+  var refreshBtn = document.getElementById('refresh-btn');
+  if (refreshBtn) refreshBtn.innerHTML = svg('refresh');
 
   /* ============ Theme toggle (independent of the host's theme) ============ */
   var root = document.documentElement;
