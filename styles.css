@@ -1097,3 +1097,49 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .mi-range{font-size:11px;color:var(--text-faint);font-weight:400;}
 .mi-open{display:inline-block;margin-top:6px;font-size:12.5px;}
 @media (max-width:640px){.mi-grid{grid-template-columns:1fr;gap:6px;}}
+
+/* Real estate inspection banner (pinned on dashboards until the day) */
+.rei-banner{display:flex;gap:16px;align-items:stretch;margin:0 0 12px;padding:14px 16px;border-radius:16px;
+  background:color-mix(in srgb, var(--tone-inspection) 9%, var(--bg-elevated));border:1px solid color-mix(in srgb, var(--tone-inspection) 35%, var(--border));
+  box-shadow:0 2px 10px color-mix(in srgb, var(--tone-inspection) 12%, transparent);}
+.rei-banner.urgent{background:color-mix(in srgb, var(--status-overdue) 8%, var(--bg-elevated));border-color:color-mix(in srgb, var(--status-overdue) 45%, var(--border));}
+.rei-count{flex-shrink:0;min-width:78px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 10px;
+  background:var(--tone-inspection);color:#fff;text-align:center;}
+.rei-banner.urgent .rei-count{background:var(--status-overdue);}
+.rei-count b{font-size:28px;line-height:1;font-weight:800;}
+.rei-count span{font-size:11px;font-weight:600;opacity:.9;margin-top:3px;}
+.rei-main{flex:1;min-width:0;}
+.rei-kicker{font-size:12.5px;font-weight:700;color:var(--tone-inspection);}
+.rei-banner.urgent .rei-kicker{color:var(--status-overdue);}
+.rei-when{font-size:17px;font-weight:750;margin-top:2px;line-height:1.3;}
+.rei-agency{font-size:12.5px;color:var(--text-dim);margin-top:2px;}
+.rei-notes{font-size:13px;line-height:1.55;color:var(--text);margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);}
+.rei-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;}
+.rei-flag{font:inherit;font-size:12px;font-weight:650;border-radius:999px;padding:4px 10px;border:none;}
+.rei-flag.ok{background:var(--status-paid-bg);color:var(--status-paid);}
+.rei-flag.warn{background:var(--status-due-bg);color:var(--status-due);cursor:pointer;}
+.rei-flag.warn:hover{filter:brightness(.96);}
+.rei-empty{font-size:12.5px;color:var(--text-faint);margin:0 0 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.rei-empty .text-link{font-size:12.5px;margin:0;}
+@media (max-width:520px){.rei-banner{flex-direction:column;gap:10px;}.rei-count{flex-direction:row;gap:8px;justify-content:flex-start;min-width:0;}.rei-count span{margin-top:0;}}
+
+/* Property page — real estate inspection history */
+.rei-hist-group{font-size:12px;font-weight:700;color:var(--text-dim);margin:12px 0 4px;}
+.rei-hist-item{display:flex;gap:12px;align-items:flex-start;padding:10px 8px;margin:0 -8px;border-radius:10px;cursor:pointer;}
+.rei-hist-item:hover{background:var(--bg);}
+.rei-hist-item:focus-visible{outline:2px solid var(--accent);}
+.rei-hist-date{flex-shrink:0;width:48px;border-radius:10px;text-align:center;padding:5px 0;background:var(--bg);border:1px solid var(--border);}
+.rei-hist-item.up .rei-hist-date{background:var(--tone-inspection);border-color:var(--tone-inspection);color:#fff;}
+.rei-hist-date b{display:block;font-size:18px;line-height:1.1;}
+.rei-hist-date span{font-size:10.5px;opacity:.8;}
+.rei-hist-body{flex:1;min-width:0;}
+.rei-hist-top{font-size:13.5px;font-weight:650;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.rei-hist-sub{font-size:12px;color:var(--text-dim);margin-top:2px;}
+.rei-hist-outcome{font-size:12.5px;margin-top:4px;line-height:1.45;}
+.rei-hist-item.cancelled .rei-hist-top{color:var(--text-faint);text-decoration:line-through;}
+
+/* Refresh button */
+#refresh-btn.spinning svg{animation:spin-refresh .8s linear infinite;}
+#refresh-btn[disabled]{cursor:progress;opacity:.8;}
+@keyframes spin-refresh{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion: reduce){#refresh-btn.spinning svg{animation-duration:2.4s;}}
