@@ -1076,3 +1076,24 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .rules-section-head h2,.rules-hero h2{border:none;padding:0;}
 .rule .rl-pill{width:92px;min-width:0;box-sizing:border-box;}
 @media (max-width:420px){.rule{flex-direction:column;gap:6px;}.rule .rl-pill{width:auto;}}
+
+.rules-intro{font-size:14px;line-height:1.55;color:var(--text);margin:14px 0 0;max-width:68ch;}
+.rules-closing{font-size:13px;line-height:1.55;color:var(--text-dim);background:color-mix(in srgb, var(--tone-rules) 6%, var(--bg-elevated));border-left:4px solid var(--tone-rules);}
+.rules-textblock label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;}
+.rules-textblock label span{font-weight:400;color:var(--text-faint);}
+
+.rp-options{display:flex;flex-direction:column;gap:4px;}
+.rule-must .rule-text{font-weight:600;}
+@media (max-width:480px){.rule{flex-direction:column;gap:5px;}.rule .rl-pill{width:auto;}}
+
+/* Missing invoices — details */
+.mi-account{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:10px 0 4px;padding:10px 12px;border-radius:10px;background:var(--bg);border:1px solid var(--border);}
+.mi-account .k{font-size:12px;color:var(--text-dim);}
+.mi-acc-num{font-family:var(--font-mono);font-size:15px;font-weight:700;letter-spacing:.02em;}
+.mi-acc-none{font-size:12.5px;color:var(--text-faint);}
+.mi-acc-other{flex-basis:100%;font-size:11.5px;color:var(--text-faint);}
+.mi-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:8px;}
+.mi-col-title{font-size:12px;font-weight:700;color:var(--text-dim);margin:4px 0 2px;}
+.mi-range{font-size:11px;color:var(--text-faint);font-weight:400;}
+.mi-open{display:inline-block;margin-top:6px;font-size:12.5px;}
+@media (max-width:640px){.mi-grid{grid-template-columns:1fr;gap:6px;}}
