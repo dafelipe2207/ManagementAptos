@@ -9550,9 +9550,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rows = t ? paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); }) : [];
     var body = rows.length === 0
       ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No payments recorded yet.</p></div>'
-      : rows.map(function(pmt){
-          return '<div class="card"><div class="field-row"><span class="k">'+shortDate(pmt.date)+'</span><span class="v">'+money(pmt.amount)+'</span></div></div>';
-        }).join('');
+      : '<div class="card"><div class="field-list">'+rows.map(function(pmt){
+          return '<div class="field-row"><span class="k">'+shortDate(pmt.date)+'</span><span class="v">'+money(pmt.amount)+'</span></div>';
+        }).join('')+'</div></div>';
     return pageHeader('My Payments', 'Your rent. Paid it? Tap "I paid" and attach the receipt — it stays pending until your administrator confirms it.') +
       (t ? tenantRentHistoryHtml(t.id) : '') +
       '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">Payments on file</h2>' + body;
