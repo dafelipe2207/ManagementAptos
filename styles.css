@@ -947,3 +947,11 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .tenant-section-title span{background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:0 8px;font-size:11px;letter-spacing:0;}
 .tenant-card.past{opacity:.7;}
 .tenant-card.past:hover{opacity:1;}
+
+/* WhatsApp group sent status on bills */
+.wa-status{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;font-weight:600;border-radius:8px;padding:6px 10px;margin:8px 0 4px;}
+.wa-status.sent{background:var(--status-paid-bg);color:var(--status-paid);}
+.wa-status.pending{background:var(--status-due-bg);color:var(--status-due);}
+.wa-status .text-link{font-size:12px;margin:0;}
+.wa-mini{font-size:10.5px;font-weight:600;color:var(--text-faint);margin-top:3px;white-space:nowrap;}
+.wa-mini.sent{color:var(--status-paid);}
