@@ -510,7 +510,7 @@
   .roster-row td:last-child{font-weight:600;}
   .roster-row.past{cursor:default;color:var(--text-faint);}
   .roster-row.past td:last-child{font-weight:500;}
-  .bin-dot{font-size:13px;margin-right:2px;}
+  .bin-dot{display:inline-block;margin-right:2px;line-height:0;vertical-align:middle;}
   @media (max-width:640px){
     .roster-table{font-size:13px;}
     .roster-table td{padding:13px 8px;}
