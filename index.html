@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="styles.css?v=20">
+<link rel="stylesheet" href="styles.css?v=22">
 </head>
 <body>
 <div id="app">
@@ -23,8 +23,8 @@
     <div class="card modal-card" style="max-width:320px;">
       <h2 id="auth-title" style="text-transform:none;letter-spacing:0;font-size:16px;">Sign in</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Manager stores your data in your own private Supabase project. Accounts are created by a Super Admin — if you don't have one yet, ask them.</p>
-      <div class="form-row"><label for="auth-email">Email or phone number</label><input id="auth-email" type="text" autocomplete="username" placeholder="Tenants: use your phone number" /></div>
-      <div class="form-row"><label for="auth-password">Password</label><input id="auth-password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuthForm()" /></div>
+      <div class="form-row"><label for="auth-email">Email or phone number</label><input id="auth-email" type="text" autocomplete="username" placeholder="Tenants: your phone, e.g. 0487 352 329" /></div>
+      <div class="form-row"><label for="auth-password">Password</label><span class="pw-wrap"><input id="auth-password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuthForm()" /><button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility('auth-password', this)"><svg class="eye-open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a18.4 18.4 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg></button></span></div>
       <p id="auth-error" class="form-error" hidden></p>
       <div class="modal-actions" style="justify-content:space-between;">
         <button class="text-link" type="button" id="auth-toggle-link" style="margin:0;" onclick="requestAuthPasswordReset()">Forgot password?</button>
@@ -176,6 +176,51 @@
       <div class="modal-actions">
         <button class="mini-btn" onclick="closePaymentReportModal()">Cancel</button>
         <button class="mini-btn primary" onclick="submitPaymentReport()">I made this payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="rent-report-modal" hidden>
+    <div class="card modal-card" style="max-width:380px;">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">I paid my rent</h2>
+      <p id="rent-report-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:10px 0 2px;">Amount paid</label>
+      <input id="rent-report-amount" class="modal-input" type="number" min="0.01" step="0.01" inputmode="decimal" />
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment date</label>
+      <input id="rent-report-date" class="modal-input" type="date" />
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment method</label>
+      <select id="rent-report-method" class="modal-input">
+        <option value="bank_transfer">Bank transfer</option>
+        <option value="cash">Cash</option>
+        <option value="card">Card</option>
+        <option value="other">Other</option>
+      </select>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reference (optional)</label>
+      <input id="rent-report-reference" class="modal-input" type="text" maxlength="120" />
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button class="mini-btn" type="button" onclick="document.getElementById('rent-report-proof-input').click()">📎 Attach receipt</button>
+        <span id="rent-report-proof-status" style="font-size:11.5px;color:var(--text-faint);">Photo or PDF of the transfer/receipt</span>
+        <input id="rent-report-proof-input" type="file" accept="image/*,application/pdf" hidden onchange="handleRentReportProofFile(event)" />
+      </div>
+      <p style="font-size:11.5px;color:var(--text-faint);margin:10px 0 0;">Your administrator will be notified. The payment shows as <b>pending</b> until they confirm it.</p>
+      <p id="rent-report-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeRentReportModal()">Cancel</button>
+        <button class="mini-btn primary" id="rent-report-submit-btn" onclick="submitRentReport()">Send to administrator</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="rent-reject-modal" hidden>
+    <div class="card modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Reject rent payment</h2>
+      <p id="rent-reject-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reason (shown to the tenant)</label>
+      <textarea id="rent-reject-reason" class="modal-input" rows="3" maxlength="300"></textarea>
+      <p id="rent-reject-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeRentRejectModal()">Cancel</button>
+        <button class="mini-btn danger" onclick="submitRentReject()">Reject</button>
       </div>
     </div>
   </div>
@@ -611,8 +656,8 @@
   <div class="modal-overlay" id="change-password-modal" hidden>
     <div class="card modal-card" style="max-width:340px;">
       <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Change your password</h2>
-      <div class="form-row"><label for="change-password-new">New password</label><input id="change-password-new" type="password" autocomplete="new-password" placeholder="At least 8 characters" /></div>
-      <div class="form-row"><label for="change-password-confirm">Confirm new password</label><input id="change-password-confirm" type="password" autocomplete="new-password" /></div>
+      <div class="form-row"><label for="change-password-new">New password</label><span class="pw-wrap"><input id="change-password-new" type="password" autocomplete="new-password" placeholder="At least 8 characters" /><button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility('change-password-new', this)"><svg class="eye-open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a18.4 18.4 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg></button></span></div>
+      <div class="form-row"><label for="change-password-confirm">Confirm new password</label><span class="pw-wrap"><input id="change-password-confirm" type="password" autocomplete="new-password" /><button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility('change-password-confirm', this)"><svg class="eye-open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a18.4 18.4 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg></button></span></div>
       <p id="change-password-error" class="form-error" hidden></p>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeChangePasswordModal()">Cancel</button>
@@ -714,8 +759,14 @@
         </div>
         <div id="maintenance-documents-list" style="margin-top:6px;"></div>
       </div>
+      <p id="maintenance-edit-note" style="font-size:12px;color:var(--text-faint);margin:8px 0 0;" hidden></p>
+      <details id="maintenance-history" class="mt-history" hidden>
+        <summary>Change history</summary>
+        <div id="maintenance-history-list"></div>
+      </details>
       <p id="maintenance-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
+        <button class="mini-btn danger" id="maintenance-delete-btn" style="margin-right:auto;" onclick="deleteMaintenanceRequest()" hidden>Delete</button>
         <button class="mini-btn" onclick="closeMaintenanceModal()">Cancel</button>
         <button class="mini-btn primary" onclick="saveMaintenanceForm()">Save</button>
       </div>
@@ -1134,6 +1185,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=105"></script>
+<script type="module" src="app.js?v=107"></script>
 </body>
 </html>
