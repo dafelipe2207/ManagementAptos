@@ -1,7 +1,9 @@
 :root{
     color-scheme: light dark;
     --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* One typeface for the whole app. Numbers/dates keep aligned digits via tabular-nums below,
+       so the old monospace slot now points at the same family. */
+    --font-mono: var(--font-sans);
     --bg: #f1f3f0;
     --bg-elevated: #ffffff;
     --border: #dde2db;
@@ -1152,3 +1154,10 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 #ptr-indicator.ready{color:var(--accent);border-color:var(--accent);}
 #ptr-indicator svg{width:18px;height:18px;}
 #ptr-indicator.loading svg{animation:spin-refresh .8s linear infinite;}
+
+/* ===== One typeface everywhere =====
+   Form controls don't inherit the page font by default — make them, and give every number
+   aligned (tabular) digits so amounts and dates still line up in columns. */
+button, input, select, textarea, optgroup{font-family:var(--font-sans);}
+body{font-variant-numeric:tabular-nums;}
+code, kbd, pre, samp{font-family:var(--font-sans);}

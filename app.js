@@ -9026,7 +9026,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (p.currentPassword
           ? '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">'+
             '<span style="font-size:11.5px;color:var(--text-faint);">Password:</span>'+
-            '<span class="pw-mask" data-pw="'+esc(p.currentPassword)+'" data-shown="0" style="font-family:monospace;font-size:12.5px;letter-spacing:1px;">••••••••</span>'+
+            '<span class="pw-mask" data-pw="'+esc(p.currentPassword)+'" data-shown="0" style="font-size:12.5px;letter-spacing:1px;">••••••••</span>'+
             '<button type="button" class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="togglePasswordVisible(this)">Show</button>'+
             '<button type="button" class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="copyPasswordToClipboard(this)">Copy</button>'+
             '</div>'
