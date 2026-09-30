@@ -9583,7 +9583,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (t){
       bills.forEach(function(b){
         if (isTenantHiddenProvider(b.provider)) return;
-        (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); });
+        var mine = (b.allocations||[]).filter(function(a){ return a.tenantId===t.id; });
+        mine.forEach(function(a){ myAllocations.push({ bill:b, alloc:a }); });
+        // A bill whose service type this tenant doesn't pay for (tenant.excludedBillTypes —
+        // e.g. gas included with the rent) has no allocation row for them, so it used to be
+        // invisible. Show it anyway, with the bill's value, clearly marked as included in rent.
+        if (!mine.length && b.propertyId===t.propertyId && isTenantExcludedFromBillType(t, b.billType) &&
+            (!b.billingPeriodStart || !b.billingPeriodEnd || occupiedDaysInRange(t, b.billingPeriodStart, b.billingPeriodEnd) > 0)){
+          myAllocations.push({ bill:b, alloc:null, excluded:true });
+        }
       });
     }
     if (!myAllocations.length){
@@ -9601,6 +9609,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         .sort(function(a,b){ return (b.bill.billingPeriodStart||'').localeCompare(a.bill.billingPeriodStart||''); })
         .map(function(x){
           var b = x.bill, a = x.alloc;
+          if (x.excluded){
+            return '<div class="card">'+
+              '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(b.billType))+(b.provider?' — '+esc(b.provider):'')+'</h2>'+
+              badge('move','Included in your rent')+'</div>'+
+              '<div class="field-list">'+
+              '<div class="field-row"><span class="k">Total bill</span><span class="v">'+money(b.amount)+'</span></div>'+
+              '<div class="field-row"><span class="k">Your share</span><span class="v">'+money(0)+'</span></div>'+
+              (b.billingPeriodStart ? '<div class="field-row"><span class="k">Period</span><span class="v">'+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</span></div>' : '')+
+              '</div>'+
+              '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">You\'re excluded from '+esc(billTypeLabel(b.billType).toLowerCase())+' bills — it\'s included with your rent, so there\'s nothing to pay here.</p>'+
+              '</div>';
+          }
           var payStatus = allocationPaymentStatus(a);
           var reportActionHtml = '';
           if (payStatus === 'unpaid' || payStatus === 'rejected'){
