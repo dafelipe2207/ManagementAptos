@@ -1164,3 +1164,123 @@ code, kbd, pre, samp{font-family:var(--font-sans);}
 
 .moved-out-owing{font-size:12.5px;color:var(--text-dim);background:var(--status-due-bg);border-radius:10px;padding:8px 12px;margin:0 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
 .moved-out-owing .text-link{margin:0;font-size:12.5px;}
+
+/* =====================================================================================
+   Responsive layer — phones, tablets, laptops, desktops.
+   Kept at the end so it refines the component rules above instead of scattering media
+   queries through the file. Breakpoints: ≤640 phone · 641–899 tablet portrait / small laptop
+   (bottom nav) · ≥900 sidebar · ≥1280 wide desktop.
+   ===================================================================================== */
+
+/* Never let one long word, number or badge push the page sideways. */
+html, body{max-width:100%;overflow-x:hidden;}
+.main, main.content, .content-inner{min-width:0;}
+.content-inner > *{min-width:0;max-width:100%;}
+.card{min-width:0;overflow-wrap:anywhere;}
+img, video, canvas, iframe{max-width:100%;}
+
+/* Label/value rows: the label may shrink and wrap instead of shoving the value off-screen. */
+.field-row{min-width:0;}
+.field-row .k{flex-shrink:1;min-width:0;overflow-wrap:anywhere;}
+.field-row .v{min-width:0;overflow-wrap:anywhere;}
+.detail-head{flex-wrap:wrap;}
+.detail-head > *{min-width:0;}
+
+/* Sidebar only where there's real room for it; tablets in portrait keep the bottom nav. */
+@media (min-width:768px) and (max-width:899px){
+  .sidebar{display:none;}
+  .bottomnav{display:grid;}
+}
+main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
+@media (min-width:900px){ main.content{padding-bottom:40px;} }
+
+/* Wide desktops: use more of the screen for lists and tables. */
+@media (min-width:1280px){ .content-inner{max-width:1040px;} }
+
+/* Tables: scroll inside their card instead of widening the page. */
+.table-wrap, .card:has(> table){overflow-x:auto;-webkit-overflow-scrolling:touch;}
+
+/* Modals: comfortable on tablets/desktop, full-width sheets on phones, never taller than the screen. */
+.modal-card{max-height:min(85vh, 85dvh);}
+@media (min-width:641px){ .modal-card{max-width:420px;} }
+@media (max-width:640px){
+  .modal-overlay{align-items:flex-end;padding:0;}
+  .modal-card{max-width:100%;width:100%;border-radius:16px 16px 0 0;
+    max-height:92dvh;padding-bottom:calc(17px + env(safe-area-inset-bottom,0px));}
+  .modal-actions{flex-wrap:wrap;}
+  .modal-actions .mini-btn{flex:1 1 auto;}
+}
+
+/* Topbar: search shrinks, icons stay put; respects the notch. */
+.topbar{padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px));}
+.search{min-width:0;}
+.search span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+
+/* ---------- Touch devices (phones, tablets, touch laptops) ---------- */
+@media (pointer:coarse), (max-width:1024px){
+  .search{min-height:42px;}
+  .view-btn{min-height:40px;padding-left:14px;padding-right:14px;}
+  .icon-mini-btn{min-width:40px;min-height:40px;}
+  .seg button, .rules-chip{min-height:40px;}
+  #content select{min-height:44px;}
+  .mini-btn, .chip, .po-tab{min-height:44px;}
+  .icon-btn{width:42px;height:42px;}
+  .modal-input, select.modal-input, .form-row input, .form-row select, .form-row textarea{min-height:44px;}
+  /* Small text links still get a finger-sized hit area without changing how they look. */
+  .text-link{padding-top:10px !important;padding-bottom:10px !important;margin-top:0;min-height:44px;display:inline-flex;align-items:center;}
+  .mini-btn{min-height:44px !important;}
+  .notif-dot-btn{padding:0;width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;}
+  .bottomnav a{min-height:54px;justify-content:center;}
+  .more-list a{min-height:52px;}
+}
+
+/* iOS zooms the whole page when a focused field is under 16px — keep form text at 16px on phones/tablets. */
+@media (max-width:1024px){
+  input, select, textarea, .modal-input{font-size:16px !important;}
+}
+
+/* ---------- Phones ---------- */
+@media (max-width:640px){
+  main.content{padding-left:max(14px, env(safe-area-inset-left,0px));padding-right:max(14px, env(safe-area-inset-right,0px));padding-top:14px;}
+  .content-inner{gap:16px;}
+  .card{padding:15px;border-radius:12px;}
+  h1.page-title{font-size:20px;}
+  .stat{padding:12px 13px;}
+  .stat .value{font-size:18px;overflow-wrap:anywhere;}
+  .stat .label{font-size:11px;}
+  .topbar{gap:6px;padding-top:10px;padding-bottom:10px;}
+  .search{padding:9px 11px;}
+
+  /* Rows with a label and a cluster of amount/badge/buttons: the cluster drops under the label. */
+  .field-row{flex-wrap:wrap;row-gap:6px;}
+  .field-row .v{margin-left:auto;}
+  .field-row .v[style*="display:flex"]{flex-wrap:wrap;justify-content:flex-end;}
+  .row{flex-wrap:wrap;row-gap:8px;}
+  .row > .who{flex:1 1 55%;}
+  .row > :last-child:not(.who){margin-left:auto;}
+  .alloc-summary-row{flex-wrap:wrap;row-gap:8px;}
+
+  /* Button groups wrap and share the width instead of overflowing. */
+  .modal-actions, .detail-head > div{flex-wrap:wrap;}
+  .filter-chips{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
+  .filter-chips .chip{flex-shrink:0;}
+}
+
+/* ---------- Tablets ---------- */
+@media (min-width:641px) and (max-width:1024px){
+  main.content{padding-top:22px;padding-left:24px;padding-right:24px;}
+}
+
+/* Rent history columns (amount · status · action): aligned columns on tablet/desktop; on phones
+   the label takes the first line and the cluster sits under it, right-aligned. */
+.rh-amt{text-align:right;}
+.rh-badge, .rh-act{display:flex;}
+@media (min-width:641px){
+  .rh-amt{min-width:78px;}
+  .rh-badge{min-width:104px;justify-content:flex-start;}
+  .rh-act{min-width:74px;justify-content:flex-end;}
+}
+@media (max-width:640px){
+  .field-row:has(.rh-amt) .k{flex-basis:100%;}
+  .rh-act:empty{display:none;}
+}

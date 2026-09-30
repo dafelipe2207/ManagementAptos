@@ -2511,9 +2511,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
       return '<div class="field-row" style="align-items:center;"><span class="k">'+label+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">'+
-          '<span style="min-width:78px;text-align:right;">'+money(c.amountDue)+'</span>'+
-          '<span style="min-width:104px;display:flex;justify-content:flex-start;">'+chargeStatusBadge(c)+'</span>'+
-          (hasActionCol ? '<span style="min-width:74px;display:flex;justify-content:flex-end;">'+action+'</span>' : '')+
+          '<span class="rh-amt">'+money(c.amountDue)+'</span>'+
+          '<span class="rh-badge">'+chargeStatusBadge(c)+'</span>'+
+          (hasActionCol ? '<span class="rh-act">'+action+'</span>' : '')+
         '</span></div>';
     }
     // Periods settled by the same payment (same paid date) are merged into one row: the
@@ -2532,9 +2532,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         ' <span style="color:var(--text-faint);">(paid '+shortDate(g.paidDate)+' · '+g.items.length+' periods)</span>';
       return '<div class="field-row" style="align-items:center;"><span class="k">'+label+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">'+
-          '<span style="min-width:78px;text-align:right;">'+money(total)+'</span>'+
-          '<span style="min-width:104px;display:flex;justify-content:flex-start;">'+badge('paid','Paid')+'</span>'+
-          (hasActionCol ? '<span style="min-width:74px;"></span>' : '')+
+          '<span class="rh-amt">'+money(total)+'</span>'+
+          '<span class="rh-badge">'+badge('paid','Paid')+'</span>'+
+          (hasActionCol ? '<span class="rh-act"></span>' : '')+
         '</span></div>';
     }
     var PAID_CAP = 12;
