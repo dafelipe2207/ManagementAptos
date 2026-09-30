@@ -170,7 +170,7 @@
       <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reference (optional)</label>
       <input id="payment-report-reference" class="modal-input" type="text" maxlength="120" />
       <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <button class="mini-btn" type="button" onclick="triggerPaymentReportProofUpload()">📎 Attach receipt</button>
+        <button class="mini-btn" type="button" onclick="triggerPaymentReportProofUpload()">📎 Attach receipt (optional)</button>
         <span id="payment-report-proof-status" style="font-size:11.5px;color:var(--text-faint);">Photo or PDF of the transfer/receipt</span>
       </div>
       <p id="payment-report-modal-error" class="form-error" hidden></p>
@@ -199,7 +199,7 @@
       <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reference (optional)</label>
       <input id="rent-report-reference" class="modal-input" type="text" maxlength="120" />
       <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <button class="mini-btn" type="button" onclick="document.getElementById('rent-report-proof-input').click()">📎 Attach receipt</button>
+        <button class="mini-btn" type="button" onclick="document.getElementById('rent-report-proof-input').click()">📎 Attach receipt (optional)</button>
         <span id="rent-report-proof-status" style="font-size:11.5px;color:var(--text-faint);">Photo or PDF of the transfer/receipt</span>
         <input id="rent-report-proof-input" type="file" accept="image/*,application/pdf" hidden onchange="handleRentReportProofFile(event)" />
       </div>
@@ -1217,6 +1217,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=123"></script>
+<script type="module" src="app.js?v=124"></script>
 </body>
 </html>

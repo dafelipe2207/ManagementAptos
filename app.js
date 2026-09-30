@@ -2616,9 +2616,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!isFinite(amount) || amount <= 0 || !date){
       errorEl.textContent = 'Enter the amount you paid and the date.'; errorEl.hidden = false; return;
     }
-    if (!rentReportProofPath && document.getElementById('rent-report-method').value !== 'cash'){
-      errorEl.textContent = 'Attach the receipt (photo or PDF) so your administrator can confirm it.'; errorEl.hidden = false; return;
-    }
     var btn = document.getElementById('rent-report-submit-btn');
     var label = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
     try {
@@ -9746,9 +9743,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var paymentDate = document.getElementById('payment-report-date').value || null;
     var paymentMethod = document.getElementById('payment-report-method').value || null;
     var reference = document.getElementById('payment-report-reference').value.trim() || null;
-    if (!paymentReportModalProofPath && paymentMethod !== 'cash'){
-      errorEl.textContent = 'Attach the receipt (photo or PDF) so your administrator can confirm it.'; errorEl.hidden = false; return;
-    }
     try {
       var created = await paymentReportService.create({
         allocationId: target.allocationId,
