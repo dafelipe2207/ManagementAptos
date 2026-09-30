@@ -35,6 +35,8 @@ function fromRow(row) {
   if (row.allocation_method) b.allocationMethod = row.allocation_method;
   if (row.receipt_path) b.receiptPath = row.receipt_path;
   if (row.admin_receipt_path) b.adminReceiptPath = row.admin_receipt_path;
+  b.whatsappGroupSharedAt = row.whatsapp_group_shared_at || null;
+  b.whatsappGroupShareCount = Number(row.whatsapp_group_share_count) || 0;
   return b;
 }
 
@@ -105,4 +107,15 @@ async function describeFunctionError(err) {
     }
   } catch (_e) { /* fall through */ }
   return err instanceof Error ? err : new Error((err && err.message) || 'Could not reach the server.');
+}
+
+/** Records that this bill was sent to the property's WhatsApp group (or clears it with
+ *  `shared=false`). Kept out of toRow() so ordinary bill edits never overwrite it. */
+export async function setWhatsAppGroupShared(id, shared, newCount) {
+  const patch = shared
+    ? { whatsapp_group_shared_at: new Date().toISOString(), whatsapp_group_share_count: newCount }
+    : { whatsapp_group_shared_at: null, whatsapp_group_share_count: 0 };
+  const { data, error } = await supabase.from('bills').update(patch).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
 }
