@@ -2616,6 +2616,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!isFinite(amount) || amount <= 0 || !date){
       errorEl.textContent = 'Enter the amount you paid and the date.'; errorEl.hidden = false; return;
     }
+    if (!rentReportProofPath && document.getElementById('rent-report-method').value !== 'cash'){
+      errorEl.textContent = 'Attach the receipt (photo or PDF) so your administrator can confirm it.'; errorEl.hidden = false; return;
+    }
     var btn = document.getElementById('rent-report-submit-btn');
     var label = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
     try {
@@ -9708,7 +9711,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('payment-report-date').value = TODAY;
     document.getElementById('payment-report-method').value = 'bank_transfer';
     document.getElementById('payment-report-reference').value = '';
-    document.getElementById('payment-report-proof-status').textContent = '';
+    document.getElementById('payment-report-proof-status').textContent = 'Photo or PDF of the transfer/receipt';
     document.getElementById('payment-report-modal-error').hidden = true;
     document.getElementById('payment-report-modal').hidden = false;
   }
@@ -9724,11 +9727,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var file = event.target.files && event.target.files[0];
     event.target.value = '';
     if (!file || !paymentReportModalTarget) return;
+    var status = document.getElementById('payment-report-proof-status');
+    status.textContent = 'Uploading…';
     try {
       var path = await storageService.uploadReceipt('report-' + paymentReportModalTarget.allocationId, file);
       paymentReportModalProofPath = path;
-      document.getElementById('payment-report-proof-status').textContent = 'Proof attached ✓';
+      status.textContent = '✓ ' + (file.name || 'Receipt attached');
     } catch(err){
+      paymentReportModalProofPath = null;
+      status.textContent = 'Could not attach it — try again.';
       showToast('Could not attach the proof. ' + friendlyErrorMessage(err), 'error');
     }
   }
@@ -9739,6 +9746,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var paymentDate = document.getElementById('payment-report-date').value || null;
     var paymentMethod = document.getElementById('payment-report-method').value || null;
     var reference = document.getElementById('payment-report-reference').value.trim() || null;
+    if (!paymentReportModalProofPath && paymentMethod !== 'cash'){
+      errorEl.textContent = 'Attach the receipt (photo or PDF) so your administrator can confirm it.'; errorEl.hidden = false; return;
+    }
     try {
       var created = await paymentReportService.create({
         allocationId: target.allocationId,

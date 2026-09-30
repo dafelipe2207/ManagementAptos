@@ -169,9 +169,9 @@
       </select>
       <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reference (optional)</label>
       <input id="payment-report-reference" class="modal-input" type="text" maxlength="120" />
-      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
-        <button class="mini-btn" type="button" onclick="triggerPaymentReportProofUpload()">Attach proof (optional)</button>
-        <span id="payment-report-proof-status" style="font-size:11.5px;color:var(--text-faint);"></span>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button class="mini-btn" type="button" onclick="triggerPaymentReportProofUpload()">📎 Attach receipt</button>
+        <span id="payment-report-proof-status" style="font-size:11.5px;color:var(--text-faint);">Photo or PDF of the transfer/receipt</span>
       </div>
       <p id="payment-report-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -1217,6 +1217,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=122"></script>
+<script type="module" src="app.js?v=123"></script>
 </body>
 </html>
