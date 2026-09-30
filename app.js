@@ -5802,14 +5802,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Builds the WhatsApp link (wa.me) that opens a chat with the tenant with the
    *  bill's payment notice already drafted — provider, service, amount owed and due date.
    *  The admin only has to review and tap send; nothing is sent automatically. */
-  function billAllocationWhatsAppLink(bill, property, tenant, amount){
-    var digits = phoneDigitsForWhatsApp(tenant.phone);
-    if (!digits) return null;
+  function billAllocationWhatsAppMessage(bill, property, tenant, amount){
     var propertyLabel = property ? (property.address || property.name) : 'the property';
     var message = 'Hi ' + tenant.fullName + ', this is ' + propertyLabel +
       ' — you owe ' + money(amount) + ' for ' + bill.billType +
       ' (' + bill.provider + '), for the period ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
       (bill.dueDate ? ('. Due date: ' + shortDate(bill.dueDate)) : '') + '. Thank you!';
+    return message;
+  }
+  function billAllocationWhatsAppLink(bill, property, tenant, amount){
+    var digits = phoneDigitsForWhatsApp(tenant.phone);
+    if (!digits) return null;
+    var message = billAllocationWhatsAppMessage(bill, property, tenant, amount);
     return whatsAppBusinessLink('https://wa.me/' + digits + '?text=' + encodeURIComponent(message));
   }
 
@@ -5820,7 +5824,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!tenant || isTenantHiddenProvider(bill.provider)) return '';
     var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
     if (!link) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
-    return '<a class="text-link" style="font-size:11.5px;" href="'+link+'" target="_blank" rel="noopener">Send WhatsApp</a>';
+    return '<button class="text-link" style="font-size:11.5px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',[\''+bill.id+'\'])">Send WhatsApp'+(bill.receiptPath?' + bill':'')+'</button>';
   }
 
   /** Builds the general message for the property's WhatsApp group once a bill has been split
@@ -5865,11 +5869,52 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var message = pendingBillsWhatsAppMessage(tenant, items, property);
     if (!message) return '';
     var digits = phoneDigitsForWhatsApp(tenant.phone);
+    var ids = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); }).map(function(it){ return '\''+it.bill.id+'\''; }).join(',');
+    var withFiles = items.some(function(it){ return !isTenantHiddenProvider(it.bill.provider) && it.bill.receiptPath; });
     var linkOrNote = digits
-      ? '<a class="mini-btn primary" style="padding:2px 8px;font-size:11px;" href="'+whatsAppBusinessLink('https://wa.me/'+digits+'?text='+encodeURIComponent(message))+'" target="_blank" rel="noopener">Send WhatsApp</a>'
+      ? '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',['+ids+'])">Send WhatsApp'+(withFiles?' + bills':'')+'</button>'
       : '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return '<div class="alloc-summary-row" style="align-items:center;padding-left:10px;justify-content:flex-end;">'+linkOrNote+'</div>';
   }
+
+  /** Sends a tenant their unpaid bill(s) over WhatsApp WITH the bill documents attached, so they
+   *  can see exactly which bill they're being charged for. wa.me links can only carry text, so this
+   *  uses the phone's share sheet (text + files) — the admin picks the tenant's chat and taps send.
+   *  If the device can't share files (or no bill has a document), it falls back to the old wa.me
+   *  link that opens the tenant's chat with the message typed. */
+  async function sendBillsWhatsAppToTenant(tenantId, billIds){
+    var tenant = tenantOf(tenantId);
+    if (!tenant) return;
+    var property = propertyOf(tenant.propertyId);
+    var items = billIds.map(function(id){
+      var b = billOf(id);
+      var a = b && (b.allocations||[]).find(function(x){ return x.tenantId===tenantId; });
+      return (b && a && !isTenantHiddenProvider(b.provider)) ? { bill:b, alloc:a } : null;
+    }).filter(Boolean);
+    if (!items.length) return;
+    var message = items.length === 1
+      ? billAllocationWhatsAppMessage(items[0].bill, property, tenant, items[0].alloc.amount)
+      : pendingBillsWhatsAppMessage(tenant, items, property);
+    var digits = phoneDigitsForWhatsApp(tenant.phone);
+    var waLink = digits ? whatsAppBusinessLink('https://wa.me/' + digits + '?text=' + encodeURIComponent(message)) : null;
+    if (!items.some(function(it){ return it.bill.receiptPath; })){
+      if (waLink) window.open(waLink, '_blank', 'noopener');
+      return;
+    }
+    showToast('Preparing the bill'+(items.length>1?'s':'')+'…', 'info');
+    var files = (await Promise.all(items.map(function(it){ return fetchBillReceiptFile(it.bill); }))).filter(Boolean);
+    try {
+      if (files.length && navigator.canShare && navigator.canShare({ files: files })){
+        await navigator.share({ files: files, text: message, title: 'Bill' + (items.length>1?'s':'') });
+        return;
+      }
+    } catch (err){
+      if (err && err.name === 'AbortError') return; // cancelled the share sheet
+    }
+    showToast('This device can\'t attach files — opening the chat with the message only.', 'info');
+    if (waLink) window.open(waLink, '_blank', 'noopener');
+  }
+  window.sendBillsWhatsAppToTenant = sendBillsWhatsAppToTenant;
 
   /** Downloads the bill's original document (saved in the private `receipts` bucket) as a
    *  File ready to attach to the native share sheet. Returns null if the bill has no
