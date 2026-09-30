@@ -2488,8 +2488,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var paid = charges.filter(function(c){ return c.status==='paid'; })
       .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); });
     var pending = charges.filter(function(c){ return c.status!=='paid'; })
-      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // most recent first
+      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); }); // oldest first: overdue on top, then due, then upcoming
     var tenantView = isTenantRole();
+    // Rows sit in fixed columns (amount · status · action) so amounts and badges line up
+    // across both lists instead of shifting with each badge's width.
+    var hasActionCol = pending.length > 0;
     function row(c){
       var label = shortDate(c.periodStart)+' – '+shortDate(c.periodEnd);
       if (c.status === 'paid' && c.paidDate) label += ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>';
@@ -2499,8 +2502,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         if (pendingRep) action = badge('upcoming', 'Under review');
         else if (tenantView) action = '<button class="mini-btn primary" style="padding:3px 10px;font-size:12px;" onclick="openRentReportModal(\''+c.id+'\')">I paid</button>';
       }
-      return '<div class="field-row"><span class="k">'+label+'</span>'+
-        '<span class="v" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">'+money(c.amountDue)+chargeStatusBadge(c)+action+'</span></div>';
+      return '<div class="field-row" style="align-items:center;"><span class="k">'+label+'</span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">'+
+          '<span style="min-width:78px;text-align:right;">'+money(c.amountDue)+'</span>'+
+          '<span style="min-width:104px;display:flex;justify-content:flex-start;">'+chargeStatusBadge(c)+'</span>'+
+          (hasActionCol ? '<span style="min-width:74px;display:flex;justify-content:flex-end;">'+action+'</span>' : '')+
+        '</span></div>';
     }
     var PAID_CAP = 12;
     var pendingShown = pending; // pending items are always shown in full, never truncated
@@ -2524,8 +2531,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function tenantRentReportsHtml(tenantId){
     var mine = rentPaymentReports.filter(function(r){ return r.tenantId===tenantId; });
     if (!mine.length) return '';
-    var pending = mine.filter(function(r){ return r.status==='pending'; });
-    var recent = mine.filter(function(r){ return r.status!=='pending'; }).slice(0, 5);
+    function byNewest(a,b){ return String(b.paymentDate||'').localeCompare(String(a.paymentDate||'')); }
+    var pending = mine.filter(function(r){ return r.status==='pending'; }).sort(byNewest);
+    var recent = mine.filter(function(r){ return r.status!=='pending'; }).sort(byNewest).slice(0, 5);
     var rows = pending.concat(recent).map(function(r){
       var b = RENT_REPORT_BADGE[r.status] || ['neutral', r.status];
       return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+money(r.amount)+' · paid '+shortDate(r.paymentDate)+
