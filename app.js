@@ -3071,15 +3071,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             .filter(function(c){ return c.periodStart > TODAY; })
             .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); })
             .slice(0, upcomingCount);
+          upcomingCharges = sortByDate(upcomingCharges); // follow the Date sort (newest first by default)
+          var upcomingHtml = (tenantHasMovedOut(t) || !showUpcoming) ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Upcoming</h3>'+
+              (upcomingCharges.length ? '<div class="field-list">'+upcomingCharges.map(upcomingRow).join('')+'</div>'
+                : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No upcoming period (the tenancy ends before the next one).</p>');
+          var newestFirst = paymentsDateSort === 'desc';
           return '<div class="card">'+
             '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
-            (!showDue ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
+            (newestFirst ? upcomingHtml : '')+
+            (!showDue ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
             (pending.length ? '<div class="field-list">'+pending.map(pendingRow).join('')+'</div>'
               : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>'))+
-            (tenantHasMovedOut(t) || !showUpcoming ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Upcoming</h3>'+
-              (upcomingCharges.length ? '<div class="field-list">'+upcomingCharges.map(upcomingRow).join('')+'</div>'
-                : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No upcoming period (the tenancy ends before the next one).</p>'))+
+            (newestFirst ? '' : upcomingHtml)+
             (!showPaid ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
             limitedSection(paid, paidRow, 'No payments recorded yet.', 'Paid', t.id))+
             (!showBills ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
