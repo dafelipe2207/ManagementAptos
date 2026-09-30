@@ -893,3 +893,51 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .chg-diff.down{background:var(--status-paid-bg);color:var(--status-paid);}
 .chg-note{font-size:12.5px;color:var(--text-dim);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:10px;line-height:1.45;}
 .chg-note.warn{background:var(--status-due-bg);border-color:transparent;color:var(--status-due);}
+
+/* Show/hide password */
+.pw-wrap{position:relative;display:block;width:100%;}
+.pw-wrap input{width:100%;padding-right:42px;box-sizing:border-box;}
+.pw-eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+  border:none;background:none;color:var(--text-dim);cursor:pointer;border-radius:8px;padding:0;}
+.pw-eye:hover{color:var(--text);background:var(--bg);}
+.pw-eye .eye-closed{display:none;}
+.pw-eye.on .eye-open{display:none;}
+.pw-eye.on .eye-closed{display:block;}
+
+/* Confirm dialogs always sit above other open modals (e.g. delete from inside the maintenance modal) */
+#confirm-modal{z-index:1200;}
+#rent-reject-modal{z-index:1100;}
+
+/* Maintenance change history */
+.mt-history{margin-top:12px;}
+.mt-history > summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--text-dim);padding:2px 0;}
+.mlog-entry{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--border);font-size:12.5px;}
+.mt-history > summary + .mlog-entry, #maintenance-history-list .mlog-entry:first-child{border-top:none;}
+.mlog-icon{flex-shrink:0;width:22px;text-align:center;}
+.mlog-body{flex:1;min-width:0;}
+.mlog-who{color:var(--text-faint);font-weight:400;}
+.mlog-changes{margin:4px 0 0;padding-left:16px;color:var(--text-dim);}
+.mlog-changes s{color:var(--text-faint);}
+.mlog-deleted .mlog-head b{color:var(--status-overdue);}
+
+/* Rent payment reports awaiting review (staff) */
+.review-card{border-color:var(--status-upcoming);box-shadow:0 0 0 1px var(--status-upcoming) inset;}
+.review-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);}
+.review-card h2 + .review-row{border-top:none;}
+.review-main{min-width:0;flex:1 1 220px;}
+.review-title{font-size:14px;}
+.review-sub{font-size:12px;color:var(--text-dim);margin-top:2px;}
+.review-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+
+/* House rules */
+.rules-card{padding-top:14px;}
+.rules-top{display:flex;gap:10px;align-items:center;margin-bottom:8px;}
+.rules-icon{font-size:28px;}
+.rules-prop{font-weight:700;font-size:15px;}
+.rules-updated{font-size:11.5px;color:var(--text-faint);}
+.rules-heading{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin:14px 0 4px;}
+.rules-list{margin:4px 0 0;padding-left:22px;}
+.rules-list li{padding:5px 0;font-size:14px;line-height:1.45;border-bottom:1px dashed var(--border);}
+.rules-list li:last-child{border-bottom:none;}
+.rules-empty{text-align:center;padding:28px 16px;}
+.rules-textarea{width:100%;box-sizing:border-box;font-family:inherit;font-size:13.5px;line-height:1.5;resize:vertical;}
