@@ -5868,7 +5868,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var message = 'Hi ' + tenant.fullName + ', this is ' + propertyLabel +
       ' — you owe ' + money(amount) + ' for ' + bill.billType +
       ' (' + bill.provider + '), for the period ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
-      (bill.dueDate ? ('. Due date: ' + shortDate(bill.dueDate)) : '') + '. Thank you!';
+      (bill.dueDate ? ('. Due date: ' + shortDate(bill.dueDate)) : '') + '.' +
+      (tenantPaymentRef(tenant) ? '\n\nPlease use your reference ' + tenantPaymentRef(tenant) + ' in the transfer description.' : '') +
+      ' Thank you!';
     return message;
   }
   function billAllocationWhatsAppLink(bill, property, tenant, amount){
@@ -5894,7 +5896,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  "Name: $amount" line for each tenant with a share assigned (who has already paid is marked separately). */
   function billGroupWhatsAppMessage(bill, property, tenants){
     var lines = tenants.map(function(row){
-      return '• ' + row.name + ': ' + money(row.amount) + (row.paid ? ' (already paid)' : '');
+      return '• ' + row.name + (row.ref ? ' [' + row.ref + ']' : '') + ': ' + money(row.amount) + (row.paid ? ' (already paid)' : '');
     });
     var propertyLabel = property ? (property.address || property.name) : 'the property';
     return 'Bill split for ' + bill.billType + ' (' + bill.provider + ') — ' +
@@ -5902,6 +5904,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       'Period: ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
       (bill.dueDate ? ('\nDue date: ' + shortDate(bill.dueDate)) : '') + '\n\n' +
       lines.join('\n') +
+      (tenants.some(function(r){ return r.ref; }) ? '\n\nWhen you transfer, put your reference (in brackets next to your name) in the description.' : '') +
       '\n\nPlease confirm payment with your receipt. Thank you!';
   }
 
@@ -5923,6 +5926,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return 'Hi ' + tenant.fullName + ', this is ' + propertyLabel + ' — here are your pending bills:\n\n' +
       lines.join('\n') +
       '\n\nTotal owed: ' + money(total) +
+      (tenantPaymentRef(tenant) ? '\nYour payment reference: ' + tenantPaymentRef(tenant) + ' (put it in the transfer description)' : '') +
       '\n\nPlease confirm payment with your receipt. Thank you!';
   }
   /** The "Send WhatsApp" row shown when a tenant's consolidated pending-bills list is expanded —
@@ -6079,7 +6083,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!property || !property.whatsappGroupLink){ showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error'); return; }
     var tenantsForMsg = bill.allocations.filter(function(a){ return !a.isAdmin; }).map(function(a){
       var t = tenantOf(a.tenantId);
-      return { name: t ? t.fullName : 'Tenant', amount: a.amount, paid: !!a.paid };
+      return { name: t ? t.fullName : 'Tenant', ref: tenantPaymentRef(t), amount: a.amount, paid: !!a.paid };
     });
     var message = billGroupWhatsAppMessage(bill, property, tenantsForMsg);
     var invoiceUrl = bill.receiptPath ? billInvoiceLinkCache[bill.receiptPath] : null;
@@ -6108,7 +6112,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     var tenantsForMsg = bill.allocations.filter(function(a){ return !a.isAdmin; }).map(function(a){
       var t = tenantOf(a.tenantId);
-      return { name: t ? t.fullName : 'Tenant', amount: a.amount, paid: !!a.paid };
+      return { name: t ? t.fullName : 'Tenant', ref: tenantPaymentRef(t), amount: a.amount, paid: !!a.paid };
     });
     var message = billGroupWhatsAppMessage(bill, property, tenantsForMsg);
     var file = await fetchBillReceiptFile(bill);
