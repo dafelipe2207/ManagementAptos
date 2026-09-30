@@ -2826,7 +2826,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   var PAYMENTS_ROW_LIMIT = 5; // how many rows are shown per block before sending to "View history"
 
+  /** Was the tenant living at the property at any point during month 'YYYY-MM'? Moved in on
+   *  or before the month's last day, and not moved out before its first day. Used so picking a
+   *  month shows exactly who was a tenant then — including people who have since moved out. */
+  function tenantLivedInMonth(t, ym){
+    var start = ym + '-01', end = ym + '-31'; // plain string compare, so '-31' works for every month
+    if (t.moveInDate && t.moveInDate > end) return false;
+    var out = t.actualMoveOutDate || (t.isActive === false ? t.expectedMoveOutDate : null);
+    if (out && out < start) return false;
+    return true;
+  }
+
   function renderPaymentsRentTab(){
+    var monthChosen = paymentsMonthFilter !== 'all';
     var propertyOptions = '<option value="all"'+(paymentsPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
       properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
         return '<option value="'+p.id+'"'+(paymentsPropertyFilter===p.id?' selected':'')+'>'+esc(p.name)+'</option>';
@@ -2836,9 +2848,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // The tenant list also follows "Tenant status": Active shows only people who still live
     // there; "Moved out" shows only the ones who've left.
     var tenantPool = (paymentsPropertyFilter==='all' ? tenants : tenants.filter(function(t){ return t.propertyId===paymentsPropertyFilter; }))
-      .filter(function(t){ return t.rentAmount > 0 && (paymentsTenantStatusFilter==='moved_out' ? tenantHasMovedOut(t) : !tenantHasMovedOut(t)); });
+      .filter(function(t){
+        if (!(t.rentAmount > 0)) return false;
+        // A month picked → the tenants who were living there that month, moved out since or not.
+        if (monthChosen) return tenantLivedInMonth(t, paymentsMonthFilter);
+        return paymentsTenantStatusFilter==='moved_out' ? tenantHasMovedOut(t) : !tenantHasMovedOut(t);
+      });
     if (paymentsTenantFilter !== 'all' && !tenantPool.some(function(t){ return t.id===paymentsTenantFilter; })) paymentsTenantFilter = 'all';
-    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>'+(paymentsTenantStatusFilter==='moved_out'?'All moved-out tenants':'All active tenants')+'</option>'+
+    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>'+(monthChosen ? 'All tenants that month' : paymentsTenantStatusFilter==='moved_out'?'All moved-out tenants':'All active tenants')+'</option>'+
       tenantPool.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
         return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
       }).join('');
@@ -2856,10 +2873,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>'+
       '<div style="flex:1;min-width:160px;">'+
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Tenant status</label>'+
-      '<select class="modal-input" onchange="setPaymentsTenantStatusFilter(this.value)">'+
+      (monthChosen
+        ? '<select class="modal-input" disabled title="A month is selected — showing everyone who lived there that month"><option>Living there that month</option></select>'
+        : '<select class="modal-input" onchange="setPaymentsTenantStatusFilter(this.value)">'+
       '<option value="active"'+(paymentsTenantStatusFilter==='active'?' selected':'')+'>Active (living there)</option>'+
       '<option value="moved_out"'+(paymentsTenantStatusFilter==='moved_out'?' selected':'')+'>Moved out</option>'+
-      '</select>'+
+      '</select>')+
       '</div>'+      '<div style="flex:1;min-width:160px;">'+
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
       '<select class="modal-input" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
@@ -2879,7 +2898,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (paymentsPropertyFilter !== 'all'){
       charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); return t && t.propertyId === paymentsPropertyFilter; });
     }
-    if (paymentsTenantFilter === 'all'){
+    if (paymentsTenantFilter === 'all' && !monthChosen){
       // Totals follow "Tenant status" too: Active counts only people who still live there.
       charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); if (!t) return false;
         return paymentsTenantStatusFilter==='moved_out' ? tenantHasMovedOut(t) : !tenantHasMovedOut(t); });
@@ -2965,14 +2984,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return rentCharges.some(function(c){ return c.tenantId===t.id && c.status!=='paid'; }) ||
         unpaidBillAllocationsFor(t.id).length > 0;
     }
-    // A tenant who wasn't renting yet (or already had no charges) in the selected month has
-    // nothing to show there — without this, picking a month before a tenant's move-in still
-    // showed their card, with a "next period" note pointing at some unrelated, out-of-scope
-    // month, which read as if they'd been registered for a month they never lived in.
-    function tenantHasAnythingInMonth(t, monthStr){
-      if (rentCharges.some(function(c){ return c.tenantId===t.id && c.periodStart.slice(0,7)===monthStr; })) return true;
-      return unpaidBillAllocationsFor(t.id).some(function(o){ return o.bill.dueDate && o.bill.dueDate.slice(0,7)===monthStr; });
-    }
     // A tenant who's moved out (or been deactivated) and is fully settled has nothing left to
     // track here, so they drop off the default ("Active") view entirely — only kept around
     // while they still owe rent or a bill. A currently-active tenant always stays, even with
@@ -2982,7 +2993,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Picking a specific tenant from the dropdown always shows that one — unless a month filter
     // is also active and they have nothing that month, in which case the month wins (see above).
     var groupTenants = (paymentsPropertyFilter==='all' ? tenants : tenantPool).filter(function(t){
-        if (paymentsMonthFilter !== 'all' && !tenantHasAnythingInMonth(t, paymentsMonthFilter)) return false;
+        if (monthChosen){
+          if (!tenantLivedInMonth(t, paymentsMonthFilter)) return false;
+          if (paymentsTenantFilter !== 'all') return paymentsTenantFilter === t.id;
+          return t.rentAmount > 0;
+        }
         if (paymentsTenantFilter !== 'all') return paymentsTenantFilter === t.id;
         if (t.rentAmount <= 0) return false;
         if (paymentsTenantStatusFilter === 'moved_out') return tenantHasMovedOut(t);
