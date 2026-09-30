@@ -5,6 +5,7 @@
 // services/* modules instead of synchronous localStorage.
 import * as auth from './lib/auth.js?v=2';
 import { friendlyErrorMessage } from './lib/errors.js';
+import { supabase as realtimeClient } from './lib/supabaseClient.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
 import * as tenantService from './services/tenantService.js?v=6';
@@ -12606,6 +12607,40 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     setInterval(function(){
       if (document.visibilityState === 'visible') refreshAllData();
     }, 60000);
+    window.addEventListener('online', function(){ refreshAllData(); });
+    setupRealtimeSync();
+  }
+
+  /** Instant sync between devices: Supabase Realtime pushes a notice the moment a row changes in
+   *  one of the key tables (bills, bill shares, payments, reports, tenants…), from ANY device or
+   *  user — e.g. marking a bill paid on the laptop shows up on the phone within a second or two.
+   *  Several changes in a burst (one save often touches a few rows) are folded into one reload.
+   *  If a form is open, the reload waits until it's closed so nothing typed is lost. The 60s poll
+   *  and the on-return-to-app refresh above stay as a backup (e.g. if the connection drops). */
+  var REALTIME_TABLES = ['bills','bill_allocations','payments','payment_reports','rent_payment_reports',
+    'rent_schedules','tenants','bonds','maintenance_requests','move_out_settlements','rooms','properties','recurring_bills'];
+  var realtimeRefreshTimer = null;
+  function scheduleRealtimeRefresh(){
+    clearTimeout(realtimeRefreshTimer);
+    realtimeRefreshTimer = setTimeout(function tryRefresh(){
+      if (isRefreshingData || anyModalOpen()){ realtimeRefreshTimer = setTimeout(tryRefresh, 3000); return; }
+      refreshAllData();
+    }, 1200);
+  }
+  function setupRealtimeSync(){
+    try {
+      var channel = realtimeClient.channel('app-sync');
+      REALTIME_TABLES.forEach(function(table){
+        channel.on('postgres_changes', { event:'*', schema:'public', table:table }, scheduleRealtimeRefresh);
+      });
+      channel.subscribe(function(status){
+        // After a dropped connection comes back, catch up on anything missed while offline.
+        if (status === 'SUBSCRIBED' && setupRealtimeSync._wasSubscribed) scheduleRealtimeRefresh();
+        if (status === 'SUBSCRIBED') setupRealtimeSync._wasSubscribed = true;
+      });
+    } catch(err){
+      console.error('Realtime sync unavailable', err);
+    }
   }
 
   /* ============ Auth gate: sign in before loading/rendering any app data ============ */
