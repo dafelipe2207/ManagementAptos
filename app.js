@@ -2804,8 +2804,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }).join('');
     // With a property chosen, "All tenants" no longer lists everyone — only those who
     // live there, so a tenant from another property can't be selected (or confused with).
-    var tenantPool = paymentsPropertyFilter==='all' ? tenants : tenants.filter(function(t){ return t.propertyId===paymentsPropertyFilter; });
-    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>All tenants</option>'+
+    // The tenant list also follows "Tenant status": Active shows only people who still live
+    // there; "Moved out" shows only the ones who've left.
+    var tenantPool = (paymentsPropertyFilter==='all' ? tenants : tenants.filter(function(t){ return t.propertyId===paymentsPropertyFilter; }))
+      .filter(function(t){ return t.rentAmount > 0 && (paymentsTenantStatusFilter==='moved_out' ? tenantHasMovedOut(t) : !tenantHasMovedOut(t)); });
+    if (paymentsTenantFilter !== 'all' && !tenantPool.some(function(t){ return t.id===paymentsTenantFilter; })) paymentsTenantFilter = 'all';
+    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>'+(paymentsTenantStatusFilter==='moved_out'?'All moved-out tenants':'All active tenants')+'</option>'+
       tenantPool.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
         return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
       }).join('');
@@ -2822,6 +2826,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<select class="modal-input" onchange="setPaymentsPropertyFilter(this.value)">'+propertyOptions+'</select>'+
       '</div>'+
       '<div style="flex:1;min-width:160px;">'+
+      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Tenant status</label>'+
+      '<select class="modal-input" onchange="setPaymentsTenantStatusFilter(this.value)">'+
+      '<option value="active"'+(paymentsTenantStatusFilter==='active'?' selected':'')+'>Active (living there)</option>'+
+      '<option value="moved_out"'+(paymentsTenantStatusFilter==='moved_out'?' selected':'')+'>Moved out</option>'+
+      '</select>'+
+      '</div>'+      '<div style="flex:1;min-width:160px;">'+
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
       '<select class="modal-input" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
       '</div>'+
@@ -2829,13 +2839,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by month</label>'+
       '<select class="modal-input" onchange="setPaymentsMonthFilter(this.value)">'+monthOptionsHtml+'</select>'+
       '</div>'+
-      '<div style="flex:1;min-width:160px;">'+
-      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Tenant status</label>'+
-      '<select class="modal-input" onchange="setPaymentsTenantStatusFilter(this.value)">'+
-      '<option value="active"'+(paymentsTenantStatusFilter==='active'?' selected':'')+'>Active</option>'+
-      '<option value="moved_out"'+(paymentsTenantStatusFilter==='moved_out'?' selected':'')+'>Moved out</option>'+
-      '</select>'+
-      '</div>'+
+
       '<button type="button" class="mini-btn" style="flex:1;min-width:160px;" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
       '</div>';
 
@@ -2845,6 +2849,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var charges = paymentsTenantFilter==='all' ? rentCharges : rentCharges.filter(function(c){ return c.tenantId===paymentsTenantFilter; });
     if (paymentsPropertyFilter !== 'all'){
       charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); return t && t.propertyId === paymentsPropertyFilter; });
+    }
+    if (paymentsTenantFilter === 'all'){
+      // Totals follow "Tenant status" too: Active counts only people who still live there.
+      charges = charges.filter(function(c){ var t = tenantOf(c.tenantId); if (!t) return false;
+        return paymentsTenantStatusFilter==='moved_out' ? tenantHasMovedOut(t) : !tenantHasMovedOut(t); });
     }
     if (paymentsMonthFilter !== 'all'){
       charges = charges.filter(function(c){ return c.periodStart.slice(0,7) === paymentsMonthFilter; });
@@ -2876,6 +2885,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="openPartialModal(\''+c.id+'\')">Partial</button>'+
         '</span></div>';
     }
+    function upcomingRow(c){
+      var paidAhead = c.remaining <= 0.004;
+      return '<div class="field-row upcoming-rent"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+
+        ' <span style="color:var(--text-faint);">· starts in '+daysBetween(TODAY, c.periodStart)+' day'+(daysBetween(TODAY, c.periodStart)===1?'':'s')+'</span></span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+
+        money(c.amountDue)+(paidAhead ? badge('paid','Paid ahead') : chargeStatusBadge(c)+
+          '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openChargePaidModal(\''+c.id+'\')">Pay</button>'+
+          '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="openPartialModal(\''+c.id+'\')">Partial</button>')+
+        '</span></div>';
+    }
     function paidRow(c){
       var paidNote = c.paidDate ? ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>' : '';
       return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+'</span>'+
@@ -2897,28 +2916,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     function fullSection(list, rowFn, emptyText){
       if (!list.length) return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+emptyText+'</p>';
       return '<div class="field-list">'+list.map(rowFn).join('')+'</div>';
-    }
-    /** The "Due" section, with one addition over fullSection: when there's nothing pending
-     *  (every generated period — including the single future one rentService always keeps
-     *  one period ahead — has already been paid), it still names that next period instead of
-     *  just saying "nothing due". Without this, a tenant who happens to be paid in advance
-     *  shows no "Upcoming" line at all, while one who isn't paid that far ahead still has an
-     *  unpaid future period to show — which looked like an inconsistency between tenants,
-     *  but was really just "already paid ahead" vs "not yet". */
-    /** `upcomingCharges` is the tenant's next N generated periods (paid ahead) — one for
-     *  fortnightly/monthly, two for weekly, matching how far ahead rentService itself looks
-     *  (futureLookahead) — so a weekly tenant who's paid ahead sees both of their next two
-     *  upcoming weeks listed here, not just the first one. */
-    function dueSectionHtml(list, upcomingCharges){
-      if (list.length) return '<div class="field-list">'+list.map(pendingRow).join('')+'</div>';
-      if (!upcomingCharges || !upcomingCharges.length){
-        return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>';
-      }
-      var lines = upcomingCharges.map(function(c){
-        return shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+' · '+money(c.amountDue)+' (due '+shortDate(c.dueDate)+' — already paid)';
-      });
-      var note = 'Nothing due right now. ' + (lines.length > 1 ? 'Next ' + lines.length + ': ' : 'Next: ') + lines.join('; ');
-      return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+note+'</p>';
     }
     /** Trims a list to the first N and, if more remain, adds a note + the link that
      *  opens the full history — used ONLY for things already paid/resolved (never for
@@ -2958,8 +2955,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var groupTenants = (paymentsPropertyFilter==='all' ? tenants : tenantPool).filter(function(t){
         if (paymentsMonthFilter !== 'all' && !tenantHasAnythingInMonth(t, paymentsMonthFilter)) return false;
         if (paymentsTenantFilter !== 'all') return paymentsTenantFilter === t.id;
+        if (t.rentAmount <= 0) return false;
         if (paymentsTenantStatusFilter === 'moved_out') return tenantHasMovedOut(t);
-        return !tenantHasMovedOut(t) || tenantOwesSomething(t);
+        return !tenantHasMovedOut(t);
       })
       .sort(function(a,b){ return a.fullName.localeCompare(b.fullName); });
 
@@ -2971,7 +2969,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           : emptyState('payments', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every charge.', ''))
       : groupTenants.map(function(t){
           var tCharges = filtered.filter(function(c){ return c.tenantId===t.id; });
-          var pending = sortByDate(tCharges.filter(function(c){ return c.status!=='paid'; }));
+          // Periods that haven't started yet live in their own "Upcoming" block (below), so Due
+          // only lists what's owed now.
+          var pending = sortByDate(tCharges.filter(function(c){ return c.status!=='paid' && c.periodStart <= TODAY; }));
           var paid = sortByDate(tCharges.filter(function(c){ return c.status==='paid'; }));
           var owedBills = unpaidBillAllocationsFor(t.id).map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; });
           var prop = properties.find(function(p){ return p.id===t.propertyId; });
@@ -2991,12 +2991,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           // Suppressed entirely while a specific month is selected — the "Next: ..." note points
           // at whatever period is actually next for the tenant, which can be a different month
           // than the one being viewed, and reads as an out-of-scope non-sequitur there.
-          var upcomingCharges = (paymentsMonthFilter==='all' && !tenantHasMovedOut(t) && allTenantCharges.length) ? allTenantCharges.slice(0, upcomingCount).reverse() : [];
+          // Always shown for a tenant who still lives there, whatever month/chip filter is on:
+          // their next period(s) that haven't started yet — to pay (Pay button) or already paid ahead.
+          var upcomingCharges = tenantHasMovedOut(t) ? [] : allTenantCharges
+            .filter(function(c){ return c.periodStart > TODAY; })
+            .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); })
+            .slice(0, upcomingCount);
           return '<div class="card">'+
             '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:8px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
-            dueSectionHtml(pending, upcomingCharges)+
+            (pending.length ? '<div class="field-list">'+pending.map(pendingRow).join('')+'</div>'
+              : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>')+
+            (tenantHasMovedOut(t) ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Upcoming</h3>'+
+              (upcomingCharges.length ? '<div class="field-list">'+upcomingCharges.map(upcomingRow).join('')+'</div>'
+                : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No upcoming period (the tenancy ends before the next one).</p>'))+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
             limitedSection(paid, paidRow, 'No payments recorded yet.', 'Paid', t.id)+
             '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
@@ -3005,7 +3014,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             '</div>';
         }).join('');
 
-    return statHtml + chipsHtml + tenantFilterHtml + rows;
+    var movedOutOwing = paymentsTenantStatusFilter==='active'
+      ? tenants.filter(function(t){ return t.rentAmount > 0 && tenantHasMovedOut(t) && tenantOwesSomething(t) && (paymentsPropertyFilter==='all' || t.propertyId===paymentsPropertyFilter); })
+      : [];
+    var owingNote = movedOutOwing.length
+      ? '<div class="moved-out-owing">💸 '+movedOutOwing.length+' moved-out tenant'+(movedOutOwing.length>1?'s still owe':' still owes')+' money ('+movedOutOwing.map(function(t){ return esc(t.fullName); }).join(', ')+'). '+
+        '<button type="button" class="text-link" onclick="setPaymentsTenantStatusFilter(\'moved_out\')">View moved-out tenants</button></div>'
+      : '';
+    return statHtml + chipsHtml + tenantFilterHtml + owingNote + rows;
   }
 
   function renderPayments(){
