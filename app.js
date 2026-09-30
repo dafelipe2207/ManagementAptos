@@ -5822,6 +5822,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  notice instead of the button, so it's clear why it can't be sent from there. */
   function whatsAppButtonHtml(bill, property, tenant, amount){
     if (!tenant || isTenantHiddenProvider(bill.provider)) return '';
+    prefetchBillReceiptFile(bill);
     var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
     if (!link) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return '<button class="text-link" style="font-size:11.5px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',[\''+bill.id+'\'])">Send WhatsApp'+(bill.receiptPath?' + bill':'')+'</button>';
@@ -5871,6 +5872,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var digits = phoneDigitsForWhatsApp(tenant.phone);
     var ids = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); }).map(function(it){ return '\''+it.bill.id+'\''; }).join(',');
     var withFiles = items.some(function(it){ return !isTenantHiddenProvider(it.bill.provider) && it.bill.receiptPath; });
+    if (digits) items.forEach(function(it){ if (!isTenantHiddenProvider(it.bill.provider)) prefetchBillReceiptFile(it.bill); });
     var linkOrNote = digits
       ? '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',['+ids+'])">Send WhatsApp'+(withFiles?' + bills':'')+'</button>'
       : '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
@@ -5901,7 +5903,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (waLink) window.open(waLink, '_blank', 'noopener');
       return;
     }
-    showToast('Preparing the bill'+(items.length>1?'s':'')+'…', 'info');
     var files = (await Promise.all(items.map(function(it){ return fetchBillReceiptFile(it.bill); }))).filter(Boolean);
     try {
       if (files.length && navigator.canShare && navigator.canShare({ files: files })){
@@ -5910,6 +5911,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
     } catch (err){
       if (err && err.name === 'AbortError') return; // cancelled the share sheet
+      if (err && err.name === 'NotAllowedError'){ // the attachment took too long to load — it's ready now
+        showToast('The bill is ready now — tap Send WhatsApp again.', 'info');
+        return;
+      }
     }
     showToast('This device can\'t attach files — opening the chat with the message only.', 'info');
     if (waLink) window.open(waLink, '_blank', 'noopener');
@@ -5920,8 +5925,24 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  File ready to attach to the native share sheet. Returns null if the bill has no
    *  attached document or if something fails while downloading it (the message can still be
    *  shared without an attached file). */
-  async function fetchBillReceiptFile(bill){
-    if (!bill.receiptPath) return null;
+  // iPad/iPhone Safari only lets navigator.share() run right after a tap. Downloading the bill
+  // file first (await fetch) can use up that window, so the share silently does nothing. The
+  // files are therefore downloaded ahead of time (when the button is drawn) and kept here, so
+  // the tap goes straight to the share sheet.
+  var billReceiptFileCache = {}; // receiptPath -> Promise<File|null>
+  function prefetchBillReceiptFile(bill){
+    if (!bill || !bill.receiptPath) return;
+    if (!billReceiptFileCache[bill.receiptPath]) billReceiptFileCache[bill.receiptPath] = downloadBillReceiptFile(bill);
+  }
+  function fetchBillReceiptFile(bill){
+    if (!bill || !bill.receiptPath) return Promise.resolve(null);
+    prefetchBillReceiptFile(bill);
+    return billReceiptFileCache[bill.receiptPath].then(function(f){
+      if (!f) delete billReceiptFileCache[bill.receiptPath]; // failed → try downloading again next time
+      return f;
+    });
+  }
+  async function downloadBillReceiptFile(bill){
     try {
       var url = await storageService.getSignedUrl('receipts', bill.receiptPath, 300);
       var res = await fetch(url);
@@ -5969,15 +5990,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<div class="wa-status pending">Not sent to the WhatsApp group yet</div>';
   }
 
-  async function shareBillToWhatsAppGroup(billId, confirmed){
+  // Can be sent as many times as needed (e.g. the attachment didn't load the first time) — the
+  // status line above the button already shows when and how many times it went out. There used
+  // to be a "Send again?" confirmation, but going through it lost Safari's tap permission, so the
+  // share sheet never opened.
+  async function shareBillToWhatsAppGroup(billId){
     var bill = billOf(billId);
     if (!bill || !bill.allocations || !bill.allocations.length) return;
-    if (bill.whatsappGroupSharedAt && !confirmed){
-      openConfirmModal('Already sent', 'This bill was already sent to the WhatsApp group on '+whatsAppSharedWhen(bill.whatsappGroupSharedAt)+'. Send it again?', function(){
-        setTimeout(function(){ shareBillToWhatsAppGroup(billId, true); }, 0);
-      }, { confirmLabel:'Send again' });
-      return;
-    }
     if (isTenantHiddenProvider(bill.provider)){
       showToast('Bills from this provider are never sent to tenants.', 'error');
       return;
@@ -6008,6 +6027,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       throw new Error('not supported');
     } catch (err){
       if (err && err.name === 'AbortError') return; // person cancelled the share sheet — not an error
+      if (err && err.name === 'NotAllowedError'){ // attachment took too long to load — it's cached now
+        showToast('The bill is ready now — tap Share to WhatsApp group again.', 'info');
+        return;
+      }
       try {
         await navigator.clipboard.writeText(message);
         showToast('Your phone doesn\'t support direct sharing — we copied the message; open the group and paste it in.', 'info');
@@ -6150,7 +6173,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;">Allocation</h2>'+
         '<div style="display:flex;gap:8px;">'+
-        (isTenantHiddenProvider(b.provider) ? '' : '<button class="mini-btn" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share to WhatsApp group</button>')+
+        (isTenantHiddenProvider(b.provider) ? '' : (prefetchBillReceiptFile(b), '')+'<button class="mini-btn" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share to WhatsApp group</button>')+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
         '</div></div>'+
         (isTenantHiddenProvider(b.provider) ? '' : billWhatsAppGroupStatusHtml(b))+
