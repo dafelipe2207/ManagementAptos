@@ -5138,7 +5138,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * as the average of the amounts already seen. It's pure local computation, no network — it's
    * recomputed on every render(), always with the most recent data. */
   function computeMissingInvoicePredictions(){
-    function dateOf(b){ return b.billingPeriodStart || b.issueDate || b.dueDate || null; }
+    // Paced by when each invoice actually ARRIVES (issue date), not when its period starts —
+    // a bill for 1–31 Aug arrives around 7 Sep, so pacing from 1 Aug flagged it as "overdue"
+    // a month early. Falls back to period end, then due date, when there's no issue date.
+    function dateOf(b){ return b.issueDate || b.billingPeriodEnd || b.dueDate || b.billingPeriodStart || null; }
     var groups = {};
     bills.forEach(function(b){
       if (BILL_RECURRING_TYPES.indexOf(b.billType) === -1 || !dateOf(b)) return;
@@ -5160,11 +5163,33 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (daysOverdue <= 0) return; // not due yet, based on its own historical pace
       var estimatedAmount = round2(list.reduce(function(s,b){ return s + (b.amount||0); }, 0) / list.length);
       var p = properties.find(function(x){ return x.id===last.propertyId; });
+      // Details to help find/request the missing bill: the account number (newest bill that has
+      // one), the last invoice, the next period it should cover, a likely due date (same gap the
+      // provider usually leaves between period start and due date) and the usual amount range.
+      var withAccount = list.slice().reverse().find(function(b){ return (b.accountNumber||'').trim(); });
+      var accounts = list.map(function(b){ return (b.accountNumber||'').trim(); }).filter(Boolean)
+        .filter(function(v,i,a){ return a.indexOf(v)===i; });
+      var dueLags = list.filter(function(b){ return b.dueDate && dateOf(b); }).map(function(b){ return daysBetween(dateOf(b), b.dueDate); });
+      var avgDueLag = dueLags.length ? Math.round(dueLags.reduce(function(s,n){ return s+n; },0)/dueLags.length) : null;
+      var periodLen = (last.billingPeriodStart && last.billingPeriodEnd) ? daysBetween(last.billingPeriodStart, last.billingPeriodEnd) : (avgInterval - 1);
+      var nextPeriodStart = last.billingPeriodEnd ? stepDateIso(last.billingPeriodEnd, 1) : predictedNextDate;
+      var amounts = list.map(function(b){ return b.amount||0; });
       predictions.push({
         propertyId: last.propertyId, propertyName: p ? p.name : '—',
         billType: last.billType, provider: last.provider,
         lastBillDate: lastDate, predictedNextDate: predictedNextDate, daysOverdue: daysOverdue,
-        estimatedAmount: estimatedAmount, sampleCount: list.length, avgInterval: avgInterval
+        estimatedAmount: estimatedAmount, sampleCount: list.length, avgInterval: avgInterval,
+        accountNumber: withAccount ? withAccount.accountNumber.trim() : '',
+        otherAccounts: accounts.filter(function(a){ return !withAccount || a !== withAccount.accountNumber.trim(); }),
+        lastBillId: last.id, lastInvoiceNumber: last.invoiceNumber || '',
+        lastPeriodStart: last.billingPeriodStart, lastPeriodEnd: last.billingPeriodEnd,
+        lastAmount: last.amount || 0, lastDueDate: last.dueDate || null,
+        nextPeriodStart: nextPeriodStart,
+        // Monthly bills (a period of ~one month) cover the next calendar-month span exactly;
+        // otherwise repeat the last period's length.
+        nextPeriodEnd: (periodLen >= 26 && periodLen <= 32) ? stepDateIso(addMonthsIso(nextPeriodStart, 1), -1) : stepDateIso(nextPeriodStart, Math.max(periodLen, 0)),
+        expectedDueDate: avgDueLag !== null ? stepDateIso(predictedNextDate, avgDueLag) : null,
+        minAmount: Math.min.apply(null, amounts), maxAmount: Math.max.apply(null, amounts)
       });
     });
     // Sorted by how FREQUENTLY the bill recurs (its own average interval), not by raw days
@@ -5178,16 +5203,39 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     });
   }
 
+  async function copyToClipboard(text, okMsg){
+    try { await navigator.clipboard.writeText(text); showToast(okMsg || 'Copied.', 'success'); }
+    catch(_e){ showToast(text, 'info'); }
+  }
+  window.copyToClipboard = copyToClipboard;
+
   function missingInvoiceRowHtml(pred){
     var overdueTxt = pred.daysOverdue+' day'+(pred.daysOverdue===1?'':'s')+' overdue';
     return '<div class="card">'+
       '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(pred.billType))+' — '+esc(pred.provider)+'</h2>'+
       badge('overdue', overdueTxt)+'</div>'+
       '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+esc(pred.propertyName)+'</p>'+
-      '<div class="field-list">'+
-      '<div class="field-row"><span class="k">Last bill</span><span class="v">'+shortDate(pred.lastBillDate)+'</span></div>'+
-      '<div class="field-row"><span class="k">Expected around</span><span class="v">'+shortDate(pred.predictedNextDate)+'</span></div>'+
-      '<div class="field-row"><span class="k">Estimated amount</span><span class="v">'+money(pred.estimatedAmount)+'</span></div>'+
+      '<div class="mi-account">'+
+        (pred.accountNumber
+          ? '<span class="k">Account number</span><span class="mi-acc-num">'+esc(pred.accountNumber)+'</span>'+
+            '<button type="button" class="text-link" onclick="copyToClipboard(\''+esc(pred.accountNumber).replace(/'/g,"\\'")+'\', \'Account number copied\')">Copy</button>'
+          : '<span class="k">Account number</span><span class="mi-acc-none">Not on file — add it when you load the next bill</span>')+
+        (pred.otherAccounts && pred.otherAccounts.length ? '<div class="mi-acc-other">Earlier bills also used: '+pred.otherAccounts.map(esc).join(', ')+'</div>' : '')+
+      '</div>'+
+      '<div class="mi-grid">'+
+        '<div class="mi-col"><div class="mi-col-title">Expected bill</div><div class="field-list">'+
+          '<div class="field-row"><span class="k">Should have arrived by</span><span class="v">'+shortDate(pred.predictedNextDate)+'</span></div>'+
+          '<div class="field-row"><span class="k">Billing period</span><span class="v">'+shortDate(pred.nextPeriodStart)+' – '+shortDate(pred.nextPeriodEnd)+'</span></div>'+
+          (pred.expectedDueDate ? '<div class="field-row"><span class="k">Likely due</span><span class="v">'+shortDate(pred.expectedDueDate)+(pred.expectedDueDate < TODAY ? ' '+badge('overdue','past') : '')+'</span></div>' : '')+
+          '<div class="field-row"><span class="k">Estimated amount</span><span class="v">'+money(pred.estimatedAmount)+
+            (pred.maxAmount - pred.minAmount > 0.009 ? '<div class="mi-range">usually '+money(pred.minAmount)+' – '+money(pred.maxAmount)+'</div>' : '')+'</span></div>'+
+        '</div></div>'+
+        '<div class="mi-col"><div class="mi-col-title">Last bill on file</div><div class="field-list">'+
+          (pred.lastInvoiceNumber ? '<div class="field-row"><span class="k">Invoice #</span><span class="v">'+esc(pred.lastInvoiceNumber)+'</span></div>' : '')+
+          '<div class="field-row"><span class="k">Period</span><span class="v">'+(pred.lastPeriodStart ? shortDate(pred.lastPeriodStart)+' – '+shortDate(pred.lastPeriodEnd) : shortDate(pred.lastBillDate))+'</span></div>'+
+          (pred.lastDueDate ? '<div class="field-row"><span class="k">Due</span><span class="v">'+shortDate(pred.lastDueDate)+'</span></div>' : '')+
+          '<div class="field-row"><span class="k">Amount</span><span class="v">'+money(pred.lastAmount)+'</span></div>'+
+        '</div><a class="text-link mi-open" href="#/bills/'+pred.lastBillId+'">Open last bill</a></div>'+
       '</div>'+
       '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">Based on '+pred.sampleCount+' past bills for this provider, about every '+pred.avgInterval+' days on average.</p>'+
       '<button class="mini-btn primary" style="margin-top:10px;" onclick="setBillsViewTab(\'list\');openImportModal();">+ Add this bill</button>'+
@@ -9448,6 +9496,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * Older plain-text rules (one per line, "Heading:" lines) are converted on read. */
   var RULE_TOPICS = [
     { key:'general',  emoji:'🏠', label:'General',            tone:'#3b6fb6' },
+    { key:'common',   emoji:'🛋️', label:'Common areas',        tone:'#4f7fa8' },
+    { key:'rent',     emoji:'💰', label:'Rent & payments',     tone:'#2f8f5b' },
+    { key:'appliances', emoji:'🔌', label:'Shared appliances & furniture', tone:'#5a7d9a' },
+    { key:'damage',   emoji:'🧯', label:'Damage',              tone:'#c4553d' },
+    { key:'belongings', emoji:'🎒', label:'Personal belongings', tone:'#8b6fb3' },
+    { key:'security', emoji:'🔑', label:'Security & keys',     tone:'#b38a1f' },
+    { key:'parties',  emoji:'🎉', label:'Parties & gatherings', tone:'#c25a9a' },
+    { key:'maintenance', emoji:'🔧', label:'Maintenance & repairs', tone:'#d4731f' },
+    { key:'inspections', emoji:'📋', label:'Inspections',      tone:'#5566d8' },
+    { key:'respect',  emoji:'🤝', label:'Respect',             tone:'#3f9a8a' },
+    { key:'communication', emoji:'💬', label:'Communication',  tone:'#2e8fb0' },
+    { key:'leaving',  emoji:'📅', label:'Early termination',   tone:'#7d7f8f' },
+    { key:'breaches', emoji:'⚖️', label:'Repeated breaches',   tone:'#8a5a5a' },
     { key:'quiet',    emoji:'🌙', label:'Noise & quiet hours', tone:'#6a55c9' },
     { key:'kitchen',  emoji:'🍳', label:'Kitchen',             tone:'#d0822a' },
     { key:'bathroom', emoji:'🚿', label:'Bathroom',            tone:'#2a93b8' },
@@ -9481,7 +9542,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Parses saved content into { sections: [...] } — JSON (v2) or legacy plain text. */
   function parseHouseRules(content){
     var raw = (content || '').trim();
-    if (!raw) return { sections: [] };
+    if (!raw) return { sections: [], intro:'', closing:'' };
     if (raw.charAt(0) === '{'){
       try {
         var obj = JSON.parse(raw);
@@ -9491,7 +9552,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             sec.topic = sec.topic || 'general';
             sec.rules = (sec.rules || []).map(function(r){ return { id: r.id || newRuleId(), text: r.text || '', note: r.note || '', level: RULE_LEVELS[r.level] ? r.level : 'please' }; });
           });
-          return { sections: obj.sections };
+          return { sections: obj.sections, intro: obj.intro || '', closing: obj.closing || '' };
         }
       } catch(_e){ /* fall through to plain text */ }
     }
@@ -9506,10 +9567,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         current.rules.push({ id:newRuleId(), text:l.replace(/^(\d+[.)]|[-*•])\s*/, ''), note:'', level:'please' });
       }
     });
-    return { sections: sections };
+    return { sections: sections, intro:'', closing:'' };
   }
   function serializeHouseRules(doc){
-    return JSON.stringify({ v:2, sections: doc.sections.map(function(s){
+    return JSON.stringify({ v:2, intro:(doc.intro||'').trim(), closing:(doc.closing||'').trim(), sections: doc.sections.map(function(s){
       return { id:s.id, topic:s.topic, title:(s.title||'').trim(), rules: s.rules.filter(function(r){ return (r.text||'').trim(); }).map(function(r){
         return { id:r.id, text:r.text.trim(), note:(r.note||'').trim(), level:r.level };
       }) };
@@ -9548,7 +9609,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       ['must','Lock the front door when you are the last one out.',''] ] }
   ];
   function starterHouseRules(){
-    return { sections: HOUSE_RULES_STARTER.map(function(s){
+    return { intro:'', closing:'', sections: HOUSE_RULES_STARTER.map(function(s){
       return { id:newRuleId(), topic:s.topic, title:s.title, rules: s.rules.map(function(r){ return { id:newRuleId(), level:r[0], text:r[1], note:r[2] }; }) };
     }) };
   }
@@ -9578,6 +9639,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var hero = '<div class="card rules-hero">'+
       '<div class="rules-hero-top">'+topicTile('general', true)+'<div><div class="rules-hero-title">'+esc(p?p.name:'House rules')+'</div>'+
       '<div class="rules-hero-sub">'+c.total+' rule'+(c.total===1?'':'s')+' in '+doc.sections.length+' topic'+(doc.sections.length===1?'':'s')+(r&&r.updatedAt?' · updated '+shortDate(r.updatedAt.slice(0,10)):'')+'</div></div></div>'+
+      (doc.intro ? '<p class="rules-intro">'+esc(doc.intro)+'</p>' : '')+
       '<div class="rules-levels">'+RULE_LEVEL_ORDER.map(function(l){
         return '<div class="rules-level rl-bg-'+l+'"><b>'+c[l]+'</b>'+ruleLevelPill(l)+'<span>'+esc(RULE_LEVELS[l].hint)+'</span></div>';
       }).join('')+'</div>'+
@@ -9588,7 +9650,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<button type="button" class="rules-chip" style="--tone:'+tp.tone+'" onclick="document.getElementById(\'rsec-'+s.id+'\').scrollIntoView({behavior:\'smooth\',block:\'start\'})">'+tp.emoji+' '+esc(s.title||tp.label)+'</button>';
     }).join('')+'</div>' : '';
     var search = '<div class="rules-search"><input type="search" id="rules-search-input" placeholder="Search the rules — e.g. guests, bins, shower" value="'+esc(tenantRulesQuery)+'" oninput="setTenantRulesQuery(this.value)" /></div>';
-    return header + hero + search + nav + '<div id="rules-sections">'+tenantRulesSectionsHtml(doc)+'</div>';
+    var closing = doc.closing ? '<div class="card rules-closing">✍️ '+esc(doc.closing)+'</div>' : '';
+    return header + hero + search + nav + '<div id="rules-sections">'+tenantRulesSectionsHtml(doc)+'</div>' + closing;
   }
   function tenantRulesSectionsHtml(doc){
     var q = tenantRulesQuery.trim().toLowerCase();
@@ -9653,7 +9716,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="seg"><button type="button" class="'+(!rulesPreview?'on':'')+'" onclick="setRulesPreview(false)">✏️ Edit</button><button type="button" class="'+(rulesPreview?'on':'')+'" onclick="setRulesPreview(true)">👁 Tenant view</button></div>'+
       '</div>';
     if (rulesPreview){
-      var box = doc.sections.length ? tenantRulesSectionsHtmlFor(doc) : '<div class="card rules-empty"><p>Nothing to show yet.</p></div>';
+      var box = doc.sections.length ? (doc.intro ? '<div class="card"><p class="rules-intro" style="margin:0;">'+esc(doc.intro)+'</p></div>' : '') + tenantRulesSectionsHtmlFor(doc) +
+        (doc.closing ? '<div class="card rules-closing">✍️ '+esc(doc.closing)+'</div>' : '') : '<div class="card rules-empty"><p>Nothing to show yet.</p></div>';
       return toolbar + '<div class="rules-preview">'+box+'</div>' + rulesPublishBarHtml(pid, saved);
     }
     if (!doc.sections.length){
@@ -9693,12 +9757,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<button type="button" class="res-add" onclick="rulesAddRule(\''+pid+'\','+si+')">+ Add a rule</button></div>'+
         '</section>';
     }).join('');
+    var introHtml = '<div class="card rules-textblock"><label>Introduction <span>(shown at the top)</span></label>'+
+      '<textarea rows="2" class="res-text" oninput="autoGrow(this);rulesSetDoc(\''+pid+'\',\'intro\',this.value)" placeholder="e.g. To keep the apartment clean, respectful and safe, all residents agree to follow these rules.">'+esc(doc.intro||'')+'</textarea></div>';
+    var closingHtml = '<div class="card rules-textblock"><label>Closing note <span>(shown at the end — e.g. the acknowledgement)</span></label>'+
+      '<textarea rows="2" class="res-text" oninput="autoGrow(this);rulesSetDoc(\''+pid+'\',\'closing\',this.value)" placeholder="e.g. By signing the agreement, each resident confirms they have read and agreed to these rules.">'+esc(doc.closing||'')+'</textarea></div>';
     var used = doc.sections.map(function(s){ return s.topic; });
     var addTopic = '<div class="card rules-add-topic"><div class="rat-title">Add a topic</div><div class="rat-chips">'+
       RULE_TOPICS.filter(function(t){ return used.indexOf(t.key)===-1 || t.key==='other'; }).map(function(t){
         return '<button type="button" class="rules-chip" style="--tone:'+t.tone+'" onclick="rulesAddSection(\''+pid+'\',\''+t.key+'\')">'+t.emoji+' '+esc(t.label)+'</button>';
       }).join('')+'</div></div>';
-    return toolbar + sectionsHtml + addTopic + rulesPublishBarHtml(pid, saved);
+    return toolbar + introHtml + sectionsHtml + addTopic + closingHtml + rulesPublishBarHtml(pid, saved);
   }
   function tenantRulesSectionsHtmlFor(doc){
     var keep = tenantRulesQuery; tenantRulesQuery = '';
@@ -9710,7 +9778,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<input type="file" id="rules-file-'+pid+'" accept="application/pdf,image/*" hidden onchange="document.getElementById(\'rules-file-name-'+pid+'\').textContent=this.files[0]?this.files[0].name:\'\';rulesDirty[\''+pid+'\']=true" /></label>'+
         '<span id="rules-file-name-'+pid+'" class="rp-file-name"></span>'+
         (saved&&saved.filePath ? '<button class="text-link" onclick="viewReceipt(\'house-rules\',\''+saved.filePath+'\')">Current: '+esc(saved.fileName||'file')+'</button>' : '')+'</div>'+
-      '<label class="rp-notify"><input type="checkbox" id="rules-notify-'+pid+'" checked /> Tell this property\'s tenants the rules changed</label>'+
+      '<div class="rp-options"><label class="rp-notify"><input type="checkbox" id="rules-all-'+pid+'" '+(properties.length>1?'':'disabled')+' /> Publish the same rules to all '+properties.length+' properties</label>'+
+      '<label class="rp-notify"><input type="checkbox" id="rules-notify-'+pid+'" checked /> Tell the tenants the rules changed</label></div>'+
       '<button class="mini-btn primary" onclick="saveHouseRules(\''+pid+'\', this)">Publish rules</button>'+
       '</div>';
   }
@@ -9738,6 +9807,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (ri < 0) s[field] = value; else if (s.rules[ri]) s.rules[ri][field] = value;
     markRulesDirty(pid);
   };
+  window.rulesSetDoc = function(pid, field, value){ rulesDraftFor(pid)[field] = value; markRulesDirty(pid); };
   window.rulesSetLevel = function(pid, si, ri, level){ rulesDraftFor(pid).sections[si].rules[ri].level = level; rulesDirty[pid] = true; refreshRulesEditor(); };
   window.rulesAddRule = function(pid, si){
     var s = rulesDraftFor(pid).sections[si]; s.rules.push({ id:newRuleId(), text:'', note:'', level:'please' }); rulesDirty[pid] = true; refreshRulesEditor();
@@ -9760,25 +9830,36 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var file = fileInput && fileInput.files && fileInput.files[0];
     var notifyEl = document.getElementById('rules-notify-'+propertyId);
     var notify = notifyEl ? notifyEl.checked : false;
+    var allEl = document.getElementById('rules-all-'+propertyId);
+    var toAll = !!(allEl && allEl.checked);
     var existing = houseRulesOf(propertyId);
     var label = btn ? btn.textContent : '';
     if (btn){ btn.disabled = true; btn.textContent = 'Publishing…'; }
     try {
       var filePath = existing ? existing.filePath : null, fileName = existing ? existing.fileName : null;
       if (file){ filePath = await houseRulesService.uploadFile(propertyId, file); fileName = file.name; }
-      var saved = await houseRulesService.save({ propertyId: propertyId, content: serializeHouseRules(doc), filePath: filePath, fileName: fileName,
-        updatedByProfileId: currentProfile ? currentProfile.id : null });
-      houseRules = houseRules.filter(function(r){ return r.propertyId!==propertyId; }).concat([saved]);
-      delete rulesDrafts[propertyId]; delete rulesDirty[propertyId];
-      var sentMsg = '';
-      if (notify){
-        var here = tenants.filter(function(t){ return t.propertyId===propertyId && !tenantHasMovedOut(t); });
-        var res = await notificationService.notifyProperty(propertyId, here, 'House rules updated',
-          'Your administrator updated the house rules. Open "House Rules" to read them.', 'house_rules', { relatedTable:'house_rules', relatedId: propertyId });
-        var n = res.filter(function(x){ return x.sent; }).length;
-        sentMsg = n ? ' '+n+' tenant'+(n>1?'s were':' was')+' notified.' : '';
+      var content = serializeHouseRules(doc);
+      var targets = toAll ? properties.map(function(p){ return p.id; }) : [propertyId];
+      var n = 0;
+      for (var ti = 0; ti < targets.length; ti++){
+        var pid = targets[ti];
+        var prev = houseRulesOf(pid);
+        // The attached document is copied too when publishing to all (same file, same rules).
+        var fp = pid===propertyId || toAll ? filePath : (prev ? prev.filePath : null);
+        var fn = pid===propertyId || toAll ? fileName : (prev ? prev.fileName : null);
+        var saved = await houseRulesService.save({ propertyId: pid, content: content, filePath: fp, fileName: fn,
+          updatedByProfileId: currentProfile ? currentProfile.id : null });
+        houseRules = houseRules.filter(function(r){ return r.propertyId!==pid; }).concat([saved]);
+        delete rulesDrafts[pid]; delete rulesDirty[pid];
+        if (notify){
+          var here = tenants.filter(function(t){ return t.propertyId===pid && !tenantHasMovedOut(t); });
+          var res = await notificationService.notifyProperty(pid, here, 'House rules updated',
+            'Your administrator updated the house rules. Open "House Rules" to read them.', 'house_rules', { relatedTable:'house_rules', relatedId: pid });
+          n += res.filter(function(x){ return x.sent; }).length;
+        }
       }
-      showToast('House rules published.' + sentMsg, 'success');
+      var sentMsg = n ? ' '+n+' tenant'+(n>1?'s were':' was')+' notified.' : '';
+      showToast('House rules published' + (toAll ? ' to all '+targets.length+' properties.' : '.') + sentMsg, 'success');
       renderPreservingScroll();
     } catch(err){
       showToast('Could not publish the rules. ' + friendlyErrorMessage(err), 'error');
