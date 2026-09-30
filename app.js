@@ -12398,7 +12398,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   /* ============ Async bootstrap: load everything from Supabase in parallel, then render ============ */
-  async function bootstrapData(){
+  async function bootstrapData(opts){
     TODAY = toIsoLocal(new Date()); // the app can stay open for days on a phone — keep "today" (and this month) current
     var results = await Promise.all([
       propertyService.getAll(isTenantRole()),
@@ -12469,9 +12469,29 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     maintenanceLog = results[29];
     realEstateInspections = results[30];
     if (isSuperAdmin()){
-      try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
-      try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
+      var sa = await Promise.all([
+        profileService.getAll().catch(function(){ return []; }),
+        profileService.getPropertyAssignments().catch(function(){ return []; })
+      ]);
+      allProfiles = sa[0]; propertyAssignments = sa[1];
     }
+    recomputeRentCharges();
+    refreshStaticSelects();
+    if (opts && opts.skipMaintenance) return;
+    await runMaintenanceTasks();
+  }
+  window.bootstrapData = bootstrapData;
+
+  /** The automatic upkeep that used to run inside every data load (and made startup slow, since
+   *  each step waits on its own round of database writes): creating due recurring bills,
+   *  "missing bill" alerts, rolling cleaning/bin duties forward, the operations read models and
+   *  automatic notifications. Now the app opens as soon as the data is read, and this runs right
+   *  after in the background; background refreshes only repeat it every 15 minutes. */
+  var lastMaintenanceAt = 0;
+  var maintenanceRunning = null;
+  function runMaintenanceTasks(){
+    if (maintenanceRunning) return maintenanceRunning;
+    maintenanceRunning = (async function(){
     try { await generateDueRecurringBills(); } catch(_e){ console.error('generateDueRecurringBills failed', _e); }
     try { await checkMissingBillsNotifications(); } catch(_e){ console.error('checkMissingBillsNotifications failed', _e); }
     try { await ensureCleaningDutiesUpToDate(); } catch(_e){ console.error('ensureCleaningDutiesUpToDate failed', _e); }
@@ -12482,8 +12502,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // rentCharges array, which doesn't exist yet at the point the other automatic checks above run.
     try { await ensureAutomaticNotifications(); } catch(_e){ console.error('ensureAutomaticNotifications failed', _e); }
     refreshStaticSelects();
+    lastMaintenanceAt = Date.now();
+    })().finally(function(){ maintenanceRunning = null; });
+    return maintenanceRunning;
   }
-  window.bootstrapData = bootstrapData;
 
   /** Lightweight toast for success/error feedback on async actions, reusing the app's existing visual language. */
   /** `action`, if given, is { label, onClick } and renders as a small inline button on the
@@ -12534,7 +12556,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (isRefreshingData || anyModalOpen()) return;
     isRefreshingData = true;
     try {
-      await bootstrapData();
+      await bootstrapData({ skipMaintenance: Date.now() - lastMaintenanceAt < 15*60*1000 });
       render(true); // preserves scroll position — this is a silent refresh, not a navigation
     } catch(err){
       console.error('refreshAllData failed', err);
@@ -12779,7 +12801,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (!currentProfile.isActive){
         throw new Error('Your account has been deactivated. Ask your Super Admin to reactivate it.');
       }
-      await bootstrapData();
+      await bootstrapData({ skipMaintenance: true }); // show the app as soon as the data is read
     } catch(err){
       document.getElementById('app-loading-screen').hidden = true;
       document.getElementById('auth-screen').hidden = false;
@@ -12795,6 +12817,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.querySelector('.shell').hidden = false;
     startRouter();
     setupAutoRefresh();
+    // Upkeep (recurring bills, duties, automatic notifications) runs after the app is on screen,
+    // then the page quietly redraws with anything it created.
+    runMaintenanceTasks().then(function(){ if (!anyModalOpen()) render(true); })
+      .catch(function(e){ console.error('maintenance failed', e); });
     if (getAppPin()){
       document.getElementById('lock-screen').hidden = false;
       document.getElementById('lock-pin-input').focus();
