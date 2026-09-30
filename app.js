@@ -629,9 +629,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function getDashboardSummary(){
     var occupied = rooms.filter(isRoomOccupied).length;
-    var expected = rentCharges.reduce(function(s,c){ return s+c.amountDue; },0);
-    var received = rentCharges.reduce(function(s,c){ return s+c.amountPaid; },0);
-    var outstanding = rentCharges.reduce(function(s,c){ return s+c.remaining; },0);
+    // Rent tiles cover the CURRENT month only (rent periods starting this month) — the all-time
+    // totals kept growing forever and weren't useful day to day. Same scope as Payments' month filter.
+    var thisMonth = TODAY.slice(0,7);
+    var monthCharges = rentCharges.filter(function(c){ return c.periodStart.slice(0,7) === thisMonth; });
+    var expected = monthCharges.reduce(function(s,c){ return s+c.amountDue; },0);
+    var received = monthCharges.reduce(function(s,c){ return s+c.amountPaid; },0);
+    var outstanding = monthCharges.reduce(function(s,c){ return s+c.remaining; },0);
     var overdueCount = rentCharges.filter(function(c){ return c.status==='overdue'; }).length;
     var billsPending = bills.filter(function(b){ return billEffectiveStatus(b) !== 'paid'; }).length;
     return {
@@ -1015,6 +1019,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   function renderDashboard(){
     var s = getDashboardSummary();
+    var monthLabelShort = CALENDAR_MONTH_NAMES[parseInt(TODAY.slice(5,7),10)-1].slice(0,3);
     var needs = getNeedsAttention();
     var upcoming = getUpcomingEvents();
 
@@ -1023,9 +1028,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       ['Occupied rooms', String(s.occupiedRooms), false, 'goToDashboardStat(\'properties\')'],
       ['Vacant rooms', String(s.vacantRooms), false, 'goToDashboardStat(\'vacant\')'],
       ['Overdue payments', String(s.overduePaymentsCount), s.overduePaymentsCount>0, 'goToDashboardStat(\'overdue\')'],
-      ['Rent expected', money(s.totalRentExpected), false, 'goToDashboardStat(\'rent-all\')'],
-      ['Rent received', money(s.totalRentReceived), false, 'goToDashboardStat(\'rent-paid\')'],
-      ['Total outstanding', money(s.totalOutstanding), s.totalOutstanding>0, 'goToDashboardStat(\'rent-due\')'],
+      ['Rent expected · '+monthLabelShort, money(s.totalRentExpected), false, 'goToDashboardStat(\'rent-all\')'],
+      ['Rent received · '+monthLabelShort, money(s.totalRentReceived), false, 'goToDashboardStat(\'rent-paid\')'],
+      ['Outstanding · '+monthLabelShort, money(s.totalOutstanding), s.totalOutstanding>0, 'goToDashboardStat(\'rent-due\')'],
       ['Bills pending', String(s.billsPendingCount), false, 'goToDashboardStat(\'bills-pending\')']
     ];
 
@@ -1112,6 +1117,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     paymentsFilter = map[kind] || 'all';
     paymentsPropertyFilter = 'all';
     paymentsTenantFilter = 'all';
+    paymentsMonthFilter = kind === 'overdue' ? 'all' : TODAY.slice(0,7); // rent tiles are this month; overdue is any month
     location.hash = '#/payments';
     render();
   }
@@ -12393,6 +12399,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /* ============ Async bootstrap: load everything from Supabase in parallel, then render ============ */
   async function bootstrapData(){
+    TODAY = toIsoLocal(new Date()); // the app can stay open for days on a phone — keep "today" (and this month) current
     var results = await Promise.all([
       propertyService.getAll(isTenantRole()),
       roomService.getAll(),
