@@ -3256,6 +3256,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Saves changes to an existing bill edited from openEditBillModal — unlike
    *  confirmReviewedBill (which creates a new bill from the import queue), this only
    *  updates the fields of the already saved bill; it doesn't touch its allocations or create recurring bills. */
+  var pendingBillEdit = null; // {billId, updated, makeRecurring, billingDay} waiting for Accept/Reject in #bill-changes-modal
+  var BILL_EDIT_FIELDS = [
+    ['propertyId', 'Property'], ['billType', 'Bill type'], ['provider', 'Provider'],
+    ['accountNumber', 'Account number'], ['invoiceNumber', 'Invoice number'],
+    ['issueDate', 'Issue date'], ['dueDate', 'Due date'],
+    ['billingPeriodStart', 'Period start'], ['billingPeriodEnd', 'Period end'], ['amount', 'Amount']
+  ];
+  function billEditFieldText(key, v){
+    if (v === null || v === undefined || v === '') return '—';
+    if (key === 'amount') return money(v);
+    if (key === 'propertyId'){ var pr = properties.find(function(x){ return x.id===v; }); return pr ? pr.name : v; }
+    if (/Date$|^billingPeriod/.test(key)) return shortDate(v);
+    return String(v);
+  }
+  /** Step 1 of editing a bill: validates the form, lists every value that differs from the saved
+   *  bill (old → new) and asks the admin to Accept or Reject before anything is written. Nothing
+   *  is saved with no changes. Payments already recorded are never touched by an edit. */
   async function saveEditedBill(){
     var provider = document.getElementById('review-provider').value.trim();
     var accountNumber = document.getElementById('review-account').value.trim();
@@ -3296,13 +3313,86 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var makeRecurring = recurringCheckbox.checked && !recurringCheckbox.disabled;
     var billingDay = parseInt(document.getElementById('review-recurring-day').value, 10);
 
-    var saveBtn = document.querySelector('#review-modal .mini-btn.primary');
+    var changes = BILL_EDIT_FIELDS.filter(function(f){
+      var a = b[f[0]], c = updated[f[0]];
+      if (f[0]==='amount') return round2(a) !== round2(c);
+      return (a || '') !== (c || '');
+    });
+    if (!changes.length && !makeRecurring){
+      closeReviewModal();
+      showToast('No changes to save.', 'info');
+      return;
+    }
+    errorEl.hidden = true;
+    pendingBillEdit = { billId: editingBillId, updated: updated, makeRecurring: makeRecurring, billingDay: billingDay, amountChanged: amountChanged, periodChanged: periodChanged };
+
+    var rowsHtml = changes.map(function(f){
+      var isAmount = f[0]==='amount';
+      var diffHtml = '';
+      if (isAmount){
+        var d = round2(updated.amount - b.amount);
+        diffHtml = '<div class="chg-diff '+(d>0?'up':'down')+'">'+(d>0?'+':'−')+money(Math.abs(d))+'</div>';
+      }
+      return '<div class="chg-row'+(isAmount?' amount':'')+'"><div class="chg-label">'+esc(f[1])+'</div>'+
+        '<div class="chg-vals"><span class="chg-old">'+esc(billEditFieldText(f[0], b[f[0]]))+'</span>'+
+        '<span class="chg-arrow">→</span><span class="chg-new">'+esc(billEditFieldText(f[0], updated[f[0]]))+'</span></div>'+diffHtml+'</div>';
+    }).join('');
+    if (!changes.length) rowsHtml = '<p style="font-size:13px;color:var(--text-dim);margin:0;">No field changes — only the monthly repeat will be set up.</p>';
+
+    var paidAllocs = (b.allocations || []).filter(function(a){ return a.paid && !a.isAdmin && round2(a.amount) > 0.004; });
+    var paidHtml = '';
+    if (paidAllocs.length){
+      paidHtml = '<div class="chg-note">✅ Payments already recorded are kept: '+
+        paidAllocs.map(function(a){ var t = tenantOf(a.tenantId); return '<b>'+esc(t?t.fullName:'Tenant')+'</b> ('+money(a.amount)+')'; }).join(', ')+'.</div>';
+    }
+    if (amountChanged || periodChanged){
+      paidHtml += '<div class="chg-note warn">⚠️ The '+(amountChanged?'amount':'billing period')+' changed. Tenant shares are not recalculated automatically — use "Re-allocate" on the bill afterwards if they should change (people who already paid stay marked as paid).</div>';
+    }
+    document.getElementById('bill-changes-sub').textContent = b.provider + ' • ' + (changes.length ? (changes.length===1 ? '1 change' : changes.length+' changes') : 'no field changes');
+    document.getElementById('bill-changes-list').innerHTML = rowsHtml + paidHtml;
+    document.getElementById('bill-changes-error').hidden = true;
+    document.getElementById('bill-changes-modal').hidden = false;
+  }
+  window.saveEditedBill = saveEditedBill;
+
+  /** Back to the edit form without saving or discarding — the admin can keep adjusting. */
+  function backToBillEdit(){
+    document.getElementById('bill-changes-modal').hidden = true;
+    pendingBillEdit = null;
+  }
+  window.backToBillEdit = backToBillEdit;
+  /** Reject: throws the edits away; the bill stays exactly as it was. */
+  function rejectBillChanges(){
+    document.getElementById('bill-changes-modal').hidden = true;
+    pendingBillEdit = null;
+    closeReviewModal();
+    showToast('Changes rejected — the bill was left as it was.', 'info');
+  }
+  window.rejectBillChanges = rejectBillChanges;
+
+  /** Accept: writes the edited fields. The bill object in memory is updated IN PLACE so its
+   *  `allocations` (who owes what, who already paid, receipts) survive — the DB row returned by
+   *  billService.update doesn't carry them, and replacing the object with it is what used to make
+   *  paid tenants disappear (and later get wiped by ensureBillAllocated). */
+  async function acceptBillChanges(){
+    if (!pendingBillEdit) return;
+    var pe = pendingBillEdit;
+    var b = billOf(pe.billId);
+    var errorEl = document.getElementById('bill-changes-error');
+    if (!b){ backToBillEdit(); closeReviewModal(); return; }
+    var updated = pe.updated, makeRecurring = pe.makeRecurring, billingDay = pe.billingDay;
+    var amountChanged = pe.amountChanged, periodChanged = pe.periodChanged;
+    var oldAmount = b.amount;
+    var saveBtn = document.getElementById('bill-changes-accept-btn');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
     errorEl.hidden = true;
     try {
-      var saved = await billService.update(editingBillId, updated);
-      bills = bills.map(function(x){ return x.id===saved.id ? saved : x; });
+      var keepAllocations = b.allocations;
+      var savedRow = await billService.update(pe.billId, updated);
+      Object.assign(b, savedRow);
+      b.allocations = keepAllocations;
+      var saved = b;
 
       var recurringMsg = '';
       if (makeRecurring){
@@ -3330,11 +3420,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         }
       }
 
+      pendingBillEdit = null;
+      document.getElementById('bill-changes-modal').hidden = true;
       closeReviewModal();
       render();
       showToast(
-        'Bill updated.' +
-        ((amountChanged || periodChanged) ? ' The amount or billing period changed — use "Re-allocate" below if the tenant shares need to be recalculated.' : '') +
+        'Changes accepted.' +
+        (amountChanged ? ' Amount: '+money(oldAmount)+' → '+money(saved.amount)+'.' : '') +
+        ((amountChanged || periodChanged) ? ' Payments already made were kept — use "Re-allocate" if the tenant shares need recalculating.' : '') +
         recurringMsg,
         'success'
       );
@@ -3345,7 +3438,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
     }
   }
-  window.saveEditedBill = saveEditedBill;
+  window.acceptBillChanges = acceptBillChanges;
   /** The modal's "Save" button is reused for creating (import) and editing — routes to one
    *  function or the other depending on whether editingBillId is set. */
   function submitReviewModal(){
@@ -3778,6 +3871,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  is already allocated. */
   async function ensureBillAllocated(bill){
     if (bill.allocations && bill.allocations.length) return bill;
+    // Before creating a fresh split, check the database: the in-memory copy can be missing its
+    // allocations (e.g. after a save that returned the bare bill row) while the real rows — with
+    // who already paid — still exist. Auto-allocating here would delete them (replaceForBill).
+    var fromDb = await billAllocationService.getForBill(bill.id);
+    if (fromDb && fromDb.length){ bill.allocations = fromDb; return bill; }
     var updated = await autoAllocateNewBill(bill);
     Object.assign(bill, updated);
     return bill;
@@ -4067,7 +4165,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // changes — reallocating shouldn't un-mark as paid someone who already
     // paid their share.
     var oldPaidByTenant = {};
-    (bill.allocations || []).forEach(function(a){ oldPaidByTenant[a.isAdmin ? 'admin' : a.tenantId] = { paid: !!a.paid, paidDate: a.paidDate || null }; });
+    (bill.allocations || []).forEach(function(a){ oldPaidByTenant[a.isAdmin ? 'admin' : a.tenantId] = { paid: !!a.paid, paidDate: a.paidDate || null, paidVia: a.paidVia || null, receiptPath: a.receiptPath || null }; });
     // Only an 'occupancy' allocation carries a real occupancy_factor/total_occupancy_factor
     // snapshot — every other method must explicitly write null so re-allocating a bill away
     // from 'occupancy' doesn't leave a stale factor from the old method on the new rows.
@@ -4092,7 +4190,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return Object.assign({ tenantId:r.tenantId, amount:0, paid:true, paidDate: (prevZero && prevZero.paidDate) || TODAY }, factorFields);
       }
       var prev = oldPaidByTenant[r.tenantId];
-      return Object.assign({ tenantId:r.tenantId, amount:amt, paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null }, factorFields);
+      return Object.assign({ tenantId:r.tenantId, amount:amt, paid: prev ? prev.paid : false, paidDate: prev ? prev.paidDate : null,
+        paidVia: prev ? prev.paidVia : null, receiptPath: prev ? prev.receiptPath : null }, factorFields);
     });
     var confirmBtn = document.querySelector('#allocate-modal .mini-btn.primary');
     var originalLabel = confirmBtn ? confirmBtn.textContent : '';
@@ -9913,6 +10012,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.openSearchModal = openSearchModal;
   window.closeSearchModal = closeSearchModal;
   window.runSearch = runSearch;
+
+  /** Clicking anywhere on a date field opens the calendar picker straight away (browsers only
+   *  open it from the small icon by default). Delegated, so it covers every date input in the
+   *  app — including ones inside modals rendered later. Typing a date still works. */
+  document.addEventListener('click', function(e){
+    var el = e.target;
+    if (!el || el.tagName !== 'INPUT' || el.disabled || el.readOnly) return;
+    var type = (el.getAttribute('type') || '').toLowerCase();
+    if (type !== 'date' && type !== 'datetime-local' && type !== 'month' && type !== 'time') return;
+    if (typeof el.showPicker !== 'function') return;
+    try { el.showPicker(); } catch (err) { /* picker already open or not allowed — ignore */ }
+  });
+
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && !document.getElementById('search-modal').hidden) closeSearchModal();
   });
