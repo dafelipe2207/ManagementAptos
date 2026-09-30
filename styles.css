@@ -1143,3 +1143,12 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 #refresh-btn[disabled]{cursor:progress;opacity:.8;}
 @keyframes spin-refresh{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion: reduce){#refresh-btn.spinning svg{animation-duration:2.4s;}}
+
+/* Pull-to-refresh indicator */
+#ptr-indicator{position:fixed;top:-44px;left:50%;transform:translate(-50%,0);z-index:2000;display:flex;align-items:center;gap:8px;
+  padding:8px 14px;border-radius:999px;background:var(--bg-elevated);color:var(--text-dim);border:1px solid var(--border);
+  box-shadow:0 4px 14px rgba(20,30,25,.15);font-size:12.5px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .15s ease;}
+#ptr-indicator.show{opacity:1;}
+#ptr-indicator.ready{color:var(--accent);border-color:var(--accent);}
+#ptr-indicator svg{width:18px;height:18px;}
+#ptr-indicator.loading svg{animation:spin-refresh .8s linear infinite;}

@@ -12344,26 +12344,55 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.refreshAllData = refreshAllData;
 
-  /** The ↻ button in the top bar: reloads everything from the server on demand, with a spinning
-   *  icon while it works and a confirmation when done. */
-  async function manualRefresh(){
-    var btn = document.getElementById('refresh-btn');
-    if (isRefreshingData){ return; }
-    if (btn){ btn.classList.add('spinning'); btn.disabled = true; }
-    isRefreshingData = true;
-    try {
-      await withTimeout(bootstrapData(), 30000, 'The server took too long to answer. Check your connection and try again.');
-      render(true);
-      var now = new Date().toLocaleTimeString('en-AU', { hour:'numeric', minute:'2-digit' });
-      showToast('Up to date · ' + now, 'success');
-    } catch(err){
-      showToast('Could not refresh. ' + friendlyErrorMessage(err), 'error');
-    } finally {
-      isRefreshingData = false;
-      if (btn){ btn.classList.remove('spinning'); btn.disabled = false; }
+  /** Full page reload — the app is often installed on the phone's home screen (standalone), where
+   *  there's no browser reload button. Reloading also picks up a newly published version of the
+   *  app, not just new data. A timestamp in the URL makes sure the page itself isn't served from
+   *  cache; the current screen (#hash) is kept. Won't reload over a half-filled form. */
+  function manualRefresh(){
+    if (anyModalOpen()){
+      showToast('Close the open form first — reloading would lose what you typed.', 'info');
+      return;
     }
+    var btn = document.getElementById('refresh-btn');
+    if (btn){ btn.classList.add('spinning'); btn.disabled = true; }
+    var url = location.pathname + '?r=' + Date.now() + location.hash;
+    location.replace(url);
   }
   window.manualRefresh = manualRefresh;
+
+  /* Pull down from the top of the page to reload (touch screens). */
+  (function setupPullToRefresh(){
+    if (!('ontouchstart' in window)) return;
+    var ind = document.createElement('div');
+    ind.id = 'ptr-indicator';
+    ind.innerHTML = svg('refresh') + '<span>Pull to refresh</span>';
+    document.body.appendChild(ind);
+    var startY = null, pulling = false, dist = 0, THRESHOLD = 80;
+    function atTop(){ return (window.scrollY || document.documentElement.scrollTop || 0) <= 0; }
+    document.addEventListener('touchstart', function(e){
+      if (e.touches.length !== 1 || !atTop() || anyModalOpen()) { startY = null; return; }
+      startY = e.touches[0].clientY; pulling = false; dist = 0;
+    }, { passive:true });
+    document.addEventListener('touchmove', function(e){
+      if (startY === null) return;
+      dist = e.touches[0].clientY - startY;
+      if (dist <= 0 || !atTop()){ ind.classList.remove('show','ready'); ind.style.transform = ''; pulling = false; return; }
+      pulling = true;
+      var pull = Math.min(dist, 130);
+      ind.classList.add('show');
+      ind.classList.toggle('ready', dist >= THRESHOLD);
+      ind.querySelector('span').textContent = dist >= THRESHOLD ? 'Release to refresh' : 'Pull to refresh';
+      ind.style.transform = 'translate(-50%,' + (pull * 0.6) + 'px)';
+      ind.querySelector('svg').style.transform = 'rotate(' + (pull * 2.4) + 'deg)';
+    }, { passive:true });
+    document.addEventListener('touchend', function(){
+      if (startY === null) return;
+      var go = pulling && dist >= THRESHOLD && !anyModalOpen();
+      startY = null; pulling = false;
+      if (go){ ind.classList.add('loading'); ind.querySelector('span').textContent = 'Refreshing…'; manualRefresh(); }
+      else { ind.classList.remove('show','ready'); ind.style.transform = ''; }
+    }, { passive:true });
+  })();
 
   var autoRefreshSetupDone = false;
   /** Three triggers to keep everything synced "immediately" between users, without
