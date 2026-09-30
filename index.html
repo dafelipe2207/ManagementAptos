@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="styles.css?v=27">
+<link rel="stylesheet" href="styles.css?v=30">
 </head>
 <body>
 <div id="app">
@@ -104,6 +104,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <span>Search properties, tenants…</span>
         </button>
+        <button class="icon-btn" id="refresh-btn" aria-label="Refresh data" title="Refresh data" type="button" onclick="manualRefresh()"></button>
         <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" type="button"></button>
         <button class="icon-btn" id="signout-btn" aria-label="Sign out" type="button" onclick="confirmSignOut()"></button>
       </header>
@@ -511,6 +512,38 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="rei-modal" hidden>
+    <div class="card modal-card" style="max-width:420px;">
+      <h2 id="rei-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Schedule real estate inspection</h2>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">The agency's visit to the property. Tenants see it on their dashboard until the day.</p>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:10px 0 2px;">Property</label>
+      <select id="rei-property" class="modal-input"></select>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Date</label>
+      <input id="rei-date" class="modal-input" type="date" oninput="reiDateChanged()" />
+      <p id="rei-past-hint" style="font-size:11.5px;color:var(--text-faint);margin:4px 0 0;" hidden>This date has passed — it will be saved in the history (tenants aren't notified).</p>
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Window from</label><input id="rei-start" class="modal-input" type="time" /></div>
+        <div style="flex:1;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Window to</label><input id="rei-end" class="modal-input" type="time" /></div>
+      </div>
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Real estate agency (optional)</label>
+      <input id="rei-agency" class="modal-input" type="text" maxlength="120" placeholder="e.g. Ray White Belmont" />
+      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Message for the tenants</label>
+      <textarea id="rei-notes" class="modal-input" rows="4" maxlength="800"></textarea>
+      <div id="rei-outcome-row" hidden>
+        <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">How it went (after the visit — only you see this)</label>
+        <textarea id="rei-outcome" class="modal-input" rows="3" maxlength="800" placeholder="e.g. All good. Agent asked to fix the bathroom fan."></textarea>
+      </div>
+      <label id="rei-notify-row" style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="rei-notify" checked /> <span id="rei-notify-label">Notify the tenants now</span></label>
+      <label id="rei-remind-row" style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--text-dim);margin-top:4px;"><input type="checkbox" id="rei-remind" checked /> Remind them the day before (6 pm)</label>
+      <p id="rei-modal-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn danger" id="rei-cancel-btn" style="margin-right:auto;" onclick="cancelRealEstateInspection()" hidden>Cancel inspection</button>
+        <button class="mini-btn" onclick="closeReiModal()">Close</button>
+        <button class="mini-btn primary" id="rei-save-btn" onclick="saveRealEstateInspection()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="confirm-modal" hidden>
     <div class="card modal-card">
       <h2 id="confirm-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
@@ -568,7 +601,6 @@
       </div>
       <div class="form-row" id="property-lease-day-row"><label for="property-lease-day">Rent payment day (1–31)</label><input id="property-lease-day" type="number" min="1" max="31" step="1" /></div>
       <div class="form-row"><label for="property-lease-end">Lease contract end date (with the real estate)</label><input id="property-lease-end" type="date" /></div>
-      <div class="form-row"><label for="property-inspection-date">Next real estate inspection (optional)</label><input id="property-inspection-date" type="date" /></div>
       <div class="form-row">
         <label for="property-payment-method">Payment method</label>
         <select id="property-payment-method" onchange="onPropertyPaymentMethodChange()">
@@ -1185,6 +1217,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=112"></script>
+<script type="module" src="app.js?v=115"></script>
 </body>
 </html>
