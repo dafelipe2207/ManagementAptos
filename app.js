@@ -855,7 +855,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     plus:'<path d="M12 5v14M5 12h14"/>',
     inbox:'<path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13l3 7v8a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1v-8z"/>',
     edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
-    logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'
+    logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+    rules:'<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/><path d="M9 11.5l3-2.5 3 2.5V15H9z"/>',
+    wrench:'<path d="M14.5 5.5a4.5 4.5 0 0 1 5.9-1.3l-3 3 .9 2.5 2.5.9 3-3a4.5 4.5 0 0 1-6.2 5.6L9.7 21.1a2.3 2.3 0 0 1-3.2-3.2l7.9-7.9a4.5 4.5 0 0 1 .1-4.5z"/>',
+    broom:'<path d="M19 3l-6.5 6.5"/><path d="M11 8l5 5"/><path d="M10.5 9.5c-2 .5-4.5 2.5-5.5 5L3 21l6.5-2c2.5-1 4.5-3.5 5-5.5"/><path d="M6.5 16.5l2 2M8 14l2.5 2.5"/>',
+    inspect:'<rect x="5" y="4" width="14" height="18" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M8.5 13l2.3 2.3 4.7-4.8"/>',
+    overview:'<rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/>'
   };
   function svg(name, extra){
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'+(extra?' '+extra:'')+'>'+ICONS[name]+'</svg>';
@@ -887,10 +892,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/', label:'My Dashboard', icon:'dashboard', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
-    { hash:'#/rules', label:'House Rules', icon:'document', primary:true },
-    { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
-    { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
-    { hash:'#/inspection', label:'Inspection', icon:'document', primary:false },
+    { hash:'#/rules', label:'House Rules', icon:'rules', primary:true },
+    { hash:'#/maintenance', label:'Maintenance', icon:'wrench', primary:false },
+    { hash:'#/cleaning', label:'Cleaning', icon:'broom', primary:false },
+    { hash:'#/inspection', label:'Inspection', icon:'inspect', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
   ];
@@ -978,6 +983,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /* ============ Pages ============ */
   function pageHeader(title, sub){
     return '<div><h1 class="page-title">'+title+'</h1><p class="page-sub">'+sub+'</p></div>';
+  }
+  /** Page title with a coloured icon badge — used by the Property Operations areas so each one
+   *  (Maintenance, Cleaning, Inspection, House Rules) is recognisable at a glance. */
+  function pageHeaderIcon(title, sub, iconName, tone){
+    return '<div class="page-head-icon"><span class="ph-badge tone-'+tone+'">'+svg(iconName)+'</span><div><h1 class="page-title">'+title+'</h1>'+
+      (sub ? '<p class="page-sub">'+sub+'</p>' : '')+'</div></div>';
   }
   /** Friendly empty state: icon (from ICONS/svg), a short headline, a one-line explanation, and an optional action button/link. */
   function emptyState(iconName, title, sub, actionHtml){
@@ -1181,12 +1192,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  simply preset this tab before rendering the hub, so existing links keep working. */
   var propertyOperationsTab = 'overview';
   var PROPERTY_OPERATIONS_TABS = [
-    { key:'overview', label:'Overview' },
-    { key:'maintenance', label:'Maintenance' },
-    { key:'cleaning', label:'Cleaning & Bin' },
-    { key:'inspection', label:'Inspection' },
-    { key:'documents', label:'Documents' },
-    { key:'rules', label:'House Rules' }
+    { key:'overview', label:'Overview', icon:'overview', tone:'overview' },
+    { key:'maintenance', label:'Maintenance', icon:'wrench', tone:'maintenance' },
+    { key:'cleaning', label:'Cleaning & Bin', icon:'broom', tone:'cleaning' },
+    { key:'inspection', label:'Inspection', icon:'inspect', tone:'inspection' },
+    { key:'documents', label:'Documents', icon:'document', tone:'documents' },
+    { key:'rules', label:'House Rules', icon:'rules', tone:'rules' }
   ];
   function setPropertyOperationsTab(tab){
     propertyOperationsTab = tab;
@@ -1195,7 +1206,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.setPropertyOperationsTab = setPropertyOperationsTab; // inline onclick= runs in global scope — must be exposed here
   function propertyOperationsTabBarHtml(){
     return '<div class="po-tabbar">' + PROPERTY_OPERATIONS_TABS.map(function(t){
-      return '<button type="button" class="po-tab'+(t.key===propertyOperationsTab?' active':'')+'" onclick="setPropertyOperationsTab(\''+t.key+'\')">'+esc(t.label)+'</button>';
+      return '<button type="button" class="po-tab tone-'+t.tone+(t.key===propertyOperationsTab?' active':'')+'" onclick="setPropertyOperationsTab(\''+t.key+'\')">'+svg(t.icon, 'class="po-tab-icon"')+esc(t.label)+'</button>';
     }).join('') + '</div>';
   }
   function renderPropertyOperations(){
@@ -6904,7 +6915,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             '</p>'+
             '</div>';
         }).join('');
-    return pageHeader('Maintenance', staff ? 'Every property\'s open and past requests.' : 'Report a problem and track its status.') +
+    return pageHeaderIcon('Maintenance', staff ? 'Every property\'s open and past requests.' : 'Report a problem and track its status.', 'wrench', 'maintenance') +
       '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openMaintenanceModal(null)">'+(staff?'New request':'Report a problem')+'</button>'+
       listHtml + maintenanceLogCardHtml();
   }
@@ -7615,7 +7626,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         calendarHtml + historyHtml;
     }).join('');
 
-    return pageHeader('Cleaning & Bin OUT', "Monthly roster — click a week's Cleaning or Bin OUT pill to reassign it (and every week after it).") +
+    return pageHeaderIcon('Cleaning & Bin OUT', "Monthly roster — click a week's Cleaning or Bin OUT pill to reassign it (and every week after it).", 'broom', 'cleaning') +
       filterHtml +
       (sectionsHtml || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No properties yet.</p></div>') +
       '<p style="font-size:12px;color:var(--text-faint);margin:14px 0 0;">The trash pickup schedule itself (which dates, which colors) still lives on each property\'s page (Properties → open a property).</p>';
@@ -7838,7 +7849,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function renderCleaningTenant(){
     var t = myTenantRecord();
     if (!t || !t.roomId){
-      return pageHeader('Cleaning', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
+      return pageHeaderIcon('Cleaning', '', 'broom', 'cleaning') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
     }
     var p = properties.find(function(x){ return x.id===t.propertyId; }) || { id: t.propertyId };
     // Most recent (current week) first, then the future weeks in order.
@@ -7870,7 +7881,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       : myWeeks.map(function(w){ return tenantWeekCardHtml(p, w); }).join('');
 
     var sectionTitle = function(txt){ return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+txt+'</h2>'; };
-    return pageHeader('My Weekly Responsibilities', "Your room's cleaning and bin turns.") +
+    return pageHeaderIcon('My Weekly Responsibilities', "Your room's cleaning and bin turns.", 'broom', 'cleaning') +
       '<button class="mini-btn" style="margin-bottom:14px;" onclick="openCleaningHistoryModal()">Cleaning history</button>'+
       calendarHtml +
       sectionTitle('My turns') + weeksHtml +
@@ -8560,9 +8571,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function renderInspection(){
     if (isStaff()) return renderInspectionStaff();
     var t = myTenantRecord();
-    if (!t) return pageHeader('Inspection', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
-    if (!t.roomId) return pageHeader('Inspection', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
-    return pageHeader('Inspection', 'Photos of the room when you moved in, and again when you move out.') +
+    if (!t) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
+    if (!t.roomId) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
+    return pageHeaderIcon('Inspection', 'Photos of the room when you moved in, and again when you move out.', 'inspect', 'inspection') +
       inspectionSectionHtml(t.id, 'move_in', true, false) +
       inspectionSectionHtml(t.id, 'move_out', true, false);
   }
@@ -8579,7 +8590,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var pa = propertyOf(a), pb = propertyOf(b);
       return (pa?pa.name:'').localeCompare(pb?pb.name:'');
     });
-    if (!propIds.length) return pageHeader('Inspection', "Move-in and move-out condition photos, per tenant.") +
+    if (!propIds.length) return pageHeaderIcon('Inspection', "Move-in and move-out condition photos, per tenant.", 'inspect', 'inspection') +
       '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No tenants yet.</p></div>';
     var sectionsHtml = propIds.map(function(propId){
       var p = propertyOf(propId);
@@ -8596,7 +8607,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }).join('');
       return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+esc(p?p.name:'—')+'</h2>'+rows;
     }).join('');
-    return pageHeader('Inspection', "Move-in and move-out condition photos, per property.") + sectionsHtml;
+    return pageHeaderIcon('Inspection', "Move-in and move-out condition photos, per property.", 'inspect', 'inspection') + sectionsHtml;
   }
 
   function openInspectionDetailModal(tenantId){
@@ -9431,83 +9442,346 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.confirmAddTenantDocument = confirmAddTenantDocument;
 
   /* ---------- House rules (replaces the tenant "My Documents" tab) ----------
-   * One set per property: text the admin writes (one rule per line) plus an optional file (PDF or
-   * image) — e.g. the signed rules document. Tenants see only their own property's rules. */
-  function houseRulesOf(propertyId){ return houseRules.find(function(r){ return r.propertyId===propertyId; }) || null; }
-  function houseRulesListHtml(content){
-    var lines = (content||'').split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
-    if (!lines.length) return '';
-    var items = [], html = '';
-    function flush(){ if (items.length){ html += '<ol class="rules-list">'+items.join('')+'</ol>'; items = []; } }
-    lines.forEach(function(l){
-      if (/^#+\s*/.test(l) || /:$/.test(l)){ flush(); html += '<h3 class="rules-heading">'+esc(l.replace(/^#+\s*/,''))+'</h3>'; }
-      else items.push('<li>'+esc(l.replace(/^(\d+[.)]|[-*•])\s*/,''))+'</li>');
-    });
-    flush();
-    return html;
+   * Stored per property in house_rules.content as JSON:
+   *   { v:2, sections:[ { id, topic, title, rules:[ { id, text, note, level } ] } ] }
+   * level: 'must' (required) · 'please' (expected courtesy) · 'tip' (good to know).
+   * Older plain-text rules (one per line, "Heading:" lines) are converted on read. */
+  var RULE_TOPICS = [
+    { key:'general',  emoji:'🏠', label:'General',            tone:'#3b6fb6' },
+    { key:'quiet',    emoji:'🌙', label:'Noise & quiet hours', tone:'#6a55c9' },
+    { key:'kitchen',  emoji:'🍳', label:'Kitchen',             tone:'#d0822a' },
+    { key:'bathroom', emoji:'🚿', label:'Bathroom',            tone:'#2a93b8' },
+    { key:'cleaning', emoji:'🧽', label:'Cleaning',            tone:'#2f9a68' },
+    { key:'bins',     emoji:'♻️', label:'Bins & recycling',    tone:'#5c9a2f' },
+    { key:'guests',   emoji:'👥', label:'Guests',              tone:'#c0567d' },
+    { key:'safety',   emoji:'🔥', label:'Safety',              tone:'#d0493a' },
+    { key:'smoking',  emoji:'🚭', label:'Smoking & vaping',    tone:'#8a6d5a' },
+    { key:'laundry',  emoji:'🧺', label:'Laundry',             tone:'#4b8fd6' },
+    { key:'energy',   emoji:'💡', label:'Energy & bills',      tone:'#c9a01c' },
+    { key:'internet', emoji:'📶', label:'Wi-Fi',               tone:'#3d7f8f' },
+    { key:'parking',  emoji:'🚗', label:'Parking',             tone:'#5f6b7a' },
+    { key:'pets',     emoji:'🐾', label:'Pets',                tone:'#a0703a' },
+    { key:'moving',   emoji:'📦', label:'Moving in & out',     tone:'#7a6fb0' },
+    { key:'other',    emoji:'📌', label:'Other',               tone:'#6b7280' }
+  ];
+  var RULE_LEVELS = {
+    must:   { label:'Must',         hint:'Required — breaking it can have consequences' },
+    please: { label:'Please',       hint:'Expected from everyone in the house' },
+    tip:    { label:'Good to know', hint:'Useful information' }
+  };
+  var RULE_LEVEL_ORDER = ['must','please','tip'];
+  function ruleTopic(key){ return RULE_TOPICS.find(function(t){ return t.key===key; }) || RULE_TOPICS[RULE_TOPICS.length-1]; }
+  var ruleIdSeq = 0;
+  function newRuleId(){ return 'r' + Date.now().toString(36) + (++ruleIdSeq); }
+  function guessRuleTopic(title){
+    var t = (title||'').toLowerCase();
+    var hit = RULE_TOPICS.find(function(x){ return t.indexOf(x.label.toLowerCase().split(' ')[0]) > -1 || t.indexOf(x.key) > -1; });
+    return hit ? hit.key : 'general';
   }
+  /** Parses saved content into { sections: [...] } — JSON (v2) or legacy plain text. */
+  function parseHouseRules(content){
+    var raw = (content || '').trim();
+    if (!raw) return { sections: [] };
+    if (raw.charAt(0) === '{'){
+      try {
+        var obj = JSON.parse(raw);
+        if (obj && Array.isArray(obj.sections)){
+          obj.sections.forEach(function(sec){
+            sec.id = sec.id || newRuleId();
+            sec.topic = sec.topic || 'general';
+            sec.rules = (sec.rules || []).map(function(r){ return { id: r.id || newRuleId(), text: r.text || '', note: r.note || '', level: RULE_LEVELS[r.level] ? r.level : 'please' }; });
+          });
+          return { sections: obj.sections };
+        }
+      } catch(_e){ /* fall through to plain text */ }
+    }
+    var sections = [], current = null;
+    raw.split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean).forEach(function(l){
+      if (/^#+\s*/.test(l) || /:$/.test(l)){
+        var title = l.replace(/^#+\s*/, '').replace(/:$/, '');
+        current = { id:newRuleId(), topic:guessRuleTopic(title), title:title, rules:[] };
+        sections.push(current);
+      } else {
+        if (!current){ current = { id:newRuleId(), topic:'general', title:'General', rules:[] }; sections.push(current); }
+        current.rules.push({ id:newRuleId(), text:l.replace(/^(\d+[.)]|[-*•])\s*/, ''), note:'', level:'please' });
+      }
+    });
+    return { sections: sections };
+  }
+  function serializeHouseRules(doc){
+    return JSON.stringify({ v:2, sections: doc.sections.map(function(s){
+      return { id:s.id, topic:s.topic, title:(s.title||'').trim(), rules: s.rules.filter(function(r){ return (r.text||'').trim(); }).map(function(r){
+        return { id:r.id, text:r.text.trim(), note:(r.note||'').trim(), level:r.level };
+      }) };
+    }).filter(function(s){ return s.rules.length || s.title; }) });
+  }
+  function houseRulesCounts(doc){
+    var c = { must:0, please:0, tip:0, total:0 };
+    doc.sections.forEach(function(s){ s.rules.forEach(function(r){ if ((r.text||'').trim()){ c[r.level]++; c.total++; } }); });
+    return c;
+  }
+  var HOUSE_RULES_STARTER = [
+    { topic:'general', title:'General', rules:[
+      ['must','Rent is paid on time, every period.',''],
+      ['please','Treat the house and everyone in it with respect.',''],
+      ['tip','Report anything broken in Maintenance as soon as you notice it.','Photos help us fix it faster.'] ] },
+    { topic:'quiet', title:'Noise & quiet hours', rules:[
+      ['must','Quiet hours are 10 pm – 7 am, every day.','Use headphones for music, calls and TV at night.'],
+      ['please','Keep doors and footsteps soft early in the morning and late at night.',''] ] },
+    { topic:'kitchen', title:'Kitchen', rules:[
+      ['must','Wash, dry and put away your dishes right after cooking.',''],
+      ['please','Label your food and clear out anything expired from the fridge each week.',''],
+      ['tip','Shared basics (oil, salt, dish soap) are split equally — tell the group when they run out.',''] ] },
+    { topic:'bathroom', title:'Bathroom', rules:[
+      ['please','Keep showers to 10 minutes when others are waiting.',''],
+      ['please','Leave the sink and shower free of hair and products.',''] ] },
+    { topic:'bins', title:'Bins & recycling', rules:[
+      ['must','On your Bin OUT week, put the bins out the night before collection.','Check the Cleaning page for your turn and which bins go out.'],
+      ['tip','Yellow = recycling, green = organic, red = general waste.',''] ] },
+    { topic:'guests', title:'Guests', rules:[
+      ['must','No overnight guests without telling the house first.',''],
+      ['please','You are responsible for your guests and the mess they make.',''] ] },
+    { topic:'smoking', title:'Smoking & vaping', rules:[
+      ['must','No smoking or vaping anywhere inside the house.',''] ] },
+    { topic:'safety', title:'Safety', rules:[
+      ['must','Never cover or disconnect the smoke alarms.',''],
+      ['must','Lock the front door when you are the last one out.',''] ] }
+  ];
+  function starterHouseRules(){
+    return { sections: HOUSE_RULES_STARTER.map(function(s){
+      return { id:newRuleId(), topic:s.topic, title:s.title, rules: s.rules.map(function(r){ return { id:newRuleId(), level:r[0], text:r[1], note:r[2] }; }) };
+    }) };
+  }
+  function houseRulesOf(propertyId){ return houseRules.find(function(r){ return r.propertyId===propertyId; }) || null; }
+
+  function ruleLevelPill(level){
+    return '<span class="rl-pill rl-'+level+'">'+esc(RULE_LEVELS[level].label)+'</span>';
+  }
+  function topicTile(topic, big){
+    var t = ruleTopic(topic);
+    return '<span class="rt-tile'+(big?' big':'')+'" style="--tone:'+t.tone+'">'+t.emoji+'</span>';
+  }
+
+  /* ----- Tenant view ----- */
+  var tenantRulesQuery = '';
   function renderTenantHouseRules(){
     var t = myTenantRecord();
-    var header = pageHeader('House Rules', 'The rules of your apartment, set by your administrator.');
-    if (!t) return header + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
+    if (!t) return pageHeaderIcon('House Rules', '', 'rules', 'rules') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
     var r = houseRulesOf(t.propertyId);
     var p = propertyOf(t.propertyId);
-    if (!r || (!r.content.trim() && !r.filePath)){
-      return header + '<div class="card rules-empty"><div style="font-size:34px;">🏡</div><p style="font-size:13.5px;color:var(--text-dim);margin:6px 0 0;">Your administrator hasn\'t added the house rules yet.</p></div>';
+    var doc = parseHouseRules(r ? r.content : '');
+    var header = pageHeaderIcon('House Rules', 'How we live together at '+esc(p?p.name:'your home')+'.', 'rules', 'rules');
+    if (!doc.sections.length && !(r && r.filePath)){
+      return header + '<div class="card rules-empty"><div class="rules-empty-art">🏡</div><p>Your administrator hasn\'t added the house rules yet.<br>You\'ll get a notification when they do.</p></div>';
     }
-    return header + '<div class="card rules-card">'+
-      '<div class="rules-top"><span class="rules-icon">🏡</span><div><div class="rules-prop">'+esc(p?p.name:'')+'</div>'+
-      '<div class="rules-updated">Updated '+shortDate((r.updatedAt||'').slice(0,10))+'</div></div></div>'+
-      houseRulesListHtml(r.content)+
-      (r.filePath ? '<button class="mini-btn" style="margin-top:12px;" onclick="viewReceipt(\'house-rules\',\''+r.filePath+'\')">📄 Open '+esc(r.fileName||'rules document')+'</button>' : '')+
+    var c = houseRulesCounts(doc);
+    var hero = '<div class="card rules-hero">'+
+      '<div class="rules-hero-top">'+topicTile('general', true)+'<div><div class="rules-hero-title">'+esc(p?p.name:'House rules')+'</div>'+
+      '<div class="rules-hero-sub">'+c.total+' rule'+(c.total===1?'':'s')+' in '+doc.sections.length+' topic'+(doc.sections.length===1?'':'s')+(r&&r.updatedAt?' · updated '+shortDate(r.updatedAt.slice(0,10)):'')+'</div></div></div>'+
+      '<div class="rules-levels">'+RULE_LEVEL_ORDER.map(function(l){
+        return '<div class="rules-level rl-bg-'+l+'"><b>'+c[l]+'</b>'+ruleLevelPill(l)+'<span>'+esc(RULE_LEVELS[l].hint)+'</span></div>';
+      }).join('')+'</div>'+
+      (r && r.filePath ? '<button class="mini-btn" style="margin-top:12px;" onclick="viewReceipt(\'house-rules\',\''+r.filePath+'\')">📄 Open the full document'+(r.fileName?' ('+esc(r.fileName)+')':'')+'</button>' : '')+
       '</div>';
+    var nav = doc.sections.length > 1 ? '<div class="rules-jump">'+doc.sections.map(function(s){
+      var tp = ruleTopic(s.topic);
+      return '<button type="button" class="rules-chip" style="--tone:'+tp.tone+'" onclick="document.getElementById(\'rsec-'+s.id+'\').scrollIntoView({behavior:\'smooth\',block:\'start\'})">'+tp.emoji+' '+esc(s.title||tp.label)+'</button>';
+    }).join('')+'</div>' : '';
+    var search = '<div class="rules-search"><input type="search" id="rules-search-input" placeholder="Search the rules — e.g. guests, bins, shower" value="'+esc(tenantRulesQuery)+'" oninput="setTenantRulesQuery(this.value)" /></div>';
+    return header + hero + search + nav + '<div id="rules-sections">'+tenantRulesSectionsHtml(doc)+'</div>';
+  }
+  function tenantRulesSectionsHtml(doc){
+    var q = tenantRulesQuery.trim().toLowerCase();
+    var shown = 0;
+    var html = doc.sections.map(function(s){
+      var tp = ruleTopic(s.topic);
+      var rules = s.rules.filter(function(r){ return !q || (r.text+' '+r.note+' '+(s.title||'')).toLowerCase().indexOf(q) > -1; });
+      if (!rules.length) return '';
+      shown += rules.length;
+      rules = rules.slice().sort(function(a,b){ return RULE_LEVEL_ORDER.indexOf(a.level) - RULE_LEVEL_ORDER.indexOf(b.level); });
+      return '<section class="card rules-section" id="rsec-'+s.id+'" style="--tone:'+tp.tone+'">'+
+        '<header class="rules-section-head">'+topicTile(s.topic)+'<h2>'+esc(s.title||tp.label)+'</h2><span class="rules-count">'+rules.length+'</span></header>'+
+        '<ul class="rules-items">'+rules.map(function(r){
+          return '<li class="rule rule-'+r.level+'">'+ruleLevelPill(r.level)+'<div class="rule-body"><div class="rule-text">'+esc(r.text)+'</div>'+
+            (r.note ? '<div class="rule-note">'+esc(r.note)+'</div>' : '')+'</div></li>';
+        }).join('')+'</ul></section>';
+    }).join('');
+    if (!shown) return '<div class="card rules-empty"><p>No rule mentions “'+esc(tenantRulesQuery)+'”.</p></div>';
+    return html;
+  }
+  function setTenantRulesQuery(v){
+    tenantRulesQuery = v || '';
+    var t = myTenantRecord(); if (!t) return;
+    var r = houseRulesOf(t.propertyId);
+    var box = document.getElementById('rules-sections');
+    if (box) box.innerHTML = tenantRulesSectionsHtml(parseHouseRules(r ? r.content : ''));
+  }
+  window.setTenantRulesQuery = setTenantRulesQuery;
+
+  /* ----- Admin editor ----- */
+  var rulesEditPropertyId = null;
+  var rulesDrafts = {};   // propertyId -> { sections } being edited
+  var rulesDirty = {};    // propertyId -> true when there are unsaved changes
+  var rulesPreview = false;
+  function rulesDraftFor(pid){
+    if (!rulesDrafts[pid]){ var r = houseRulesOf(pid); rulesDrafts[pid] = parseHouseRules(r ? r.content : ''); }
+    return rulesDrafts[pid];
   }
   function renderHouseRulesStaff(){
     var props = properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
-    var header = pageHeader('House Rules', 'The apartment rules each property\'s tenants see in their "House Rules" tab. Write one rule per line; a line ending in ":" becomes a heading.');
+    var header = pageHeaderIcon('House Rules', 'What each property\'s tenants see in their House Rules tab.', 'rules', 'rules');
     if (!props.length) return header + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Add a property first.</p></div>';
-    return header + props.map(function(p){
-      var r = houseRulesOf(p.id) || { content:'', filePath:null, fileName:null };
-      return '<div class="card" style="margin-bottom:12px;">'+
-        '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">🏡 '+esc(p.name)+'</h2>'+
-        (r.updatedAt ? '<span style="font-size:11.5px;color:var(--text-faint);">Updated '+shortDate(r.updatedAt.slice(0,10))+'</span>' : '')+'</div>'+
-        '<textarea id="rules-text-'+p.id+'" class="modal-input rules-textarea" rows="9" placeholder="General:\nNo smoking inside the house\nQuiet hours 10pm – 7am\nKitchen:\nClean the kitchen after using it">'+esc(r.content)+'</textarea>'+
-        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">'+
-          '<label class="mini-btn" style="cursor:pointer;">📎 '+(r.filePath?'Replace file':'Attach PDF / image')+'<input type="file" id="rules-file-'+p.id+'" accept="application/pdf,image/*" hidden onchange="document.getElementById(\'rules-file-name-'+p.id+'\').textContent=this.files[0]?this.files[0].name:\'\'" /></label>'+
-          '<span id="rules-file-name-'+p.id+'" style="font-size:12px;color:var(--text-dim);"></span>'+
-          (r.filePath ? '<button class="text-link" onclick="viewReceipt(\'house-rules\',\''+r.filePath+'\')">Current: '+esc(r.fileName||'file')+'</button>' : '')+
-        '</div>'+
-        '<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="rules-notify-'+p.id+'" checked /> Notify this property\'s tenants that the rules changed</label>'+
-        '<div class="modal-actions"><button class="mini-btn primary" onclick="saveHouseRules(\''+p.id+'\', this)">Save rules</button></div>'+
-        '</div>';
-    }).join('');
+    if (!rulesEditPropertyId || !props.some(function(p){ return p.id===rulesEditPropertyId; })) rulesEditPropertyId = props[0].id;
+    var picker = '<div class="filter-chips" style="margin-bottom:12px;">'+props.map(function(p){
+      var d = rulesDrafts[p.id] || parseHouseRules((houseRulesOf(p.id)||{}).content);
+      var n = houseRulesCounts(d).total;
+      return '<button type="button" class="chip'+(p.id===rulesEditPropertyId?' active':'')+'" onclick="setRulesEditProperty(\''+p.id+'\')">'+esc(p.name)+
+        ' <span class="chip-count">'+(n||'—')+'</span>'+(rulesDirty[p.id]?' •':'')+'</button>';
+    }).join('')+'</div>';
+    return header + picker + '<div id="rules-editor">'+rulesEditorHtml(rulesEditPropertyId)+'</div>';
   }
+  function rulesEditorHtml(pid){
+    var p = propertyOf(pid);
+    var saved = houseRulesOf(pid);
+    var doc = rulesDraftFor(pid);
+    var c = houseRulesCounts(doc);
+    var toolbar = '<div class="card rules-toolbar">'+
+      '<div class="rules-toolbar-info"><b>'+esc(p?p.name:'')+'</b><span>'+
+        (c.total ? c.must+' must · '+c.please+' please · '+c.tip+' good to know' : 'No rules yet')+
+        (saved && saved.updatedAt ? ' — published '+shortDate(saved.updatedAt.slice(0,10)) : ' — not published yet')+
+        (rulesDirty[pid] ? ' <em class="rules-unsaved">Unsaved changes</em>' : '')+'</span></div>'+
+      '<div class="seg"><button type="button" class="'+(!rulesPreview?'on':'')+'" onclick="setRulesPreview(false)">✏️ Edit</button><button type="button" class="'+(rulesPreview?'on':'')+'" onclick="setRulesPreview(true)">👁 Tenant view</button></div>'+
+      '</div>';
+    if (rulesPreview){
+      var box = doc.sections.length ? tenantRulesSectionsHtmlFor(doc) : '<div class="card rules-empty"><p>Nothing to show yet.</p></div>';
+      return toolbar + '<div class="rules-preview">'+box+'</div>' + rulesPublishBarHtml(pid, saved);
+    }
+    if (!doc.sections.length){
+      return toolbar + '<div class="card rules-start">'+
+        '<div class="rules-empty-art">🏡</div><h3>Set up the house rules for '+esc(p?p.name:'this property')+'</h3>'+
+        '<p>Start from a ready-made set of common share-house rules and adjust them, or build your own topic by topic.</p>'+
+        '<div class="rules-start-actions"><button class="mini-btn primary" onclick="rulesUseStarter(\''+pid+'\')">Use the starter set</button>'+
+        '<button class="mini-btn" onclick="rulesAddSection(\''+pid+'\',\'general\')">Start blank</button></div></div>' + rulesPublishBarHtml(pid, saved);
+    }
+    var sectionsHtml = doc.sections.map(function(s, si){
+      var tp = ruleTopic(s.topic);
+      return '<section class="card rules-edit-section" style="--tone:'+tp.tone+'">'+
+        '<div class="res-head">'+
+          '<label class="res-topic" title="Change topic">'+topicTile(s.topic)+
+            '<select onchange="rulesSetTopic(\''+pid+'\','+si+',this.value)">'+RULE_TOPICS.map(function(x){ return '<option value="'+x.key+'"'+(x.key===s.topic?' selected':'')+'>'+x.emoji+' '+esc(x.label)+'</option>'; }).join('')+'</select></label>'+
+          '<input class="res-title" value="'+esc(s.title||'')+'" placeholder="'+esc(tp.label)+'" oninput="rulesSetField(\''+pid+'\','+si+',-1,\'title\',this.value)" />'+
+          '<div class="res-tools">'+
+            '<button type="button" class="icon-btn" title="Move up" '+(si===0?'disabled':'')+' onclick="rulesMoveSection(\''+pid+'\','+si+',-1)">↑</button>'+
+            '<button type="button" class="icon-btn" title="Move down" '+(si===doc.sections.length-1?'disabled':'')+' onclick="rulesMoveSection(\''+pid+'\','+si+',1)">↓</button>'+
+            '<button type="button" class="icon-btn danger" title="Delete topic" onclick="rulesDeleteSection(\''+pid+'\','+si+')">✕</button>'+
+          '</div></div>'+
+        '<div class="res-rules">'+s.rules.map(function(r, ri){
+          return '<div class="res-rule rule-'+r.level+'">'+
+            '<div class="lvl-seg" role="group" aria-label="How strict">'+RULE_LEVEL_ORDER.map(function(l){
+              return '<button type="button" class="lvl lvl-'+l+(r.level===l?' on':'')+'" title="'+esc(RULE_LEVELS[l].hint)+'" onclick="rulesSetLevel(\''+pid+'\','+si+','+ri+',\''+l+'\')">'+esc(RULE_LEVELS[l].label)+'</button>';
+            }).join('')+'</div>'+
+            '<div class="res-rule-main">'+
+              '<textarea rows="1" class="res-text" placeholder="Write the rule in one clear sentence" oninput="autoGrow(this);rulesSetField(\''+pid+'\','+si+','+ri+',\'text\',this.value)">'+esc(r.text)+'</textarea>'+
+              '<input class="res-note" value="'+esc(r.note||'')+'" placeholder="Extra detail (optional) — why, or how" oninput="rulesSetField(\''+pid+'\','+si+','+ri+',\'note\',this.value)" />'+
+            '</div>'+
+            '<div class="res-rule-tools">'+
+              '<button type="button" class="icon-btn" title="Move up" '+(ri===0?'disabled':'')+' onclick="rulesMoveRule(\''+pid+'\','+si+','+ri+',-1)">↑</button>'+
+              '<button type="button" class="icon-btn" title="Move down" '+(ri===s.rules.length-1?'disabled':'')+' onclick="rulesMoveRule(\''+pid+'\','+si+','+ri+',1)">↓</button>'+
+              '<button type="button" class="icon-btn danger" title="Delete rule" onclick="rulesDeleteRule(\''+pid+'\','+si+','+ri+')">✕</button>'+
+            '</div></div>';
+        }).join('')+
+        '<button type="button" class="res-add" onclick="rulesAddRule(\''+pid+'\','+si+')">+ Add a rule</button></div>'+
+        '</section>';
+    }).join('');
+    var used = doc.sections.map(function(s){ return s.topic; });
+    var addTopic = '<div class="card rules-add-topic"><div class="rat-title">Add a topic</div><div class="rat-chips">'+
+      RULE_TOPICS.filter(function(t){ return used.indexOf(t.key)===-1 || t.key==='other'; }).map(function(t){
+        return '<button type="button" class="rules-chip" style="--tone:'+t.tone+'" onclick="rulesAddSection(\''+pid+'\',\''+t.key+'\')">'+t.emoji+' '+esc(t.label)+'</button>';
+      }).join('')+'</div></div>';
+    return toolbar + sectionsHtml + addTopic + rulesPublishBarHtml(pid, saved);
+  }
+  function tenantRulesSectionsHtmlFor(doc){
+    var keep = tenantRulesQuery; tenantRulesQuery = '';
+    var html = tenantRulesSectionsHtml(doc); tenantRulesQuery = keep; return html;
+  }
+  function rulesPublishBarHtml(pid, saved){
+    return '<div class="card rules-publish">'+
+      '<div class="rp-file"><label class="mini-btn" style="cursor:pointer;">📎 '+(saved&&saved.filePath?'Replace document':'Attach signed PDF / image')+
+        '<input type="file" id="rules-file-'+pid+'" accept="application/pdf,image/*" hidden onchange="document.getElementById(\'rules-file-name-'+pid+'\').textContent=this.files[0]?this.files[0].name:\'\';rulesDirty[\''+pid+'\']=true" /></label>'+
+        '<span id="rules-file-name-'+pid+'" class="rp-file-name"></span>'+
+        (saved&&saved.filePath ? '<button class="text-link" onclick="viewReceipt(\'house-rules\',\''+saved.filePath+'\')">Current: '+esc(saved.fileName||'file')+'</button>' : '')+'</div>'+
+      '<label class="rp-notify"><input type="checkbox" id="rules-notify-'+pid+'" checked /> Tell this property\'s tenants the rules changed</label>'+
+      '<button class="mini-btn primary" onclick="saveHouseRules(\''+pid+'\', this)">Publish rules</button>'+
+      '</div>';
+  }
+  window.rulesDirty = rulesDirty;
+  function refreshRulesEditor(){
+    var box = document.getElementById('rules-editor');
+    if (box){ box.innerHTML = rulesEditorHtml(rulesEditPropertyId); box.querySelectorAll('textarea.res-text').forEach(autoGrow); }
+    else renderPreservingScroll();
+  }
+  function autoGrow(el){ el.style.height = 'auto'; el.style.height = (el.scrollHeight) + 'px'; }
+  window.autoGrow = autoGrow;
+  function markRulesDirty(pid){ rulesDirty[pid] = true; var el = document.querySelector('.rules-toolbar-info span'); if (el && el.innerHTML.indexOf('rules-unsaved')===-1) el.innerHTML += ' <em class="rules-unsaved">Unsaved changes</em>'; }
+  window.setRulesEditProperty = function(pid){ rulesEditPropertyId = pid; rulesPreview = false; renderPreservingScroll(); };
+  window.setRulesPreview = function(on){ rulesPreview = !!on; refreshRulesEditor(); };
+  window.rulesUseStarter = function(pid){ rulesDrafts[pid] = starterHouseRules(); rulesDirty[pid] = true; refreshRulesEditor(); };
+  window.rulesAddSection = function(pid, topic){
+    var d = rulesDraftFor(pid);
+    d.sections.push({ id:newRuleId(), topic:topic, title:ruleTopic(topic).label, rules:[{ id:newRuleId(), text:'', note:'', level:'please' }] });
+    rulesDirty[pid] = true; refreshRulesEditor();
+    var last = document.querySelectorAll('.rules-edit-section'); if (last.length){ var ta = last[last.length-1].querySelector('textarea'); if (ta){ last[last.length-1].scrollIntoView({behavior:'smooth',block:'center'}); ta.focus(); } }
+  };
+  window.rulesSetTopic = function(pid, si, topic){ var s = rulesDraftFor(pid).sections[si]; var oldLabel = ruleTopic(s.topic).label; if (!s.title || s.title===oldLabel) s.title = ruleTopic(topic).label; s.topic = topic; rulesDirty[pid] = true; refreshRulesEditor(); };
+  window.rulesSetField = function(pid, si, ri, field, value){
+    var s = rulesDraftFor(pid).sections[si]; if (!s) return;
+    if (ri < 0) s[field] = value; else if (s.rules[ri]) s.rules[ri][field] = value;
+    markRulesDirty(pid);
+  };
+  window.rulesSetLevel = function(pid, si, ri, level){ rulesDraftFor(pid).sections[si].rules[ri].level = level; rulesDirty[pid] = true; refreshRulesEditor(); };
+  window.rulesAddRule = function(pid, si){
+    var s = rulesDraftFor(pid).sections[si]; s.rules.push({ id:newRuleId(), text:'', note:'', level:'please' }); rulesDirty[pid] = true; refreshRulesEditor();
+    var secs = document.querySelectorAll('.rules-edit-section'); var tas = secs[si] ? secs[si].querySelectorAll('textarea') : []; if (tas.length) tas[tas.length-1].focus();
+  };
+  window.rulesDeleteRule = function(pid, si, ri){ rulesDraftFor(pid).sections[si].rules.splice(ri,1); rulesDirty[pid] = true; refreshRulesEditor(); };
+  window.rulesMoveRule = function(pid, si, ri, dir){ var a = rulesDraftFor(pid).sections[si].rules; var j = ri+dir; if (j<0||j>=a.length) return; var x=a[ri]; a[ri]=a[j]; a[j]=x; rulesDirty[pid] = true; refreshRulesEditor(); };
+  window.rulesMoveSection = function(pid, si, dir){ var a = rulesDraftFor(pid).sections; var j = si+dir; if (j<0||j>=a.length) return; var x=a[si]; a[si]=a[j]; a[j]=x; rulesDirty[pid] = true; refreshRulesEditor(); };
+  window.rulesDeleteSection = function(pid, si){
+    var s = rulesDraftFor(pid).sections[si];
+    var filled = s.rules.filter(function(r){ return (r.text||'').trim(); }).length;
+    var go = function(){ rulesDraftFor(pid).sections.splice(si,1); rulesDirty[pid] = true; refreshRulesEditor(); };
+    if (!filled) return go();
+    openConfirmModal('Delete this topic?', '"'+(s.title||ruleTopic(s.topic).label)+'" and its '+filled+' rule'+(filled>1?'s':'')+' will be removed when you publish.', function(){ go(); }, { confirmLabel:'Delete topic', danger:true });
+  };
+
   async function saveHouseRules(propertyId, btn){
-    var text = document.getElementById('rules-text-'+propertyId).value;
+    var doc = rulesDraftFor(propertyId);
     var fileInput = document.getElementById('rules-file-'+propertyId);
     var file = fileInput && fileInput.files && fileInput.files[0];
-    var notify = document.getElementById('rules-notify-'+propertyId).checked;
+    var notifyEl = document.getElementById('rules-notify-'+propertyId);
+    var notify = notifyEl ? notifyEl.checked : false;
     var existing = houseRulesOf(propertyId);
     var label = btn ? btn.textContent : '';
-    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    if (btn){ btn.disabled = true; btn.textContent = 'Publishing…'; }
     try {
       var filePath = existing ? existing.filePath : null, fileName = existing ? existing.fileName : null;
       if (file){ filePath = await houseRulesService.uploadFile(propertyId, file); fileName = file.name; }
-      var saved = await houseRulesService.save({ propertyId: propertyId, content: text, filePath: filePath, fileName: fileName,
+      var saved = await houseRulesService.save({ propertyId: propertyId, content: serializeHouseRules(doc), filePath: filePath, fileName: fileName,
         updatedByProfileId: currentProfile ? currentProfile.id : null });
       houseRules = houseRules.filter(function(r){ return r.propertyId!==propertyId; }).concat([saved]);
+      delete rulesDrafts[propertyId]; delete rulesDirty[propertyId];
       var sentMsg = '';
       if (notify){
         var here = tenants.filter(function(t){ return t.propertyId===propertyId && !tenantHasMovedOut(t); });
         var res = await notificationService.notifyProperty(propertyId, here, 'House rules updated',
-          'Your administrator updated the apartment rules. Open "House Rules" to read them.', 'house_rules', { relatedTable:'house_rules', relatedId: propertyId });
+          'Your administrator updated the house rules. Open "House Rules" to read them.', 'house_rules', { relatedTable:'house_rules', relatedId: propertyId });
         var n = res.filter(function(x){ return x.sent; }).length;
         sentMsg = n ? ' '+n+' tenant'+(n>1?'s were':' was')+' notified.' : '';
       }
-      showToast('House rules saved.' + sentMsg, 'success');
+      showToast('House rules published.' + sentMsg, 'success');
       renderPreservingScroll();
     } catch(err){
-      showToast('Could not save the rules. ' + friendlyErrorMessage(err), 'error');
+      showToast('Could not publish the rules. ' + friendlyErrorMessage(err), 'error');
     } finally { if (btn){ btn.disabled = false; btn.textContent = label; } }
   }
   window.saveHouseRules = saveHouseRules;
