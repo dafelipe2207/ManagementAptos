@@ -9670,9 +9670,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               'Property bill: '+money(b.amount)+' · Total occupancy units: '+a.totalOccupancyFactor.toFixed(1)+
               ' · Your occupancy factor: '+a.occupancyFactor.toFixed(1)+'<br>'+
               money(b.amount)+' ÷ '+a.totalOccupancyFactor.toFixed(1)+' × '+a.occupancyFactor.toFixed(1)+' = '+money(a.amount)+
-              '</p>' : (a.occupancyFactor != null ?
-              '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">Your occupancy factor: '+a.occupancyFactor.toFixed(1)+
-              ' — prorated by the days you (and others) were at the property during this period.</p>' : ''))+
+              '</p>' : '')+
             (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>' : '')+
             reportActionHtml+
             '</div>';
