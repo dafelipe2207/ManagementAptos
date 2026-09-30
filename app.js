@@ -11,7 +11,7 @@ import * as tenantService from './services/tenantService.js?v=6';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
-import * as billService from './services/billService.js?v=3';
+import * as billService from './services/billService.js?v=4';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=2';
@@ -4885,7 +4885,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="row" style="border:none;padding:0;">'+
       '<div class="who"><div class="name">'+esc(billTypeLabel(b.billType))+'</div>'+
       '<div class="meta">'+esc(b.provider)+' • '+esc(p?p.name:'—')+' • '+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</div></div>'+
-      '<div class="amount">'+money(b.amount)+'<br/>'+billStatusBadge(b)+(b.adminPaid?' '+badge('paid','Sent to provider'):'')+'</div>'+
+      '<div class="amount">'+money(b.amount)+'<br/>'+billStatusBadge(b)+(b.adminPaid?' '+badge('paid','Sent to provider'):'')+
+      (b.whatsappGroupSharedAt ? '<div class="wa-mini sent">✓ WhatsApp group</div>' : (isTenantHiddenProvider(b.provider)?'':'<div class="wa-mini">Not sent to group</div>'))+'</div>'+
       '</div></a>';
   }
 
@@ -4896,7 +4897,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var tenantAllocs = b.allocations.filter(function(a){ return !a.isAdmin; });
       var paidCount = tenantAllocs.filter(function(a){ return a.paid; }).length;
       return '<div>'+paidCount+'/'+tenantAllocs.length+' tenants</div>'+
-        '<div style="font-size:11px;color:var(--text-faint);font-weight:400;">'+money(billPaidAmount(b))+' of '+money(b.amount)+'</div>';
+        '<div style="font-size:11px;color:var(--text-faint);font-weight:400;">'+money(billPaidAmount(b))+' of '+money(b.amount)+'</div>'+
+        (isTenantHiddenProvider(b.provider) ? '' : (b.whatsappGroupSharedAt
+          ? '<div class="wa-mini sent" title="Sent '+esc(whatsAppSharedWhen(b.whatsappGroupSharedAt))+'">✓ WhatsApp group</div>'
+          : '<div class="wa-mini">Not sent to group</div>'));
     }
     return '<span style="color:var(--text-faint);">Not yet allocated</span>';
   }
@@ -5764,9 +5768,45 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  includes it as a file. The admin picks the group and taps send; nothing is sent on its own. If
    *  the phone/browser doesn't support sharing files (or sharing at all), falls back to copying the
    *  message to the clipboard and opening the group's link to paste it by hand. */
-  async function shareBillToWhatsAppGroup(billId){
+  /** Saves "sent to the WhatsApp group" on the bill (date + how many times) and refreshes the page. */
+  async function markBillSharedToGroup(bill, shared){
+    try {
+      var saved = await billService.setWhatsAppGroupShared(bill.id, shared, (bill.whatsappGroupShareCount||0) + 1);
+      bill.whatsappGroupSharedAt = saved.whatsappGroupSharedAt;
+      bill.whatsappGroupShareCount = saved.whatsappGroupShareCount;
+      renderPreservingScroll();
+    } catch(err){
+      showToast('Could not save the WhatsApp status. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  function unmarkBillSharedToGroup(billId){
+    var bill = billOf(billId);
+    if (bill) markBillSharedToGroup(bill, false);
+  }
+  window.unmarkBillSharedToGroup = unmarkBillSharedToGroup;
+  function whatsAppSharedWhen(iso){
+    var d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleString('en-AU', { day:'2-digit', month:'short', hour:'numeric', minute:'2-digit' });
+  }
+  /** Status line under the Allocation header: sent to the group (when, how many times) or not yet. */
+  function billWhatsAppGroupStatusHtml(b){
+    if (b.whatsappGroupSharedAt){
+      return '<div class="wa-status sent"><span>✓ Sent to WhatsApp group · '+esc(whatsAppSharedWhen(b.whatsappGroupSharedAt))+
+        (b.whatsappGroupShareCount > 1 ? ' ('+b.whatsappGroupShareCount+' times)' : '')+'</span>'+
+        '<button class="text-link" onclick="unmarkBillSharedToGroup(\''+b.id+'\')">Undo</button></div>';
+    }
+    return '<div class="wa-status pending">Not sent to the WhatsApp group yet</div>';
+  }
+
+  async function shareBillToWhatsAppGroup(billId, confirmed){
     var bill = billOf(billId);
     if (!bill || !bill.allocations || !bill.allocations.length) return;
+    if (bill.whatsappGroupSharedAt && !confirmed){
+      openConfirmModal('Already sent', 'This bill was already sent to the WhatsApp group on '+whatsAppSharedWhen(bill.whatsappGroupSharedAt)+'. Send it again?', function(){
+        setTimeout(function(){ shareBillToWhatsAppGroup(billId, true); }, 0);
+      }, { confirmLabel:'Send again' });
+      return;
+    }
     if (isTenantHiddenProvider(bill.provider)){
       showToast('Bills from this provider are never sent to tenants.', 'error');
       return;
@@ -5786,10 +5826,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     try {
       if (file && navigator.canShare && navigator.canShare({ files: [file] })){
         await navigator.share({ files: [file], text: message, title: 'Bill split' });
+        await markBillSharedToGroup(bill, true);
         return;
       }
       if (navigator.share){
         await navigator.share({ text: message, title: 'Bill split' });
+        await markBillSharedToGroup(bill, true);
         return;
       }
       throw new Error('not supported');
@@ -5802,6 +5844,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         showToast('Copy this message by hand and paste it in the group:\n\n' + message, 'info');
       }
       window.open(whatsAppBusinessLink(property.whatsappGroupLink), '_blank', 'noopener');
+      await markBillSharedToGroup(bill, true);
     }
   }
   window.shareBillToWhatsAppGroup = shareBillToWhatsAppGroup;
@@ -5939,6 +5982,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (isTenantHiddenProvider(b.provider) ? '' : '<button class="mini-btn" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share to WhatsApp group</button>')+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
         '</div></div>'+
+        (isTenantHiddenProvider(b.provider) ? '' : billWhatsAppGroupStatusHtml(b))+
         '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+
         (p && !p.whatsappGroupLink ? ' · <span style="color:var(--text-faint);">No WhatsApp group link set for this property yet.</span>' : '')+
         '</p>'+
