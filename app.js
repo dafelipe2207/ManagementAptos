@@ -9660,7 +9660,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           var payStatus = allocationPaymentStatus(a);
           var reportActionHtml = '';
           if (payStatus === 'unpaid' || payStatus === 'rejected'){
-            reportActionHtml = '<button class="mini-btn" style="margin-top:10px;" onclick="openPaymentReportModal(\''+b.id+'\',\''+a.tenantId+'\')">I made this payment</button>';
+            reportActionHtml = '<button class="mini-btn" style="margin-top:10px;" onclick="openPaymentReportModal(\''+b.id+'\',\''+a.tenantId+'\')">I made this payment</button>'+
+              '<button class="mini-btn" style="margin-top:10px;" onclick="openPaymentReportModal(\''+b.id+'\',\''+a.tenantId+'\');triggerPaymentReportProofUpload()">📎 Attach receipt</button>';
           } else if (payStatus === 'pending_verification'){
             reportActionHtml = '<p style="font-size:12px;color:var(--text-faint);margin:10px 0 0;">Payment verification pending</p>';
           }
