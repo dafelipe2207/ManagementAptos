@@ -12665,6 +12665,32 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }, 60000);
     window.addEventListener('online', function(){ refreshAllData(); });
     setupRealtimeSync();
+    // Pick up newly published versions of the app on its own (phones keep the old page cached,
+    // so changes didn't show until someone tapped ↻): check on return to the app and every 5 min.
+    document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') checkForNewAppVersion(); });
+    setInterval(checkForNewAppVersion, 5*60*1000);
+    checkForNewAppVersion();
+  }
+
+  var RUNNING_APP_VERSION = (function(){
+    var el = document.querySelector('script[src*="app.js"]');
+    var m = el && /app\.js\?v=(\d+)/.exec(el.getAttribute('src'));
+    return m ? m[1] : null;
+  })();
+  var appUpdatePending = false;
+  async function checkForNewAppVersion(){
+    if (!RUNNING_APP_VERSION || appUpdatePending) return;
+    try {
+      var res = await fetch(location.pathname + '?vcheck=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      var m = /app\.js\?v=(\d+)/.exec(await res.text());
+      if (!m || m[1] === RUNNING_APP_VERSION) return;
+      appUpdatePending = true;
+      (function reloadWhenSafe(){
+        if (anyModalOpen()){ setTimeout(reloadWhenSafe, 5000); return; } // never over a half-filled form
+        location.replace(location.pathname + '?r=' + Date.now() + location.hash);
+      })();
+    } catch(_e){ /* offline — try again later */ }
   }
 
   /** Instant sync between devices: Supabase Realtime pushes a notice the moment a row changes in
