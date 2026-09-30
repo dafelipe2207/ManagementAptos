@@ -5994,6 +5994,45 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   // status line above the button already shows when and how many times it went out. There used
   // to be a "Send again?" confirmation, but going through it lost Safari's tap permission, so the
   // share sheet never opened.
+  /** A 30-day link to the bill's document, made ahead of time (when the button is drawn) so it
+   *  can go straight into the group message on tap — WhatsApp group links can't carry a file. */
+  var billInvoiceLinkCache = {}; // receiptPath -> signed URL (string) once ready
+  function prefetchBillInvoiceLink(bill){
+    if (!bill || !bill.receiptPath || billInvoiceLinkCache[bill.receiptPath] !== undefined) return;
+    billInvoiceLinkCache[bill.receiptPath] = null; // in flight
+    storageService.getSignedUrl('receipts', bill.receiptPath, 30*24*3600)
+      .then(function(url){ billInvoiceLinkCache[bill.receiptPath] = url; })
+      .catch(function(){ delete billInvoiceLinkCache[bill.receiptPath]; });
+  }
+
+  /** "Share to WhatsApp group": goes STRAIGHT to the property's group (its saved link) — no
+   *  picking a contact. A group link can only open the chat, not carry text or a file, so the
+   *  message (with a link to the bill's document) is copied first and the admin just pastes it.
+   *  Everything here runs synchronously inside the tap, which Safari needs to allow the copy and
+   *  the new tab. */
+  function sendBillToWhatsAppGroup(billId){
+    var bill = billOf(billId);
+    if (!bill || !bill.allocations || !bill.allocations.length) return;
+    if (isTenantHiddenProvider(bill.provider)){ showToast('Bills from this provider are never sent to tenants.', 'error'); return; }
+    var property = propertyOf(bill.propertyId);
+    if (!property || !property.whatsappGroupLink){ showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error'); return; }
+    var tenantsForMsg = bill.allocations.filter(function(a){ return !a.isAdmin; }).map(function(a){
+      var t = tenantOf(a.tenantId);
+      return { name: t ? t.fullName : 'Tenant', amount: a.amount, paid: !!a.paid };
+    });
+    var message = billGroupWhatsAppMessage(bill, property, tenantsForMsg);
+    var invoiceUrl = bill.receiptPath ? billInvoiceLinkCache[bill.receiptPath] : null;
+    if (invoiceUrl) message += '\n\nBill: ' + invoiceUrl;
+    var copied = false;
+    try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(message); copied = true; } } catch(_e){}
+    window.open(whatsAppBusinessLink(property.whatsappGroupLink), '_blank', 'noopener');
+    showToast(copied
+      ? 'Message copied' + (invoiceUrl ? ' (with the bill link)' : '') + ' — paste it in the group and send.'
+      : 'Opening the group — copy the message by hand:\n\n' + message, copied ? 'success' : 'info');
+    markBillSharedToGroup(bill, true);
+  }
+  window.sendBillToWhatsAppGroup = sendBillToWhatsAppGroup;
+
   async function shareBillToWhatsAppGroup(billId){
     var bill = billOf(billId);
     if (!bill || !bill.allocations || !bill.allocations.length) return;
@@ -6173,7 +6212,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;">Allocation</h2>'+
         '<div style="display:flex;gap:8px;">'+
-        (isTenantHiddenProvider(b.provider) ? '' : (prefetchBillReceiptFile(b), '')+'<button class="mini-btn" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share to WhatsApp group</button>')+
+        (isTenantHiddenProvider(b.provider) ? '' : (prefetchBillReceiptFile(b), prefetchBillInvoiceLink(b), '')+
+          '<button class="mini-btn" onclick="sendBillToWhatsAppGroup(\''+b.id+'\')">Send to WhatsApp group</button>'+
+          (b.receiptPath ? '<button class="mini-btn" title="Pick a chat from the share menu and send the bill file itself" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share bill file…</button>' : ''))+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
         '</div></div>'+
         (isTenantHiddenProvider(b.provider) ? '' : billWhatsAppGroupStatusHtml(b))+
