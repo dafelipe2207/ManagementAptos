@@ -21,6 +21,9 @@ import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as paymentReportService from './services/paymentReportService.js';
+import * as rentPaymentReportService from './services/rentPaymentReportService.js';
+import * as houseRulesService from './services/houseRulesService.js';
+import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as auditService from './services/auditService.js';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js?v=3';
@@ -63,6 +66,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var maintenanceRequests = [];
   var notificationsList = [];
   var paymentReports = []; // tenant-reported payments awaiting admin confirmation — see paymentReportService.js
+  var rentPaymentReports = []; // tenant "I paid my rent" reports (pending until staff confirm) — rentPaymentReportService.js
+  var houseRules = []; // one per property — houseRulesService.js
+  var maintenanceLog = []; // create/edit/delete history of maintenance requests — maintenanceLogService.js
   var cleaningTasks = [];
   var cleaningSubmissions = [];
   var cleaningComments = [];
@@ -881,7 +887,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/', label:'My Dashboard', icon:'dashboard', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
-    { hash:'#/documents', label:'Documents', icon:'document', primary:true },
+    { hash:'#/rules', label:'House Rules', icon:'document', primary:true },
     { hash:'#/maintenance', label:'Maintenance', icon:'document', primary:false },
     { hash:'#/cleaning', label:'Cleaning', icon:'document', primary:false },
     { hash:'#/inspection', label:'Inspection', icon:'document', primary:false },
@@ -1179,7 +1185,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { key:'maintenance', label:'Maintenance' },
     { key:'cleaning', label:'Cleaning & Bin' },
     { key:'inspection', label:'Inspection' },
-    { key:'documents', label:'Documents' }
+    { key:'documents', label:'Documents' },
+    { key:'rules', label:'House Rules' }
   ];
   function setPropertyOperationsTab(tab){
     propertyOperationsTab = tab;
@@ -1198,6 +1205,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       case 'cleaning': body = renderCleaning(); break;
       case 'inspection': body = renderInspection(); break;
       case 'documents': body = renderDocuments(); break;
+      case 'rules': body = renderHouseRulesStaff(); break;
       default: body = renderPropertyOperationsOverview();
     }
     return propertyOperationsTabBarHtml() + body;
@@ -2443,18 +2451,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); });
     var pending = charges.filter(function(c){ return c.status!=='paid'; })
       .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // most recent first
+    var tenantView = isTenantRole();
     function row(c){
       var label = shortDate(c.periodStart)+' – '+shortDate(c.periodEnd);
       if (c.status === 'paid' && c.paidDate) label += ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>';
+      var action = '';
+      if (c.status !== 'paid'){
+        var pendingRep = rentPaymentReports.find(function(r){ return r.tenantId===tenantId && r.status==='pending' && r.periodLabel===c.periodStart; });
+        if (pendingRep) action = badge('upcoming', 'Under review');
+        else if (tenantView) action = '<button class="mini-btn primary" style="padding:3px 10px;font-size:12px;" onclick="openRentReportModal(\''+c.id+'\')">I paid</button>';
+      }
       return '<div class="field-row"><span class="k">'+label+'</span>'+
-        '<span class="v" style="display:flex;align-items:center;gap:8px;">'+money(c.amountDue)+chargeStatusBadge(c)+'</span></div>';
+        '<span class="v" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">'+money(c.amountDue)+chargeStatusBadge(c)+action+'</span></div>';
     }
     var PAID_CAP = 12;
     var pendingShown = pending; // pending items are always shown in full, never truncated
     var pendingExtra = 0;
     var paidShown = paid.slice(0, PAID_CAP);
     var paidExtra = paid.length - paidShown.length;
-    return '<div class="card"><h2>Rent history</h2>'+
+    return tenantRentReportsHtml(tenantId) + '<div class="card"><h2>Rent history</h2>'+
       '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:0 0 6px;">Due &amp; upcoming ('+pending.length+')</h3>'+
       (pendingShown.length ? '<div class="field-list">'+pendingShown.map(row).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0 0 10px;">Nothing due right now.</p>')+
       (pendingExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+pendingExtra+' more further out, not shown.</p>' : '')+
@@ -2463,6 +2478,176 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (paidExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+paidExtra+' earlier paid periods not shown.</p>' : '')+
       '</div>';
   }
+
+  var RENT_METHOD_LABEL = { bank_transfer:'Bank transfer', cash:'Cash', card:'Card', other:'Other' };
+  var RENT_REPORT_BADGE = { pending:['upcoming','Pending review'], confirmed:['paid','Confirmed'], rejected:['overdue','Rejected'] };
+  /** The tenant's own recent rent payment reports (pending first), so they can see that the
+   *  admin still has to confirm, or why one was rejected. Shown above Rent history. */
+  function tenantRentReportsHtml(tenantId){
+    var mine = rentPaymentReports.filter(function(r){ return r.tenantId===tenantId; });
+    if (!mine.length) return '';
+    var pending = mine.filter(function(r){ return r.status==='pending'; });
+    var recent = mine.filter(function(r){ return r.status!=='pending'; }).slice(0, 5);
+    var rows = pending.concat(recent).map(function(r){
+      var b = RENT_REPORT_BADGE[r.status] || ['neutral', r.status];
+      return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+money(r.amount)+' · paid '+shortDate(r.paymentDate)+
+        (r.paymentMethod ? ' · '+esc(RENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod) : '')+
+        (r.status==='rejected' && r.rejectionReason ? '<br><span style="font-size:12px;color:var(--status-overdue);">Reason: '+esc(r.rejectionReason)+'</span>' : '')+
+        '</span><span class="v" style="display:flex;gap:6px;align-items:center;">'+
+        (r.proofPath ? '<button class="text-link" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">Receipt</button>' : '')+
+        badge(b[0], b[1])+'</span></div>';
+    }).join('');
+    return '<div class="card"><h2>My rent payment reports</h2>'+
+      (pending.length ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 6px;">⏳ Waiting for your administrator to confirm '+pending.length+' payment'+(pending.length>1?'s':'')+'.</p>' : '')+
+      '<div class="field-list">'+rows+'</div></div>';
+  }
+
+  var rentReportChargeId = null, rentReportProofPath = null;
+  function openRentReportModal(chargeId){
+    var charge = rentCharges.find(function(c){ return c.id===chargeId; });
+    if (!charge) return;
+    var owed = rentCharges
+      .filter(function(c){ return c.tenantId===charge.tenantId && c.periodStart<=charge.periodStart; })
+      .reduce(function(sum,c){ return sum + c.remaining; }, 0);
+    rentReportChargeId = chargeId;
+    rentReportProofPath = null;
+    document.getElementById('rent-report-modal-sub').textContent = 'Rent ' + shortDate(charge.periodStart) + ' – ' + shortDate(charge.periodEnd) + ' • owed ' + money(owed);
+    document.getElementById('rent-report-amount').value = (Math.round(owed*100)/100).toFixed(2);
+    document.getElementById('rent-report-date').value = TODAY;
+    document.getElementById('rent-report-method').value = 'bank_transfer';
+    document.getElementById('rent-report-reference').value = '';
+    document.getElementById('rent-report-proof-status').textContent = 'Photo or PDF of the transfer/receipt';
+    document.getElementById('rent-report-modal-error').hidden = true;
+    document.getElementById('rent-report-modal').hidden = false;
+  }
+  function closeRentReportModal(){
+    document.getElementById('rent-report-modal').hidden = true;
+    rentReportChargeId = null; rentReportProofPath = null;
+  }
+  async function handleRentReportProofFile(event){
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    var status = document.getElementById('rent-report-proof-status');
+    status.textContent = 'Uploading…';
+    try {
+      rentReportProofPath = await storageService.uploadReceipt('rent-report', file);
+      status.textContent = '✓ ' + (file.name || 'Receipt attached');
+    } catch(err){
+      rentReportProofPath = null;
+      status.textContent = 'Could not attach it — try again.';
+      showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  async function submitRentReport(){
+    var charge = rentCharges.find(function(c){ return c.id===rentReportChargeId; });
+    var t = myTenantRecord();
+    var errorEl = document.getElementById('rent-report-modal-error');
+    if (!charge || !t) return;
+    var amount = Math.round(parseFloat(document.getElementById('rent-report-amount').value)*100)/100;
+    var date = document.getElementById('rent-report-date').value;
+    if (!isFinite(amount) || amount <= 0 || !date){
+      errorEl.textContent = 'Enter the amount you paid and the date.'; errorEl.hidden = false; return;
+    }
+    var btn = document.getElementById('rent-report-submit-btn');
+    var label = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      var created = await rentPaymentReportService.create({
+        tenantId: t.id, propertyId: t.propertyId, amount: amount, paymentDate: date,
+        paymentMethod: document.getElementById('rent-report-method').value,
+        reference: document.getElementById('rent-report-reference').value.trim(),
+        proofPath: rentReportProofPath, periodLabel: charge.periodStart
+      });
+      rentPaymentReports.unshift(created);
+      closeRentReportModal();
+      showToast('Sent — your administrator will confirm the payment.', 'success');
+      render();
+    } catch(err){
+      errorEl.textContent = friendlyErrorMessage(err); errorEl.hidden = false;
+    } finally { btn.disabled = false; btn.textContent = label; }
+  }
+  window.openRentReportModal = openRentReportModal;
+  window.closeRentReportModal = closeRentReportModal;
+  window.handleRentReportProofFile = handleRentReportProofFile;
+  window.submitRentReport = submitRentReport;
+
+  /** Staff: tenant rent payments waiting for review — Confirm records the real payment (same as
+   *  "Mark as paid") and marks the report confirmed; Reject asks for a reason. The tenant is
+   *  notified either way. */
+  function staffRentReportsHtml(){
+    var pending = rentPaymentReports.filter(function(r){ return r.status==='pending'; })
+      .sort(function(a,b){ return (a.reportedAt||'').localeCompare(b.reportedAt||''); });
+    if (!pending.length) return '';
+    return '<div class="card review-card"><h2>🔔 Rent payments to review ('+pending.length+')</h2>'+
+      pending.map(function(r){
+        var t = tenantOf(r.tenantId);
+        var p = propertyOf(r.propertyId);
+        return '<div class="review-row">'+
+          '<div class="review-main"><div class="review-title">'+esc(t?t.fullName:'Tenant')+' · <b>'+money(r.amount)+'</b></div>'+
+          '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(RENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
+            (r.reference?' · Ref: '+esc(r.reference):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
+          '<div class="review-actions">'+
+            (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>' : '<span style="font-size:11.5px;color:var(--text-faint);">No receipt</span>')+
+            '<button class="mini-btn" onclick="openRentRejectModal(\''+r.id+'\')">Reject</button>'+
+            '<button class="mini-btn primary" onclick="confirmRentReport(\''+r.id+'\', this)">Confirm paid</button>'+
+          '</div></div>';
+      }).join('')+'</div>';
+  }
+  async function confirmRentReport(reportId, btn){
+    var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
+    if (!r || r.status!=='pending') return;
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    var saved = await recordPayment(r.tenantId, r.amount, r.paymentDate, 'cash');
+    if (!saved){ if (btn){ btn.disabled = false; btn.textContent = 'Confirm paid'; } return; }
+    try {
+      var updated = await rentPaymentReportService.confirm(r.id, currentProfile ? currentProfile.id : null, saved.id);
+      Object.assign(r, updated);
+      var t = tenantOf(r.tenantId);
+      if (t && t.authUserId){
+        await notificationService.notify(t.authUserId, 'Rent payment confirmed',
+          'Your payment of '+money(r.amount)+' ('+shortDate(r.paymentDate)+') was confirmed. Thank you!', 'rent_payment_reports', r.id, { category:'rent' });
+      }
+      showToast('Payment confirmed and recorded.', 'success');
+    } catch(err){
+      showToast('The payment was recorded, but the report could not be marked confirmed. ' + friendlyErrorMessage(err), 'error');
+    }
+    render();
+  }
+  var rentRejectReportId = null;
+  function openRentRejectModal(reportId){
+    var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
+    if (!r) return;
+    var t = tenantOf(r.tenantId);
+    rentRejectReportId = reportId;
+    document.getElementById('rent-reject-modal-sub').textContent = (t?t.fullName:'') + ' • ' + money(r.amount) + ' • ' + shortDate(r.paymentDate);
+    document.getElementById('rent-reject-reason').value = '';
+    document.getElementById('rent-reject-modal-error').hidden = true;
+    document.getElementById('rent-reject-modal').hidden = false;
+  }
+  function closeRentRejectModal(){ document.getElementById('rent-reject-modal').hidden = true; rentRejectReportId = null; }
+  async function submitRentReject(){
+    var r = rentPaymentReports.find(function(x){ return x.id===rentRejectReportId; });
+    var errorEl = document.getElementById('rent-reject-modal-error');
+    var reason = document.getElementById('rent-reject-reason').value.trim();
+    if (!r) return;
+    if (!reason){ errorEl.textContent = 'Write a short reason for the tenant.'; errorEl.hidden = false; return; }
+    try {
+      var updated = await rentPaymentReportService.reject(r.id, currentProfile ? currentProfile.id : null, reason);
+      Object.assign(r, updated);
+      var t = tenantOf(r.tenantId);
+      if (t && t.authUserId){
+        await notificationService.notify(t.authUserId, 'Rent payment could not be confirmed',
+          money(r.amount)+' ('+shortDate(r.paymentDate)+'): '+reason, 'rent_payment_reports', r.id, { category:'rent' });
+      }
+      closeRentRejectModal();
+      showToast('Payment report rejected — the tenant was notified.', 'success');
+      render();
+    } catch(err){ errorEl.textContent = friendlyErrorMessage(err); errorEl.hidden = false; }
+  }
+  window.confirmRentReport = confirmRentReport;
+  window.openRentRejectModal = openRentRejectModal;
+  window.closeRentRejectModal = closeRentRejectModal;
+  window.submitRentReject = submitRentReject;
 
   function paymentDayLabel(t){
     if (t.rentFrequency==='monthly') return 'Day '+t.paymentDay+' of the month';
@@ -2786,7 +2971,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   function renderPayments(){
-    return pageHeader('Payments', "What tenants owe on rent and shared bills, what they've paid, and what's outstanding.") + renderPaymentsRentTab();
+    return pageHeader('Payments', "What tenants owe on rent and shared bills, what they've paid, and what's outstanding.") + staffRentReportsHtml() + renderPaymentsRentTab();
   }
 
   var billsFilter = 'all';
@@ -4050,8 +4235,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         // longer lives there) — they were left at $0 from an earlier allocation and shouldn't keep showing up.
         }).filter(function(row){ return row.isAdmin || row.days > 0 || row.amount > 0; })
       : [];
-    var rows = existingRows.length ? existingRows : computeAllocationRows(bill, 'days');
-    allocationDraft = { billId: billId, method: existingRows.length ? 'custom' : 'days', periodDays: totalDays, rows: rows };
+    // Always opens on "By occupancy factor" (the admin's default). The amounts already saved are
+    // kept aside so choosing "Custom" starts from them instead of from the factor split.
+    allocationDraft = { billId: billId, method: 'occupancy', periodDays: totalDays,
+      rows: computeAllocationRows(bill, 'occupancy'), savedRows: existingRows };
     document.getElementById('allocate-modal-sub').textContent =
       esc(bill.provider) + ' • ' + money(bill.amount) + ' • ' + shortDate(bill.billingPeriodStart) + ' – ' + shortDate(bill.billingPeriodEnd);
     renderAllocateModal();
@@ -4066,8 +4253,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var bill = billOf(allocationDraft.billId);
     allocationDraft.method = method;
     if (method === 'custom'){
-      // Starts from the last distribution visible on screen instead of resetting to zero.
-      allocationDraft.rows = allocationDraft.rows.slice();
+      // Starts from the amounts already saved on the bill (if any); otherwise from the last
+      // distribution visible on screen instead of resetting to zero.
+      allocationDraft.rows = (allocationDraft.savedRows && allocationDraft.savedRows.length)
+        ? allocationDraft.savedRows.map(function(r){ return Object.assign({}, r); })
+        : allocationDraft.rows.slice();
     } else {
       allocationDraft.rows = computeAllocationRows(bill, method);
     }
@@ -6317,6 +6507,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       openCall = 'location.hash=\'#/cleaning\'';
     } else if (n.relatedTable === 'inspection_submissions' && n.relatedId){
       openCall = 'location.hash=\'#/inspection\'';
+    } else if (n.relatedTable === 'rent_payment_reports'){
+      openCall = 'location.hash=\'#/payments\'';
+    } else if (n.relatedTable === 'house_rules'){
+      openCall = 'location.hash=\'#/rules\'';
     }
     if (!openCall) return '';
     return ' onclick="markDbNotifRead(\''+n.id+'\');'+openCall+'"';
@@ -6638,7 +6832,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         }).join('');
     return pageHeader('Maintenance', staff ? 'Every property\'s open and past requests.' : 'Report a problem and track its status.') +
       '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openMaintenanceModal(null)">'+(staff?'New request':'Report a problem')+'</button>'+
-      listHtml;
+      listHtml + maintenanceLogCardHtml();
   }
 
   var maintenanceModalEditId = null;
@@ -6659,7 +6853,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var prefill = (!id && maintenanceModalPrefill) ? maintenanceModalPrefill : null;
     if (id) maintenanceModalPrefill = null;
     var staff = isStaff();
-    document.getElementById('maintenance-modal-title').textContent = m ? 'Maintenance request' : 'Report a problem';
+    var myT = staff ? null : myTenantRecord();
+    var tenantCanEdit = !!(m && !staff && myT && m.tenantId===myT.id && m.status==='reported');
+    var lockForTenant = !!(m && !staff && !tenantCanEdit);
+    document.getElementById('maintenance-modal-title').textContent = m ? (staff || tenantCanEdit ? 'Edit maintenance request' : 'Maintenance request') : 'Report a problem';
     document.getElementById('maintenance-property-row').hidden = !staff;
     document.getElementById('maintenance-room-row').hidden = !staff;
     document.getElementById('maintenance-status-row').hidden = !(staff && m);
@@ -6686,15 +6883,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       else if (prefill && prefill.roomId) document.getElementById('maintenance-room').value = prefill.roomId;
     }
     document.getElementById('maintenance-title').value = m ? m.title : (prefill ? prefill.title : '');
-    document.getElementById('maintenance-title').disabled = !!(m && !staff);
+    document.getElementById('maintenance-title').disabled = lockForTenant;
     document.getElementById('maintenance-description').value = m ? (m.description||'') : (prefill ? prefill.description : '');
-    document.getElementById('maintenance-description').disabled = !!(m && !staff);
+    document.getElementById('maintenance-description').disabled = lockForTenant;
     document.getElementById('maintenance-category').value = m ? m.category : 'other';
-    document.getElementById('maintenance-category').disabled = !!(m && !staff);
+    document.getElementById('maintenance-category').disabled = lockForTenant;
     var prioritySelect = document.getElementById('maintenance-priority');
     prioritySelect.innerHTML = MAINTENANCE_PRIORITY_ORDER.map(function(v){ return '<option value="'+v+'">'+MAINTENANCE_PRIORITY_LABEL[v]+'</option>'; }).join('');
     prioritySelect.value = m ? m.priority : (prefill ? prefill.priority : 'medium');
-    prioritySelect.disabled = !!(m && !staff);
+    prioritySelect.disabled = lockForTenant;
     var statusSelect = document.getElementById('maintenance-status');
     statusSelect.innerHTML = MAINTENANCE_STATUS_ORDER.map(function(v){ return '<option value="'+v+'">'+MAINTENANCE_STATUS_LABEL[v]+'</option>'; }).join('');
     statusSelect.value = m ? m.status : 'reported';
@@ -6722,7 +6919,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('maintenance-modal-error').hidden = true;
     document.getElementById('maintenance-modal').hidden = false;
     var saveBtn = document.querySelector('#maintenance-modal .mini-btn.primary');
-    if (saveBtn) saveBtn.hidden = false;
+    if (saveBtn) saveBtn.hidden = lockForTenant;
+    document.getElementById('maintenance-delete-btn').hidden = !(m && (staff || tenantCanEdit));
+    var editNote = document.getElementById('maintenance-edit-note');
+    editNote.hidden = !(m && !staff);
+    editNote.textContent = tenantCanEdit ? 'You can edit or delete this request until your administrator starts working on it.'
+      : 'Your administrator is already handling this request, so it can no longer be edited. Every change is recorded in the history below.';
+    renderMaintenanceHistory(m ? m.id : null);
     renderMaintenancePhotosPreview('before', m ? (m.photosBefore||[]) : (prefill ? prefill.photosBefore : []));
     renderMaintenancePhotosPreview('during', m ? (m.photosDuring||[]) : []);
     renderMaintenancePhotosPreview('after', m ? (m.photosAfter||[]) : []);
@@ -6842,9 +7045,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         errorEl.hidden = false;
         return;
       }
-      propertyId = myTenant.propertyId;
-      roomId = myTenant.roomId || null;
-      tenantId = myTenant.id;
+      propertyId = existing ? existing.propertyId : myTenant.propertyId;
+      roomId = existing ? existing.roomId : (myTenant.roomId || null);
+      tenantId = existing ? existing.tenantId : myTenant.id;
     }
 
     var photoFilesBefore = document.getElementById('maintenance-photo-before').files;
@@ -6900,6 +7103,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
       closeMaintenanceModal();
       showToast('Maintenance request saved.', 'success');
+      await refreshMaintenanceLog();
       await refreshOperationsReadModels();
       render();
     } catch(err){
@@ -6910,6 +7114,77 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   window.saveMaintenanceForm = saveMaintenanceForm;
+
+  /* ---------- Maintenance: delete + change history ---------- */
+  async function refreshMaintenanceLog(){
+    try { maintenanceLog = await maintenanceLogService.getAll(); } catch(_e){ /* history is best-effort */ }
+  }
+  var MAINT_FIELD_LABEL = { title:'Title', description:'Description', category:'Category', priority:'Priority', status:'Status',
+    assigned_to:'Assigned to', due_date:'Due date', resolution_notes:'Resolution notes', room_id:'Room',
+    photos_before:'Photos (before)', photos_during:'Photos (during)', photos_after:'Photos (after)' };
+  function maintLogValue(key, v){
+    if (v === null || v === undefined || v === '') return '—';
+    if (key==='status') return MAINTENANCE_STATUS_LABEL[v] || v;
+    if (key==='priority') return MAINTENANCE_PRIORITY_LABEL[v] || v;
+    if (key==='category') return MAINTENANCE_CATEGORY_LABEL[v] || v;
+    if (key==='due_date') return shortDate(v);
+    if (key==='room_id'){ var r = roomOf(v); return r ? r.name : '—'; }
+    var str = String(v);
+    return str.length > 60 ? str.slice(0,60)+'…' : str;
+  }
+  var MAINT_ACTION_META = { created:['🆕','Created'], updated:['✏️','Edited'], deleted:['🗑️','Deleted'] };
+  function maintenanceLogEntryHtml(e, showTitle){
+    var meta = MAINT_ACTION_META[e.action] || ['•', e.action];
+    var who = (e.actorName || '').trim() || (e.actorRole==='tenant' ? 'Tenant' : 'Administrator');
+    var when = new Date(e.createdAt);
+    var whenTxt = isNaN(when) ? '' : when.toLocaleString('en-AU', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+    var changesHtml = '';
+    if (e.action==='updated'){
+      changesHtml = '<ul class="mlog-changes">'+Object.keys(e.changes||{}).map(function(k){
+        var c = e.changes[k] || {};
+        if (/^photos_/.test(k)) return '<li>'+esc(MAINT_FIELD_LABEL[k]||k)+': '+c.from+' → '+c.to+'</li>';
+        return '<li>'+esc(MAINT_FIELD_LABEL[k]||k)+': <s>'+esc(maintLogValue(k, c.from))+'</s> → <b>'+esc(maintLogValue(k, c.to))+'</b></li>';
+      }).join('')+'</ul>';
+    }
+    return '<div class="mlog-entry mlog-'+e.action+'"><span class="mlog-icon">'+meta[0]+'</span><div class="mlog-body">'+
+      '<div class="mlog-head"><b>'+meta[1]+'</b>'+(showTitle ? ' · '+esc(e.title||'') : '')+' <span class="mlog-who">by '+esc(who)+(e.actorRole?' ('+esc(e.actorRole.replace('_',' '))+')':'')+' · '+esc(whenTxt)+'</span></div>'+
+      changesHtml+'</div></div>';
+  }
+  function renderMaintenanceHistory(requestId){
+    var box = document.getElementById('maintenance-history');
+    var list = document.getElementById('maintenance-history-list');
+    if (!box || !list) return;
+    var entries = requestId ? maintenanceLog.filter(function(e){ return e.requestId===requestId; }) : [];
+    box.hidden = !entries.length;
+    box.open = false;
+    list.innerHTML = entries.map(function(e){ return maintenanceLogEntryHtml(e, false); }).join('');
+  }
+  /** Everything that happened to maintenance requests, newest first — including deleted ones, so
+   *  nothing disappears without a trace. Tenants see only their own (RLS). */
+  function maintenanceLogCardHtml(){
+    if (!maintenanceLog.length) return '';
+    var shown = maintenanceLog.slice(0, 30);
+    return '<details class="card mt-history" style="margin-top:14px;"><summary>📜 Change log ('+maintenanceLog.length+')</summary>'+
+      shown.map(function(e){ return maintenanceLogEntryHtml(e, true); }).join('')+
+      (maintenanceLog.length > shown.length ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">Showing the latest '+shown.length+'.</p>' : '')+
+      '</details>';
+  }
+  function deleteMaintenanceRequest(){
+    var id = maintenanceModalEditId;
+    var m = id ? maintenanceRequests.find(function(x){ return x.id===id; }) : null;
+    if (!m) return;
+    openConfirmModal('Delete this request?', '"'+m.title+'" will be removed. A copy stays in the change log.', async function(){
+      await maintenanceService.remove(m.id);
+      maintenanceRequests = maintenanceRequests.filter(function(x){ return x.id!==m.id; });
+      closeMaintenanceModal();
+      // Staff are notified by the DB (log_maintenance_change) when a tenant deletes their own request.
+      await refreshMaintenanceLog();
+      try { await refreshOperationsReadModels(); } catch(_e){}
+      showToast('Maintenance request deleted.', 'success');
+      render();
+    }, { confirmLabel:'Delete', danger:true });
+  }
+  window.deleteMaintenanceRequest = deleteMaintenanceRequest;
 
   /* ============ Cleaning organizer + trash agenda ============
    * cleaningTasks: one row per (room, scheduled date) — "it's this room's turn on this date",
@@ -8854,7 +9129,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       : rows.map(function(pmt){
           return '<div class="card"><div class="field-row"><span class="k">'+shortDate(pmt.date)+'</span><span class="v">'+money(pmt.amount)+'</span></div></div>';
         }).join('');
-    return pageHeader('My Payments', 'Rent payments on file. You can view these — only staff can change them.') + body;
+    return pageHeader('My Payments', 'Your rent. Paid it? Tap "I paid" and attach the receipt — it stays pending until your administrator confirms it.') +
+      (t ? tenantRentHistoryHtml(t.id) : '') +
+      '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">Payments on file</h2>' + body;
   }
 
   var MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -9078,6 +9355,88 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   window.confirmAddTenantDocument = confirmAddTenantDocument;
+
+  /* ---------- House rules (replaces the tenant "My Documents" tab) ----------
+   * One set per property: text the admin writes (one rule per line) plus an optional file (PDF or
+   * image) — e.g. the signed rules document. Tenants see only their own property's rules. */
+  function houseRulesOf(propertyId){ return houseRules.find(function(r){ return r.propertyId===propertyId; }) || null; }
+  function houseRulesListHtml(content){
+    var lines = (content||'').split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
+    if (!lines.length) return '';
+    var items = [], html = '';
+    function flush(){ if (items.length){ html += '<ol class="rules-list">'+items.join('')+'</ol>'; items = []; } }
+    lines.forEach(function(l){
+      if (/^#+\s*/.test(l) || /:$/.test(l)){ flush(); html += '<h3 class="rules-heading">'+esc(l.replace(/^#+\s*/,''))+'</h3>'; }
+      else items.push('<li>'+esc(l.replace(/^(\d+[.)]|[-*•])\s*/,''))+'</li>');
+    });
+    flush();
+    return html;
+  }
+  function renderTenantHouseRules(){
+    var t = myTenantRecord();
+    var header = pageHeader('House Rules', 'The rules of your apartment, set by your administrator.');
+    if (!t) return header + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
+    var r = houseRulesOf(t.propertyId);
+    var p = propertyOf(t.propertyId);
+    if (!r || (!r.content.trim() && !r.filePath)){
+      return header + '<div class="card rules-empty"><div style="font-size:34px;">🏡</div><p style="font-size:13.5px;color:var(--text-dim);margin:6px 0 0;">Your administrator hasn\'t added the house rules yet.</p></div>';
+    }
+    return header + '<div class="card rules-card">'+
+      '<div class="rules-top"><span class="rules-icon">🏡</span><div><div class="rules-prop">'+esc(p?p.name:'')+'</div>'+
+      '<div class="rules-updated">Updated '+shortDate((r.updatedAt||'').slice(0,10))+'</div></div></div>'+
+      houseRulesListHtml(r.content)+
+      (r.filePath ? '<button class="mini-btn" style="margin-top:12px;" onclick="viewReceipt(\'house-rules\',\''+r.filePath+'\')">📄 Open '+esc(r.fileName||'rules document')+'</button>' : '')+
+      '</div>';
+  }
+  function renderHouseRulesStaff(){
+    var props = properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+    var header = pageHeader('House Rules', 'The apartment rules each property\'s tenants see in their "House Rules" tab. Write one rule per line; a line ending in ":" becomes a heading.');
+    if (!props.length) return header + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Add a property first.</p></div>';
+    return header + props.map(function(p){
+      var r = houseRulesOf(p.id) || { content:'', filePath:null, fileName:null };
+      return '<div class="card" style="margin-bottom:12px;">'+
+        '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">🏡 '+esc(p.name)+'</h2>'+
+        (r.updatedAt ? '<span style="font-size:11.5px;color:var(--text-faint);">Updated '+shortDate(r.updatedAt.slice(0,10))+'</span>' : '')+'</div>'+
+        '<textarea id="rules-text-'+p.id+'" class="modal-input rules-textarea" rows="9" placeholder="General:\nNo smoking inside the house\nQuiet hours 10pm – 7am\nKitchen:\nClean the kitchen after using it">'+esc(r.content)+'</textarea>'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">'+
+          '<label class="mini-btn" style="cursor:pointer;">📎 '+(r.filePath?'Replace file':'Attach PDF / image')+'<input type="file" id="rules-file-'+p.id+'" accept="application/pdf,image/*" hidden onchange="document.getElementById(\'rules-file-name-'+p.id+'\').textContent=this.files[0]?this.files[0].name:\'\'" /></label>'+
+          '<span id="rules-file-name-'+p.id+'" style="font-size:12px;color:var(--text-dim);"></span>'+
+          (r.filePath ? '<button class="text-link" onclick="viewReceipt(\'house-rules\',\''+r.filePath+'\')">Current: '+esc(r.fileName||'file')+'</button>' : '')+
+        '</div>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="rules-notify-'+p.id+'" checked /> Notify this property\'s tenants that the rules changed</label>'+
+        '<div class="modal-actions"><button class="mini-btn primary" onclick="saveHouseRules(\''+p.id+'\', this)">Save rules</button></div>'+
+        '</div>';
+    }).join('');
+  }
+  async function saveHouseRules(propertyId, btn){
+    var text = document.getElementById('rules-text-'+propertyId).value;
+    var fileInput = document.getElementById('rules-file-'+propertyId);
+    var file = fileInput && fileInput.files && fileInput.files[0];
+    var notify = document.getElementById('rules-notify-'+propertyId).checked;
+    var existing = houseRulesOf(propertyId);
+    var label = btn ? btn.textContent : '';
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      var filePath = existing ? existing.filePath : null, fileName = existing ? existing.fileName : null;
+      if (file){ filePath = await houseRulesService.uploadFile(propertyId, file); fileName = file.name; }
+      var saved = await houseRulesService.save({ propertyId: propertyId, content: text, filePath: filePath, fileName: fileName,
+        updatedByProfileId: currentProfile ? currentProfile.id : null });
+      houseRules = houseRules.filter(function(r){ return r.propertyId!==propertyId; }).concat([saved]);
+      var sentMsg = '';
+      if (notify){
+        var here = tenants.filter(function(t){ return t.propertyId===propertyId && !tenantHasMovedOut(t); });
+        var res = await notificationService.notifyProperty(propertyId, here, 'House rules updated',
+          'Your administrator updated the apartment rules. Open "House Rules" to read them.', 'house_rules', { relatedTable:'house_rules', relatedId: propertyId });
+        var n = res.filter(function(x){ return x.sent; }).length;
+        sentMsg = n ? ' '+n+' tenant'+(n>1?'s were':' was')+' notified.' : '';
+      }
+      showToast('House rules saved.' + sentMsg, 'success');
+      renderPreservingScroll();
+    } catch(err){
+      showToast('Could not save the rules. ' + friendlyErrorMessage(err), 'error');
+    } finally { if (btn){ btn.disabled = false; btn.textContent = label; } }
+  }
+  window.saveHouseRules = saveHouseRules;
 
   function renderTenantDocuments(){
     var t = myTenantRecord();
@@ -10057,6 +10416,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     '#/reports': renderReports,
     '#/profits': renderProfits,
     '#/documents': routeToOperationsTab('#/documents', 'documents'),
+    '#/rules': routeToOperationsTab('#/rules', 'rules'),
     '#/notifications': function(){ return isTenantRole() ? renderNotifications() : renderNotificationsStaff(); },
     '#/users': renderUsers,
     '#/audit-log': renderAuditLog,
@@ -10067,7 +10427,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     '#/': renderTenantDashboard,
     '#/payments': renderTenantPayments,
     '#/bills': renderTenantBills,
-    '#/documents': renderTenantDocuments,
+    '#/documents': renderTenantHouseRules, // "My Documents" was replaced by the apartment rules
+    '#/rules': renderTenantHouseRules,
     '#/maintenance': renderMaintenance,
     '#/cleaning': renderCleaning,
     '#/inspection': renderInspection,
@@ -11190,7 +11551,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       activityLogService.getAll(),
       entityLinkService.getAll(),
       roomIncludedBillService.getAll(),
-      binDutyService.getAll()
+      binDutyService.getAll(),
+      rentPaymentReportService.getAll().catch(function(e){ console.error('rent reports', e); return []; }),
+      houseRulesService.getAll().catch(function(e){ console.error('house rules', e); return []; }),
+      maintenanceLogService.getAll().catch(function(e){ console.error('maintenance log', e); return []; })
     ]);
     properties = results[0];
     rooms = results[1];
@@ -11223,6 +11587,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     entityLinks = results[24];
     roomIncludedBills = results[25];
     binDuties = results[26];
+    rentPaymentReports = results[27];
+    houseRules = results[28];
+    maintenanceLog = results[29];
     if (isSuperAdmin()){
       try { allProfiles = await profileService.getAll(); } catch(_e){ allProfiles = []; }
       try { propertyAssignments = await profileService.getPropertyAssignments(); } catch(_e){ propertyAssignments = []; }
@@ -11333,6 +11700,24 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return phoneDigitsOnly(trimmed) + PHONE_LOGIN_SUFFIX;
   }
 
+  /** Every login email an identifier could map to. Tenant accounts were created with whatever
+   *  phone format the admin typed, so an Australian mobile may be stored as 61487352329 or as
+   *  0487352329 — both are tried, so "+61 487 352 329" and "0487 352 329" both work. */
+  function loginEmailCandidates(raw){
+    var trimmed = (raw || '').trim();
+    if (trimmed.indexOf('@') > -1) return [trimmed];
+    var digits = phoneDigitsOnly(trimmed);
+    var list = [digits];
+    if (/^61\d{9}$/.test(digits)) list.push('0' + digits.slice(2));       // +61 4xx → 04xx
+    else if (/^0\d{9}$/.test(digits)) list.push('61' + digits.slice(1));   // 04xx → 61 4xx
+    else if (/^\d{9}$/.test(digits)) list.push('0' + digits, '61' + digits); // 4xx without prefix
+    return list.map(function(d){ return d + PHONE_LOGIN_SUFFIX; });
+  }
+  function isInvalidCredentialsError(err){
+    var m = ((err && (err.message || err.error_description || err.code)) || '') + '';
+    return /invalid.*(login|credential)|invalid_credentials/i.test(m);
+  }
+
   async function submitAuthForm(){
     var rawInput = document.getElementById('auth-email').value.trim();
     var password = document.getElementById('auth-password').value;
@@ -11347,7 +11732,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     btn.disabled = true; btn.textContent = 'Signing in…';
     errorEl.hidden = true;
     try {
-      await auth.signIn(loginIdentifierToEmail(rawInput), password);
+      var candidates = loginEmailCandidates(rawInput);
+      var lastErr = null, signedIn = false;
+      for (var ci = 0; ci < candidates.length && !signedIn; ci++){
+        try { await auth.signIn(candidates[ci], password); signedIn = true; }
+        catch(e){ lastErr = e; if (!isInvalidCredentialsError(e)) throw e; }
+      }
+      if (!signedIn) throw lastErr;
       await enterApp();
     } catch(err){
       errorEl.textContent = friendlyErrorMessage(err);
@@ -11357,6 +11748,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   window.submitAuthForm = submitAuthForm;
+
+  /** Eye button next to password fields: shows what's being typed, tap again to hide it. */
+  function togglePasswordVisibility(inputId, btn){
+    var input = document.getElementById(inputId);
+    if (!input) return;
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    if (btn){
+      btn.classList.toggle('on', show);
+      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+    }
+    input.focus();
+  }
+  window.togglePasswordVisibility = togglePasswordVisibility;
 
   async function requestAuthPasswordReset(){
     var rawInput = document.getElementById('auth-email').value.trim();
