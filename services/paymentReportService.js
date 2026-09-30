@@ -16,6 +16,7 @@ function fromRow(row) {
     paymentDate: row.payment_date || null,
     paymentMethod: row.payment_method || null,
     reference: row.reference || null,
+    tenantReference: row.tenant_reference || null,
     proofPath: row.proof_path || null,
     reportedAt: row.reported_at,
     reviewedByProfileId: row.reviewed_by_profile_id || null,
@@ -42,7 +43,8 @@ export async function create(opts) {
     payment_date: opts.paymentDate || null,
     payment_method: opts.paymentMethod || null,
     reference: opts.reference || null,
-    proof_path: opts.proofPath || null
+    proof_path: opts.proofPath || null,
+    tenant_reference: opts.tenantReference || null
   }).select().single();
   if (error) throw error;
   return fromRow(data);

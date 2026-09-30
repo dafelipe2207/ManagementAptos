@@ -8,7 +8,7 @@ import { friendlyErrorMessage } from './lib/errors.js';
 import { supabase as realtimeClient } from './lib/supabaseClient.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js?v=6';
+import * as tenantService from './services/tenantService.js?v=7';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js';
@@ -21,8 +21,8 @@ import * as migrationService from './services/migrationService.js';
 import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
-import * as paymentReportService from './services/paymentReportService.js';
-import * as rentPaymentReportService from './services/rentPaymentReportService.js';
+import * as paymentReportService from './services/paymentReportService.js?v=2';
+import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=2';
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
@@ -1777,6 +1777,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     else if (t.rentAmount > 0) tenancyBadge = badge('neutral', 'Current tenant');
 
     var contactRows = '' +
+      (tenantPaymentRef(t) ? '<div class="field-row"><span class="k">Payment reference</span><span class="v">'+esc(tenantPaymentRef(t))+'</span></div>' : '') +
       (t.phone ? '<div class="field-row"><span class="k">Phone</span><span class="v">'+esc(t.phone)+'</span></div>' : '') +
       (t.email ? '<div class="field-row"><span class="k">Email</span><span class="v">'+esc(t.email)+'</span></div>' : '') +
       '<div class="field-row"><span class="k">Property</span><span class="v"><a href="#/properties/'+(p?p.id:'')+'">'+esc(p?p.name:'—')+'</a></span></div>'+
@@ -2568,6 +2569,29 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>';
   }
 
+  /** The tenant's permanent payment reference (e.g. NOE105) — quoted in the bank transfer
+   *  description for rent AND bills so every payment and receipt can be matched to them. */
+  function tenantPaymentRef(t){ return (t && t.paymentReference) || ''; }
+  function tenantRefChipHtml(t){
+    var ref = tenantPaymentRef(t);
+    return ref ? ' <span class="ref-chip" title="Tenant payment reference">'+esc(ref)+'</span>' : '';
+  }
+  /** Card at the top of the tenant's Payments / Bills pages: their reference, big and copyable. */
+  function tenantPaymentRefCardHtml(t){
+    var ref = tenantPaymentRef(t);
+    if (!ref) return '';
+    return '<div class="card ref-card"><div class="ref-card-row"><div>'+
+      '<div class="ref-card-label">Your payment reference</div>'+
+      '<div class="ref-card-code">'+esc(ref)+'</div>'+
+      '<div class="ref-card-help">Put this in the description of every transfer — rent and bills — so your payment is matched to you.</div>'+
+      '</div><button class="mini-btn" onclick="copyPaymentRef(\''+esc(ref)+'\', this)">Copy</button></div></div>';
+  }
+  function copyPaymentRef(ref, btn){
+    try { navigator.clipboard.writeText(ref); if (btn){ btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1800); } }
+    catch(_e){ showToast('Your reference: ' + ref, 'info'); }
+  }
+  window.copyPaymentRef = copyPaymentRef;
+
   var RENT_METHOD_LABEL = { bank_transfer:'Bank transfer', cash:'Cash', card:'Card', other:'Other' };
   var RENT_REPORT_BADGE = { pending:['upcoming','Pending review'], confirmed:['paid','Confirmed'], rejected:['overdue','Rejected'] };
   /** The tenant's own recent rent payment reports (pending first), so they can see that the
@@ -2605,7 +2629,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('rent-report-amount').value = (Math.round(owed*100)/100).toFixed(2);
     document.getElementById('rent-report-date').value = TODAY;
     document.getElementById('rent-report-method').value = 'bank_transfer';
-    document.getElementById('rent-report-reference').value = '';
+    var rentTenant = tenantOf(charge.tenantId);
+    document.getElementById('rent-report-reference').value = tenantPaymentRef(rentTenant);
+    document.getElementById('rent-report-modal-sub').textContent += tenantPaymentRef(rentTenant) ? ' • your reference ' + tenantPaymentRef(rentTenant) : '';
     document.getElementById('rent-report-proof-status').textContent = 'Photo or PDF of the transfer/receipt';
     document.getElementById('rent-report-modal-error').hidden = true;
     document.getElementById('rent-report-modal').hidden = false;
@@ -2621,7 +2647,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var status = document.getElementById('rent-report-proof-status');
     status.textContent = 'Uploading…';
     try {
-      rentReportProofPath = await storageService.uploadReceipt('rent-report', file);
+      var rt = myTenantRecord();
+      rentReportProofPath = await storageService.uploadReceipt((tenantPaymentRef(rt) ? tenantPaymentRef(rt) + '-' : '') + 'rent', file);
       status.textContent = '✓ ' + (file.name || 'Receipt attached');
     } catch(err){
       rentReportProofPath = null;
@@ -2646,7 +2673,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         tenantId: t.id, propertyId: t.propertyId, amount: amount, paymentDate: date,
         paymentMethod: document.getElementById('rent-report-method').value,
         reference: document.getElementById('rent-report-reference').value.trim(),
-        proofPath: rentReportProofPath, periodLabel: charge.periodStart
+        proofPath: rentReportProofPath, periodLabel: charge.periodStart, tenantReference: tenantPaymentRef(t)
       });
       rentPaymentReports.unshift(created);
       closeRentReportModal();
@@ -2673,9 +2700,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var t = tenantOf(r.tenantId);
         var p = propertyOf(r.propertyId);
         return '<div class="review-row">'+
-          '<div class="review-main"><div class="review-title">'+esc(t?t.fullName:'Tenant')+' · <b>'+money(r.amount)+'</b></div>'+
+          '<div class="review-main"><div class="review-title">'+esc(t?t.fullName:'Tenant')+tenantRefChipHtml(t)+' · <b>'+money(r.amount)+'</b></div>'+
           '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(RENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
-            (r.reference?' · Ref: '+esc(r.reference):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
+            (r.reference?' · Ref: '+esc(r.reference)+(t && tenantPaymentRef(t) && r.reference.toUpperCase().indexOf(tenantPaymentRef(t))<0 ? ' <span style="color:var(--status-due);">(doesn\'t match '+esc(tenantPaymentRef(t))+')</span>' : ''):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
           '<div class="review-actions">'+
             (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>' : '<span style="font-size:11.5px;color:var(--text-faint);">No receipt</span>')+
             '<button class="mini-btn" onclick="openRentRejectModal(\''+r.id+'\')">Reject</button>'+
@@ -3077,7 +3104,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
                 : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No upcoming period (the tenancy ends before the next one).</p>');
           var newestFirst = paymentsDateSort === 'desc';
           return '<div class="card">'+
-            '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+
+            '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+tenantRefChipHtml(t)+
             (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
             (newestFirst ? upcomingHtml : '')+
             (!showDue ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
@@ -6212,7 +6239,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               '</div>'
             : '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+a.tenantId+'\')">Mark as paid</button>';
         var reportDetailHtml = pendingReport
-          ? '<div style="font-size:11.5px;color:var(--text-faint);margin-top:4px;">Payment reported by tenant'+
+          ? '<div style="font-size:11.5px;color:var(--text-faint);margin-top:4px;">Payment reported by tenant'+tenantRefChipHtml(tenantOf(a.tenantId))+
             (pendingReport.reportedAt ? ' · Reported ' + shortDate(pendingReport.reportedAt.slice(0,10)) : '')+
             (pendingReport.paymentDate ? ' · Paid ' + shortDate(pendingReport.paymentDate) : '')+
             (pendingReport.paymentMethod ? ' · ' + (PAYMENT_METHOD_LABEL[pendingReport.paymentMethod]||pendingReport.paymentMethod) : '')+
@@ -9695,6 +9722,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="card">'+
       '<div class="field-row"><span class="k">Property</span><span class="v">'+(p?esc(p.address||p.name):'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Room</span><span class="v">'+(r?esc(r.name):'—')+'</span></div>'+
+      (tenantPaymentRef(t) ? '<div class="field-row"><span class="k">Payment reference</span><span class="v">'+esc(tenantPaymentRef(t))+'</span></div>' : '')+
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+esc(t.rentFrequency)+'</span></div>'+
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
@@ -9712,6 +9740,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           return '<div class="field-row"><span class="k">'+shortDate(pmt.date)+'</span><span class="v">'+money(pmt.amount)+'</span></div>';
         }).join('')+'</div></div>';
     return pageHeader('My Payments', 'Your rent. Paid it? Tap "I paid" and attach the receipt — it stays pending until your administrator confirms it.') +
+      tenantPaymentRefCardHtml(t) +
       (t ? tenantRentHistoryHtml(t.id) : '') +
       '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">Payments on file</h2>' + body;
   }
@@ -9836,7 +9865,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         }).join('');
       return '<h3 style="font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:16px 0 8px;">'+(ym==='unknown'?'No date on file':esc(monthYearLabel(ym)))+'</h3>'+rowsHtml;
     }).join('');
-    return pageHeader('My Bills', 'Your share of each shared bill — electricity, water, gas, internet and more.') + body;
+    return pageHeader('My Bills', 'Your share of each shared bill — electricity, water, gas, internet and more.') + tenantPaymentRefCardHtml(t) + body;
   }
 
   /* ---------- Tenant: "I made this payment" report modal ---------- */
@@ -9851,7 +9880,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('payment-report-modal-sub').textContent = (b.provider||'') + ' • ' + money(alloc.amount);
     document.getElementById('payment-report-date').value = TODAY;
     document.getElementById('payment-report-method').value = 'bank_transfer';
-    document.getElementById('payment-report-reference').value = '';
+    var billTenant = tenantOf(tenantId);
+    document.getElementById('payment-report-reference').value = tenantPaymentRef(billTenant);
+    if (tenantPaymentRef(billTenant)) document.getElementById('payment-report-modal-sub').textContent += ' • your reference ' + tenantPaymentRef(billTenant);
     document.getElementById('payment-report-proof-status').textContent = 'Photo or PDF of the transfer/receipt';
     document.getElementById('payment-report-modal-error').hidden = true;
     document.getElementById('payment-report-modal').hidden = false;
@@ -9871,7 +9902,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var status = document.getElementById('payment-report-proof-status');
     status.textContent = 'Uploading…';
     try {
-      var path = await storageService.uploadReceipt('report-' + paymentReportModalTarget.allocationId, file);
+      var bt = tenantOf(paymentReportModalTarget.tenantId);
+      var path = await storageService.uploadReceipt((tenantPaymentRef(bt) ? tenantPaymentRef(bt) + '-' : '') + 'bill-' + paymentReportModalTarget.allocationId, file);
       paymentReportModalProofPath = path;
       status.textContent = '✓ ' + (file.name || 'Receipt attached');
     } catch(err){
@@ -9895,7 +9927,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         paymentDate: paymentDate,
         paymentMethod: paymentMethod,
         reference: reference,
-        proofPath: paymentReportModalProofPath
+        proofPath: paymentReportModalProofPath,
+        tenantReference: tenantPaymentRef(tenantOf(target.tenantId))
       });
       paymentReports.unshift(created);
       closePaymentReportModal();

@@ -1284,3 +1284,12 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
   .field-row:has(.rh-amt) .k{flex-basis:100%;}
   .rh-act:empty{display:none;}
 }
+
+/* Tenant payment reference (e.g. NOE105) */
+.ref-chip{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:6px;
+  background:var(--accent-bg);color:var(--accent);vertical-align:middle;font-variant-numeric:tabular-nums;}
+.ref-card{border-color:var(--accent);}
+.ref-card-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.ref-card-label{font-size:12px;font-weight:600;color:var(--text-dim);}
+.ref-card-code{font-size:26px;font-weight:700;letter-spacing:.08em;color:var(--accent);margin:2px 0 4px;}
+.ref-card-help{font-size:12.5px;color:var(--text-faint);max-width:520px;}

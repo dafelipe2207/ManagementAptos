@@ -12,6 +12,7 @@ function fromRow(row) {
     paymentDate: row.payment_date,
     paymentMethod: row.payment_method || null,
     reference: row.reference || null,
+    tenantReference: row.tenant_reference || null,
     proofPath: row.proof_path || null,
     periodLabel: row.period_label || null,
     status: row.status,
@@ -32,7 +33,7 @@ export async function getAll() {
 export async function create(r) {
   const { data, error } = await supabase.from('rent_payment_reports').insert({
     tenant_id: r.tenantId, property_id: r.propertyId, amount: r.amount, payment_date: r.paymentDate,
-    payment_method: r.paymentMethod || null, reference: r.reference || null, proof_path: r.proofPath || null,
+    payment_method: r.paymentMethod || null, reference: r.reference || null, proof_path: r.proofPath || null, tenant_reference: r.tenantReference || null,
     period_label: r.periodLabel || null, status: 'pending'
   }).select().single();
   if (error) throw error;

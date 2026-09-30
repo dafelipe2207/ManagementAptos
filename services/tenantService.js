@@ -15,6 +15,7 @@ function fromRow(row) {
   const t = {
     id: row.id,
     fullName: row.full_name,
+    paymentReference: row.payment_reference || null,
     propertyId: row.property_id,
     roomId: row.room_id,
     moveInDate: row.move_in_date,
