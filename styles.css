@@ -870,3 +870,26 @@
   .pdfv-page-of{display:none;}
   .pdfv-thumbs{inset:0 12% 0 0;}
 }
+
+/* Date fields open the calendar on click anywhere in the field */
+input[type="date"], input[type="datetime-local"], input[type="month"], input[type="time"]{cursor:pointer;}
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;}
+
+/* Bill edit — review changes modal */
+#bill-changes-modal{z-index:1100;}
+.chg-row{padding:9px 0;border-top:1px solid var(--border);}
+.chg-row:first-child{border-top:none;}
+.chg-label{font-size:11.5px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px;}
+.chg-vals{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;}
+.chg-old{color:var(--text-dim);text-decoration:line-through;}
+.chg-arrow{color:var(--text-faint);}
+.chg-new{font-weight:700;}
+.chg-row.amount .chg-vals{font-size:16px;}
+.chg-diff{display:inline-block;margin-top:4px;font-size:12px;font-weight:700;border-radius:999px;padding:1px 8px;}
+.chg-diff.up{background:var(--status-overdue-bg);color:var(--status-overdue);}
+.chg-diff.down{background:var(--status-paid-bg);color:var(--status-paid);}
+.chg-note{font-size:12.5px;color:var(--text-dim);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:10px;line-height:1.45;}
+.chg-note.warn{background:var(--status-due-bg);border-color:transparent;color:var(--status-due);}
