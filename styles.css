@@ -941,3 +941,9 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .rules-list li:last-child{border-bottom:none;}
 .rules-empty{text-align:center;padding:28px 16px;}
 .rules-textarea{width:100%;box-sizing:border-box;font-family:inherit;font-size:13.5px;line-height:1.5;resize:vertical;}
+
+/* Tenants list: current first, then moved out */
+.tenant-section-title{font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:20px 0 6px;display:flex;align-items:center;gap:8px;}
+.tenant-section-title span{background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:0 8px;font-size:11px;letter-spacing:0;}
+.tenant-card.past{opacity:.7;}
+.tenant-card.past:hover{opacity:1;}
