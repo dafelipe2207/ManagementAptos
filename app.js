@@ -2509,18 +2509,39 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           (hasActionCol ? '<span style="min-width:74px;display:flex;justify-content:flex-end;">'+action+'</span>' : '')+
         '</span></div>';
     }
+    // Periods settled by the same payment (same paid date) are merged into one row: the
+    // combined date range, the total, and how many periods it covered.
+    var paidGroups = [];
+    paid.forEach(function(c){
+      var last = paidGroups[paidGroups.length-1];
+      if (last && c.paidDate && last.paidDate === c.paidDate) last.items.push(c);
+      else paidGroups.push({ paidDate:c.paidDate, items:[c] });
+    });
+    function paidGroupRow(g){
+      if (g.items.length === 1) return row(g.items[0]);
+      var first = g.items[g.items.length-1], lastItem = g.items[0]; // items are newest first
+      var total = g.items.reduce(function(s,c){ return s + (Number(c.amountDue)||0); }, 0);
+      var label = shortDate(first.periodStart)+' – '+shortDate(lastItem.periodEnd)+
+        ' <span style="color:var(--text-faint);">(paid '+shortDate(g.paidDate)+' · '+g.items.length+' periods)</span>';
+      return '<div class="field-row" style="align-items:center;"><span class="k">'+label+'</span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">'+
+          '<span style="min-width:78px;text-align:right;">'+money(total)+'</span>'+
+          '<span style="min-width:104px;display:flex;justify-content:flex-start;">'+badge('paid','Paid')+'</span>'+
+          (hasActionCol ? '<span style="min-width:74px;"></span>' : '')+
+        '</span></div>';
+    }
     var PAID_CAP = 12;
     var pendingShown = pending; // pending items are always shown in full, never truncated
     var pendingExtra = 0;
-    var paidShown = paid.slice(0, PAID_CAP);
-    var paidExtra = paid.length - paidShown.length;
+    var paidShown = paidGroups.slice(0, PAID_CAP);
+    var paidExtra = paidGroups.length - paidShown.length;
     return tenantRentReportsHtml(tenantId) + '<div class="card"><h2>Rent history</h2>'+
       '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:0 0 6px;">Due &amp; upcoming ('+pending.length+')</h3>'+
       (pendingShown.length ? '<div class="field-list">'+pendingShown.map(row).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0 0 10px;">Nothing due right now.</p>')+
       (pendingExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+pendingExtra+' more further out, not shown.</p>' : '')+
       '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
-      (paidShown.length ? '<div class="field-list">'+paidShown.map(row).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet.</p>')+
-      (paidExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+paidExtra+' earlier paid periods not shown.</p>' : '')+
+      (paidShown.length ? '<div class="field-list">'+paidShown.map(paidGroupRow).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet.</p>')+
+      (paidExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+paidExtra+' earlier payments not shown.</p>' : '')+
       '</div>';
   }
 
