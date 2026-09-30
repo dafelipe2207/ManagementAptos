@@ -1514,34 +1514,54 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           ? '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>'
           : '<button class="mini-btn primary" onclick="openTenantModal()">+ Add tenant</button>');
     }
-    // Grouped and sorted by property (alphabetically) and, within each, by tenant
-    // name — so they stay organized by property even when the filter is on "All properties".
-    var sorted = paying.slice().sort(function(a,b){
+    // Current tenants first, then the ones who have already moved out — each part grouped by
+    // property (alphabetically) and, within it, by tenant name.
+    function byPropertyThenName(a,b){
       var pa = propertyOf(a.propertyId), pb = propertyOf(b.propertyId);
       var cmp = (pa?pa.name:'').localeCompare(pb?pb.name:'');
       if (cmp === 0) cmp = a.fullName.localeCompare(b.fullName);
       return cmp;
-    });
-    var lastPropertyId = null;
-    var rows = sorted.map(function(t){
-      var p = propertyOf(t.propertyId);
-      var bond = bondOf(t.id);
-      var bondLine = bond
-        ? ('Bond: '+money(bond.amountPaid)+' / '+money(bond.amountRequired)+' • '+esc(BOND_STATUS_LABEL[bond.status]||bond.status))
-        : 'Bond: not recorded';
-      var groupHeading = '';
-      if (tenantsPropertyFilter === 'all' && t.propertyId !== lastPropertyId){
-        lastPropertyId = t.propertyId;
-        groupHeading = '<div style="font-size:12px;font-weight:650;color:var(--text-faint);margin:14px 0 4px;">'+esc(p?p.name:'—')+'</div>';
-      }
-      return groupHeading + '<a class="card" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
-        '<div class="row" style="border:none;padding:0;">'+
-        '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
-        '<div class="meta"><strong style="color:var(--text);">'+esc(p?p.name:'—')+'</strong> • Since '+shortDate(t.moveInDate)+'</div>'+
-        '<div class="meta">'+bondLine+'</div></div>'+
-        '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
-        '</div></a>';
-    }).join('');
+    }
+    var currentList = paying.filter(function(t){ return !tenantHasMovedOut(t); }).sort(byPropertyThenName);
+    var pastList = paying.filter(function(t){ return tenantHasMovedOut(t); })
+      .sort(function(a,b){ return byPropertyThenName(a,b) || (b.actualMoveOutDate||'').localeCompare(a.actualMoveOutDate||''); });
+    function tenantStatusBadge(t){
+      if (tenantHasMovedOut(t)) return badge('neutral', 'Moved out' + (t.actualMoveOutDate ? ' '+shortDate(t.actualMoveOutDate) : ''));
+      if (t.moveInDate && t.moveInDate > TODAY) return badge('upcoming', 'Moves in '+shortDate(t.moveInDate));
+      if (t.expectedMoveOutDate && t.expectedMoveOutDate >= TODAY) return badge('due', 'Leaving '+shortDate(t.expectedMoveOutDate));
+      return badge('paid', 'Active');
+    }
+    function tenantCardsHtml(list, isPast){
+      var lastPropertyId = null;
+      return list.map(function(t){
+        var p = propertyOf(t.propertyId);
+        var bond = bondOf(t.id);
+        var bondLine = bond
+          ? ('Bond: '+money(bond.amountPaid)+' / '+money(bond.amountRequired)+' • '+esc(BOND_STATUS_LABEL[bond.status]||bond.status))
+          : 'Bond: not recorded';
+        var groupHeading = '';
+        if (tenantsPropertyFilter === 'all' && t.propertyId !== lastPropertyId){
+          lastPropertyId = t.propertyId;
+          groupHeading = '<div style="font-size:12px;font-weight:650;color:var(--text-faint);margin:14px 0 4px;">'+esc(p?p.name:'—')+'</div>';
+        }
+        var stay = isPast
+          ? shortDate(t.moveInDate)+' – '+(t.actualMoveOutDate ? shortDate(t.actualMoveOutDate) : '—')
+          : 'Since '+shortDate(t.moveInDate);
+        return groupHeading + '<a class="card tenant-card'+(isPast?' past':'')+'" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
+          '<div class="row" style="border:none;padding:0;">'+
+          '<div class="who"><div class="name" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+esc(t.fullName)+tenantStatusBadge(t)+'</div>'+
+          '<div class="meta"><strong style="color:var(--text);">'+esc(p?p.name:'—')+'</strong> • '+stay+'</div>'+
+          '<div class="meta">'+bondLine+'</div></div>'+
+          '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
+          '</div></a>';
+      }).join('');
+    }
+    function sectionTitle(txt, n){
+      return '<h2 class="tenant-section-title">'+txt+' <span>'+n+'</span></h2>';
+    }
+    var rows = (currentList.length ? sectionTitle('Current tenants', currentList.length) + tenantCardsHtml(currentList, false)
+        : '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No current tenants here.</p></div>') +
+      (pastList.length ? sectionTitle('Moved out', pastList.length) + tenantCardsHtml(pastList, true) : '');
     return header + propertyTabsHtml + timelineHtml + rows;
   }
 
@@ -5598,13 +5618,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.openBillDocumentPreview = openBillDocumentPreview;
   window.closeBillPreviewModal = closeBillPreviewModal;
 
+  /** Rejects with `message` if `promise` hasn't settled within `ms`. */
+  function withTimeout(promise, ms, message){
+    return new Promise(function(resolve, reject){
+      var timer = setTimeout(function(){ reject(new Error(message || 'Timed out.')); }, ms);
+      promise.then(function(v){ clearTimeout(timer); resolve(v); }, function(e){ clearTimeout(timer); reject(e); });
+    });
+  }
+  window.withTimeout = withTimeout;
+
   function deleteBillConfirm(billId){
     var b = billOf(billId);
     if (!b) return;
     openConfirmModal('Delete bill', 'Delete this '+b.billType+' bill from '+esc(b.provider)+'? This also removes its allocations. This cannot be undone.', async function(){
       try {
-        await billAllocationService.removeForBill(billId);
-        await billService.remove(billId);
+        // One request: deleting the bill also removes its allocations and payment reports
+        // (ON DELETE CASCADE). The timeout makes sure the dialog never just spins forever.
+        await withTimeout(billService.remove(billId), 20000, 'The server did not answer. Check your connection, close other tabs of the app, and try again.');
         bills = bills.filter(function(x){ return x.id!==billId; });
         location.hash = '#/bills';
         showToast('Bill deleted.', 'success');
