@@ -11,7 +11,8 @@ function fromRow(row) {
     // 'cash' (default) is a real payment the tenant made; 'bond_deduction' means this rent
     // charge was instead settled by deducting the amount from the tenant's bond on move-out —
     // see processMoveOutBondSettlement in app.js. Never a payment the tenant actually made.
-    method: row.method || 'cash'
+    method: row.method || 'cash',
+    receiptPath: row.receipt_path || null
   };
 }
 
@@ -28,7 +29,8 @@ export async function create(p) {
     tenant_id: p.tenantId,
     amount: p.amount,
     payment_date: p.date,
-    method: p.method || 'cash'
+    method: p.method || 'cash',
+    receipt_path: p.receiptPath || null
   }).select().single();
   if (error) throw error;
   return fromRow(data);
@@ -39,6 +41,13 @@ export async function update(id, p) {
   if (p.amount !== undefined) patch.amount = p.amount;
   if (p.date !== undefined) patch.payment_date = p.date;
   const { data, error } = await supabase.from('payments').update(patch).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
+/** Attach (path) or clear (null) the receipt of a rent payment. */
+export async function setReceipt(id, path) {
+  const { data, error } = await supabase.from('payments').update({ receipt_path: path || null }).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }

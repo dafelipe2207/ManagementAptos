@@ -11,7 +11,7 @@ import * as roomService from './services/roomService.js';
 import * as tenantService from './services/tenantService.js?v=7';
 import * as bondService from './services/bondService.js';
 import * as rentScheduleService from './services/rentScheduleService.js';
-import * as paymentService from './services/paymentService.js';
+import * as paymentService from './services/paymentService.js?v=2';
 import * as billService from './services/billService.js?v=4';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
@@ -310,11 +310,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  saved payment on success, or null on failure. `date` defaults to today but can be set to whenever the tenant
    *  actually paid (may be earlier than today). The success toast offers an immediate "Undo" — for when the admin
    *  picked the wrong date, or confirmed a payment that hadn't actually happened. */
-  async function recordPayment(tenantId, amount, date, method){
+  async function recordPayment(tenantId, amount, date, method, receiptPath){
     amount = Math.round(amount*100)/100;
     if (!(amount > 0)) return null;
     try {
-      var saved = await paymentService.create({ tenantId:tenantId, amount:amount, date: date || TODAY, method: method || 'cash' });
+      var saved = await paymentService.create({ tenantId:tenantId, amount:amount, date: date || TODAY, method: method || 'cash', receiptPath: receiptPath || null });
       paymentRecords.push(saved);
       recomputeRentCharges();
       // A bond-deduction "payment" isn't something the admin can undo the same way (it's part of
@@ -355,15 +355,46 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Pays this charge and any earlier unpaid period for the same tenant (the ledger is FIFO).
    *  `date` is the ACTUAL date the tenant paid (may be several days ago) — not always
    *  today, which is why openChargePaidModal asks for it instead of just assuming TODAY. */
-  async function markChargeAsPaid(chargeId, date){
+  async function markChargeAsPaid(chargeId, date, receiptPath){
     var charge = rentCharges.find(function(c){ return c.id===chargeId; });
     if (!charge) return;
     var owed = rentCharges
       .filter(function(c){ return c.tenantId===charge.tenantId && c.periodStart<=charge.periodStart; })
       .reduce(function(sum,c){ return sum + c.remaining; }, 0);
-    await recordPayment(charge.tenantId, owed, date);
+    await recordPayment(charge.tenantId, owed, date, null, receiptPath);
     render();
   }
+
+  /* Receipt the administrator attaches while recording a rent payment (Pay / Partial modals). */
+  var adminPayReceiptPath = null, adminPayReceiptStatusId = null;
+  function resetAdminPayReceipt(statusId){
+    adminPayReceiptPath = null; adminPayReceiptStatusId = statusId;
+    var el = document.getElementById(statusId); if (el) el.textContent = 'Photo or PDF of the transfer/receipt';
+  }
+  function pickAdminPayReceipt(statusId){
+    adminPayReceiptStatusId = statusId;
+    document.getElementById('admin-pay-receipt-input').click();
+  }
+  async function handleAdminPayReceiptFile(event){
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    var status = document.getElementById(adminPayReceiptStatusId);
+    var chargeId = chargePaidModalChargeId || partialModalChargeId;
+    var charge = rentCharges.find(function(c){ return c.id===chargeId; });
+    var ref = charge ? tenantPaymentRef(tenantOf(charge.tenantId)) : '';
+    if (status) status.textContent = 'Uploading…';
+    try {
+      adminPayReceiptPath = await storageService.uploadReceipt((ref ? ref + '-' : '') + 'rent', file);
+      if (status) status.textContent = '✓ ' + (file.name || 'Receipt attached');
+    } catch(err){
+      adminPayReceiptPath = null;
+      if (status) status.textContent = 'Could not attach it — try again.';
+      showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.pickAdminPayReceipt = pickAdminPayReceipt;
+  window.handleAdminPayReceiptFile = handleAdminPayReceiptFile;
 
   /* ---------- Modal: confirm "Mark as Paid" on a rent charge with the actual date it was paid ---------- */
   var chargePaidModalChargeId = null;
@@ -378,6 +409,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('charge-paid-modal-sub').textContent = (t?t.fullName:'') + ' • ' + money(owed);
     var dateInput = document.getElementById('charge-paid-modal-date');
     dateInput.value = TODAY; // editable: the tenant may have paid several days ago, not necessarily today
+    resetAdminPayReceipt('charge-paid-receipt-status');
     document.getElementById('charge-paid-modal').hidden = false;
   }
   function closeChargePaidModal(){
@@ -388,9 +420,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var chargeId = chargePaidModalChargeId;
     var dateInput = document.getElementById('charge-paid-modal-date');
     var date = dateInput.value || TODAY;
+    var receipt = adminPayReceiptPath; adminPayReceiptPath = null;
     closeChargePaidModal();
     if (!chargeId) return;
-    await markChargeAsPaid(chargeId, date);
+    await markChargeAsPaid(chargeId, date, receipt);
   }
   window.openChargePaidModal = openChargePaidModal;
   window.closeChargePaidModal = closeChargePaidModal;
@@ -410,6 +443,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     input.max = charge.remaining;
     var dateInput = document.getElementById('partial-modal-date');
     if (dateInput) dateInput.value = TODAY; // editable: the tenant may have paid on a different day than today
+    resetAdminPayReceipt('partial-receipt-status');
     document.getElementById('partial-modal').hidden = false;
     input.focus();
   }
@@ -424,10 +458,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var amount = parseFloat(input.value);
     var dateInput = document.getElementById('partial-modal-date');
     var date = (dateInput && dateInput.value) ? dateInput.value : TODAY;
+    var receipt = adminPayReceiptPath; adminPayReceiptPath = null;
     closePartialModal();
     if (!charge || !isFinite(amount) || amount <= 0) return;
     if (amount > charge.remaining) amount = charge.remaining; // overpayment is not allowed
-    await recordPayment(charge.tenantId, amount, date);
+    await recordPayment(charge.tenantId, amount, date, null, receipt);
     render();
   }
 
@@ -460,9 +495,50 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     return '<div class="history-row"><span>'+fullDate(p.date)+'</span>'+
       '<span style="display:flex;align-items:center;gap:6px;font-weight:600;">'+money(p.amount)+
+      paymentReceiptIconsHtml(p)+
       '<button class="del" title="Correct this payment" style="color:var(--text-dim);" onclick="startEditPayment(\''+p.id+'\')">✎</button>'+
       '<button class="del" title="Remove payment" onclick="removePaymentAndRefresh(\''+p.id+'\')">✕</button></span></div>';
   }
+  /** Receipt icons on a payment-history row: upload one, or view / remove the attached one. */
+  function paymentReceiptIconsHtml(p){
+    if (p.receiptPath){
+      return '<button type="button" class="rcpt-btn has" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+p.receiptPath+'\')">'+RECEIPT_VIEW_ICON+'</button>'+
+        '<button type="button" class="rcpt-btn rm" title="Remove receipt" aria-label="Remove receipt" onclick="removePaymentReceipt(\''+p.id+'\')">'+RECEIPT_REMOVE_ICON+'</button>';
+    }
+    return '<button type="button" class="rcpt-btn" title="Upload receipt" aria-label="Upload receipt" onclick="pickPaymentReceipt(\''+p.id+'\')">'+RECEIPT_UPLOAD_ICON+'</button>';
+  }
+  var paymentReceiptTargetId = null;
+  function pickPaymentReceipt(paymentId){
+    paymentReceiptTargetId = paymentId;
+    document.getElementById('payment-receipt-input').click();
+  }
+  async function handlePaymentReceiptFile(event){
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    var p = paymentRecords.find(function(x){ return x.id===paymentReceiptTargetId; });
+    if (!file || !p) return;
+    var ref = tenantPaymentRef(tenantOf(p.tenantId));
+    try {
+      var path = await storageService.uploadReceipt((ref ? ref + '-' : '') + 'rent', file);
+      var saved = await paymentService.setReceipt(p.id, path);
+      p.receiptPath = saved.receiptPath;
+      showToast('Receipt attached.', 'success');
+      renderHistoryModalBody();
+    } catch(err){ showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  async function removePaymentReceipt(paymentId){
+    var p = paymentRecords.find(function(x){ return x.id===paymentId; });
+    if (!p) return;
+    try {
+      await paymentService.setReceipt(p.id, null);
+      p.receiptPath = null;
+      renderHistoryModalBody();
+    } catch(err){ showToast('Could not remove the receipt. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  window.pickPaymentReceipt = pickPaymentReceipt;
+  window.handlePaymentReceiptFile = handlePaymentReceiptFile;
+  window.removePaymentReceipt = removePaymentReceipt;
+
   /** Re-renders just the history modal's body from current state (historyModalTenantId /
    *  historyModalEditingId), without resetting which row (if any) is mid-edit — used by
    *  startEditPayment/cancelEditPayment/saveEditedPayment so they don't clobber their own edit state. */
@@ -2714,7 +2790,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
     if (!r || r.status!=='pending') return;
     if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
-    var saved = await recordPayment(r.tenantId, r.amount, r.paymentDate, 'cash');
+    var saved = await recordPayment(r.tenantId, r.amount, r.paymentDate, 'cash', r.proofPath || null);
     if (!saved){ if (btn){ btn.disabled = false; btn.textContent = 'Confirm paid'; } return; }
     try {
       var updated = await rentPaymentReportService.confirm(r.id, currentProfile ? currentProfile.id : null, saved.id);
@@ -13141,6 +13217,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   requireConfirm('unmarkAllocationPaid', 'Mark as unpaid?', function(billId, tenantId){
     var t = tenantOf(tenantId); return (t ? t.fullName + '\'s' : 'This') + ' payment for this bill will be removed and it will show as unpaid again.';
   }, 'Mark as unpaid');
+  requireConfirm('removePaymentReceipt', 'Remove this receipt?', 'The receipt will be detached from this payment. The payment itself stays.', 'Remove');
   requireConfirm('removeReceipt', 'Delete this receipt?', 'The attached receipt file will be deleted. This can\'t be undone.');
   requireConfirm('unmarkBillAdminPaid', 'Mark as unpaid to provider?', 'The payment to the provider will be removed and the bill will show as not paid.', 'Mark as unpaid');
   requireConfirm('removeTenantDocument', 'Delete this document?', 'The document will be deleted. This can\'t be undone.');
