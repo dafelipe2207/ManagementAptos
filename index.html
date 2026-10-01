@@ -251,6 +251,19 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="move-out-date-modal" hidden>
+    <div class="card modal-card">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Move-out date</h2>
+      <p id="move-out-date-note" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <input id="move-out-date-input" class="modal-input" type="date" />
+      <p id="move-out-date-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button class="mini-btn" onclick="closeMoveOutDateModal(null)">Cancel</button>
+        <button class="mini-btn primary" onclick="confirmMoveOutDateModal()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="history-modal" hidden>
     <div class="card modal-card">
       <h2 id="history-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
@@ -1239,6 +1252,6 @@
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
 <input id="admin-pay-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleAdminPayReceiptFile(event)" />
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
-<script type="module" src="app.js?v=166"></script>
+<script type="module" src="app.js?v=167"></script>
 </body>
 </html>

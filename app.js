@@ -2207,6 +2207,42 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  touches the bond. Callable by staff (from the tenant detail page) or by the tenant
    *  themselves (from "My Bond" in the portal). If there's no actual move-out date yet, asks
    *  for one first (defaulting to today) since the settlement needs a settle-as-of date. */
+  /* Move-out date picker. Tenants must give at least two weeks' notice (MOVE_OUT_NOTICE_DAYS) —
+   * the calendar won't offer an earlier day, and the database refuses one too. Staff can pick any
+   * date (e.g. recording a move-out after the fact). Resolves to 'YYYY-MM-DD' or null (cancelled). */
+  var MOVE_OUT_NOTICE_DAYS = 14;
+  var moveOutDateResolve = null;
+  function askMoveOutDate(t){
+    var tenant = isTenantRole();
+    var earliest = tenant ? stepDateIso(TODAY, MOVE_OUT_NOTICE_DAYS) : (t.moveInDate || '');
+    var input = document.getElementById('move-out-date-input');
+    input.min = earliest;
+    input.value = tenant ? earliest : TODAY;
+    document.getElementById('move-out-date-note').textContent = tenant
+      ? 'Please give at least two weeks\' notice — the earliest move-out date is ' + shortDate(earliest) + '. Your administrator will be notified.'
+      : 'The day this tenant leaves (or left) the room.';
+    document.getElementById('move-out-date-error').hidden = true;
+    document.getElementById('move-out-date-modal').hidden = false;
+    return new Promise(function(resolve){ moveOutDateResolve = resolve; });
+  }
+  function closeMoveOutDateModal(value){
+    document.getElementById('move-out-date-modal').hidden = true;
+    var r = moveOutDateResolve; moveOutDateResolve = null;
+    if (r) r(value || null);
+  }
+  function confirmMoveOutDateModal(){
+    var input = document.getElementById('move-out-date-input');
+    var err = document.getElementById('move-out-date-error');
+    if (!input.value){ err.textContent = 'Pick a date.'; err.hidden = false; return; }
+    if (input.min && input.value < input.min){
+      err.textContent = isTenantRole() ? 'That\'s less than two weeks away — the earliest date is ' + shortDate(input.min) + '.' : 'The move-out can\'t be before the move-in date.';
+      err.hidden = false; return;
+    }
+    closeMoveOutDateModal(input.value);
+  }
+  window.closeMoveOutDateModal = closeMoveOutDateModal;
+  window.confirmMoveOutDateModal = confirmMoveOutDateModal;
+
   async function startMoveOutProcess(tenantId){
     var t = tenantOf(tenantId);
     if (!t) return;
@@ -2215,8 +2251,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return;
     }
     if (!t.actualMoveOutDate){
-      var dateInput = window.prompt('Actual move-out date (YYYY-MM-DD):', TODAY);
+      var dateInput = await askMoveOutDate(t);
       if (!dateInput) return;
+      if (isTenantRole() && dateInput < stepDateIso(TODAY, MOVE_OUT_NOTICE_DAYS)){
+        showToast('Move-out needs at least two weeks\' notice — the earliest date is ' + shortDate(stepDateIso(TODAY, MOVE_OUT_NOTICE_DAYS)) + '.', 'error');
+        return;
+      }
       if (dateInput < t.moveInDate){
         showToast("Actual move-out can't be before the move-in date.", 'error');
         return;
@@ -10166,7 +10206,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!bond) return '';
     var v = money(bond.amountPaid) + (bond.amountRequired > bond.amountPaid + 0.004 ? ' <span style="font-weight:400;color:var(--status-due);">of '+money(bond.amountRequired)+'</span>' : '');
     var startMoveOut = moveOutSettlementOf(t.id) ? '' :
-      '<br><button class="text-link" style="display:inline;margin:4px 0 0;font-size:12px;" onclick="startMoveOutProcess(\''+t.id+'\')">Moving out? Start move-out</button>';
+      '<br><button class="text-link" style="display:inline;margin:4px 0 0;font-size:12px;" onclick="startMoveOutProcess(\''+t.id+'\')">Moving out? Give notice (2 weeks min.)</button>';
     return '<div class="field-row"><span class="k">Bond</span><span class="v">'+v+startMoveOut+'</span></div>';
   }
 
