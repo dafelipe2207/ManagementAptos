@@ -1485,7 +1485,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
       '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div>'+
       '<div class="actions-row">'+
-      (p.whatsappGroupLink ? '<a class="mini-btn" href="'+esc(whatsAppBusinessLink(p.whatsappGroupLink))+'" target="_blank" rel="noopener">Open WhatsApp group</a>' : '')+
+      (p.whatsappGroupLink ? '<button class="mini-btn" onclick="openWhatsApp(\''+esc(p.whatsappGroupLink)+'\')">Open WhatsApp group</button>' : '')+
       '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
       '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">🏢 Schedule inspection</button>'+
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
@@ -5853,6 +5853,47 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  link (browser_fallback_url) if Business isn't installed. There is no equivalent way to do
    *  this on iOS or desktop — Apple doesn't expose a separate public URL scheme for the
    *  Business app there — so those just get the ordinary link back, same as before. */
+  /** Opens a wa.me / chat.whatsapp.com link in WhatsApp BUSINESS on any phone.
+   *  - Android: the intent:// link from whatsAppBusinessLink (names the Business app outright).
+   *  - iPhone/iPad: WhatsApp Business answers its own "whatsapp-smb://" scheme (the regular app
+   *    uses "whatsapp://"), so the link is rewritten to that. If Business doesn't open within a
+   *    moment (not installed / scheme not handled), it falls back to the normal https link.
+   *  Must be called straight from a tap so the browser allows it. */
+  function isAppleMobile(){
+    var ua = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  }
+  function whatsAppBusinessIosUrl(httpsUrl){
+    var m = /^https?:\/\/wa\.me\/(\d+)(?:\?text=(.*))?$/.exec(httpsUrl);
+    if (m) return 'whatsapp-smb://send?phone=' + m[1] + (m[2] ? '&text=' + m[2] : '');
+    var g = /^https?:\/\/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]+)/.exec(httpsUrl);
+    if (g) return 'whatsapp-smb://chat?code=' + g[1];
+    return null;
+  }
+  function openWhatsApp(httpsUrl){
+    if (!httpsUrl) return;
+    if (isAppleMobile()){
+      var smb = whatsAppBusinessIosUrl(httpsUrl);
+      if (smb){
+        var left = false;
+        var onHide = function(){ if (document.visibilityState === 'hidden') left = true; };
+        document.addEventListener('visibilitychange', onHide);
+        setTimeout(function(){
+          document.removeEventListener('visibilitychange', onHide);
+          if (!left && document.visibilityState === 'visible'){ // Business didn't open — use the normal link
+            var w = window.open(httpsUrl, '_blank', 'noopener');
+            if (!w) location.href = httpsUrl;
+          }
+        }, 1600);
+        location.href = smb;
+        return;
+      }
+    }
+    var w2 = window.open(whatsAppBusinessLink(httpsUrl), '_blank', 'noopener');
+    if (!w2) location.href = whatsAppBusinessLink(httpsUrl);
+  }
+  window.openWhatsApp = openWhatsApp;
+
   function whatsAppBusinessLink(httpsUrl){
     var isAndroid = /Android/i.test((navigator.userAgent || ''));
     if (!isAndroid) return httpsUrl;
@@ -5885,7 +5926,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  notice instead of the button, so it's clear why it can't be sent from there. */
   function whatsAppButtonHtml(bill, property, tenant, amount){
     if (!tenant || isTenantHiddenProvider(bill.provider)) return '';
-    prefetchBillReceiptFile(bill);
+    prefetchBillInvoiceLink(bill);
     var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
     if (!link) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return '<button class="text-link" style="font-size:11.5px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',[\''+bill.id+'\'])">Send WhatsApp'+(bill.receiptPath?' + bill':'')+'</button>';
@@ -5937,7 +5978,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var digits = phoneDigitsForWhatsApp(tenant.phone);
     var ids = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); }).map(function(it){ return '\''+it.bill.id+'\''; }).join(',');
     var withFiles = items.some(function(it){ return !isTenantHiddenProvider(it.bill.provider) && it.bill.receiptPath; });
-    if (digits) items.forEach(function(it){ if (!isTenantHiddenProvider(it.bill.provider)) prefetchBillReceiptFile(it.bill); });
+    if (digits) items.forEach(function(it){ if (!isTenantHiddenProvider(it.bill.provider)) prefetchBillInvoiceLink(it.bill); });
     var linkOrNote = digits
       ? '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',['+ids+'])">Send WhatsApp'+(withFiles?' + bills':'')+'</button>'
       : '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
@@ -5949,7 +5990,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  uses the phone's share sheet (text + files) — the admin picks the tenant's chat and taps send.
    *  If the device can't share files (or no bill has a document), it falls back to the old wa.me
    *  link that opens the tenant's chat with the message typed. */
-  async function sendBillsWhatsAppToTenant(tenantId, billIds){
+  function sendBillsWhatsAppToTenant(tenantId, billIds){
     var tenant = tenantOf(tenantId);
     if (!tenant) return;
     var property = propertyOf(tenant.propertyId);
@@ -5962,27 +6003,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var message = items.length === 1
       ? billAllocationWhatsAppMessage(items[0].bill, property, tenant, items[0].alloc.amount)
       : pendingBillsWhatsAppMessage(tenant, items, property);
+    // The bill document goes in as a link (a chat link can only carry text), so the tenant can
+    // open exactly the bill they're being charged for. Links are prepared when the button is drawn.
+    var links = items.map(function(it){
+      var url = it.bill.receiptPath ? billInvoiceLinkCache[it.bill.receiptPath] : null;
+      return url ? '📄 ' + billTypeLabel(it.bill.billType) + ' bill: ' + url : null;
+    }).filter(Boolean);
+    if (links.length) message += '\n\n' + links.join('\n');
     var digits = phoneDigitsForWhatsApp(tenant.phone);
-    var waLink = digits ? whatsAppBusinessLink('https://wa.me/' + digits + '?text=' + encodeURIComponent(message)) : null;
-    if (!items.some(function(it){ return it.bill.receiptPath; })){
-      if (waLink) window.open(waLink, '_blank', 'noopener');
-      return;
-    }
-    var files = (await Promise.all(items.map(function(it){ return fetchBillReceiptFile(it.bill); }))).filter(Boolean);
-    try {
-      if (files.length && navigator.canShare && navigator.canShare({ files: files })){
-        await navigator.share({ files: files, text: message, title: 'Bill' + (items.length>1?'s':'') });
-        return;
-      }
-    } catch (err){
-      if (err && err.name === 'AbortError') return; // cancelled the share sheet
-      if (err && err.name === 'NotAllowedError'){ // the attachment took too long to load — it's ready now
-        showToast('The bill is ready now — tap Send WhatsApp again.', 'info');
-        return;
-      }
-    }
-    showToast('This device can\'t attach files — opening the chat with the message only.', 'info');
-    if (waLink) window.open(waLink, '_blank', 'noopener');
+    if (!digits){ showToast('No phone number on file for this tenant.', 'error'); return; }
+    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(message));
   }
   window.sendBillsWhatsAppToTenant = sendBillsWhatsAppToTenant;
 
@@ -6090,7 +6120,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (invoiceUrl) message += '\n\nBill: ' + invoiceUrl;
     var copied = false;
     try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(message); copied = true; } } catch(_e){}
-    window.open(whatsAppBusinessLink(property.whatsappGroupLink), '_blank', 'noopener');
+    openWhatsApp(property.whatsappGroupLink);
     showToast(copied
       ? 'Message copied' + (invoiceUrl ? ' (with the bill link)' : '') + ' — paste it in the group and send.'
       : 'Opening the group — copy the message by hand:\n\n' + message, copied ? 'success' : 'info');
@@ -6141,7 +6171,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       } catch (_e){
         showToast('Copy this message by hand and paste it in the group:\n\n' + message, 'info');
       }
-      window.open(whatsAppBusinessLink(property.whatsappGroupLink), '_blank', 'noopener');
+      openWhatsApp(property.whatsappGroupLink);
       await markBillSharedToGroup(bill, true);
     }
   }
@@ -8979,7 +9009,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       reiTenantText(i.notes || REI_DEFAULT_NOTES, i.agency) + '\n\nThank you!';
     var copied = false;
     try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(message); copied = true; } } catch(_e){}
-    window.open(whatsAppBusinessLink(p.whatsappGroupLink), '_blank', 'noopener');
+    openWhatsApp(p.whatsappGroupLink);
     showToast(copied ? 'Message copied — paste it in the group and send.' : 'Opening the group — copy the message by hand:\n\n' + message, copied ? 'success' : 'info');
   }
   window.sendInspectionToWhatsAppGroup = sendInspectionToWhatsAppGroup;
@@ -9508,7 +9538,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     var digits = phoneDigitsForWhatsApp(profile.phone);
     if (digits){
-      window.open(whatsAppBusinessLink('https://wa.me/' + digits + '?text=' + encodeURIComponent(message)), '_blank', 'noopener');
+      openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(message));
     } else {
       showToast('No phone number saved for ' + name + ' — copy the password from Users to send it another way.', 'info');
     }
