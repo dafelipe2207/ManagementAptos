@@ -1173,7 +1173,10 @@ code, kbd, pre, samp{font-family:var(--font-sans);}
    ===================================================================================== */
 
 /* Never let one long word, number or badge push the page sideways. */
-html, body{max-width:100%;overflow-x:clip;}
+/* Clip sideways overflow WITHOUT turning html/body into their own scroll boxes: overflow-x:hidden
+   on both was making the page fail to scroll by finger/trackpad on some phones and browsers. */
+body{max-width:100%;overflow-x:clip;}
+@supports not (overflow: clip){ body{overflow-x:hidden;} }
 .main, main.content, .content-inner{min-width:0;}
 .content-inner > *{min-width:0;max-width:100%;}
 .card{min-width:0;overflow-wrap:anywhere;}

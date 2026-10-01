@@ -13452,6 +13452,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     });
   })();
 
+  /* Safety net for scrolling: the photo viewer and PDF viewer lock the page (body overflow hidden)
+   * while open. If one ever closes without undoing that (e.g. the screen changed underneath it),
+   * the page would stay frozen — this puts scrolling back as soon as no viewer is showing. */
+  function unlockScrollIfNoViewer(){
+    var lb = document.getElementById('lightbox-overlay'), pv = document.getElementById('pdfv-overlay');
+    var viewerOpen = (lb && !lb.hidden) || (pv && !pv.hidden);
+    if (!viewerOpen && document.body.style.overflow === 'hidden') document.body.style.overflow = '';
+  }
+  ['touchstart','wheel','pointerdown','keydown'].forEach(function(ev){
+    document.addEventListener(ev, unlockScrollIfNoViewer, { passive:true, capture:true });
+  });
+  window.addEventListener('hashchange', unlockScrollIfNoViewer);
+
   /* ============ Keyboard: Tab, Enter, Esc and shortcuts work everywhere ============
    * - Tab / Shift+Tab move through every control; inside a pop-up window they stay in that window.
    * - Esc closes the pop-up on top (same as its × / Cancel).
