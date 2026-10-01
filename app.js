@@ -1185,7 +1185,74 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var reiHtml = realEstateInspectionBannerHtml(false) ||
       '<div class="rei-empty">🏢 No real estate inspection scheduled <button type="button" class="text-link" onclick="openReiModal(null)">+ Schedule one</button></div>';
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + needsHtml + upcomingHtml;
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
+  }
+
+  /** Dashboard "Move-outs" card: every tenant with a move-out on the way (actual or expected
+   *  date today or later) plus anyone already gone whose settlement isn't finished yet — with
+   *  the date, who gave notice, how much notice, settlement status, bond (and who holds it) and
+   *  the estimated refund. Soonest first; each row opens the tenant page. */
+  function dashboardMoveOutItems(){
+    var items = [];
+    tenants.forEach(function(t){
+      var date = t.actualMoveOutDate || t.expectedMoveOutDate || null;
+      var settlement = moveOutSettlementOf(t.id);
+      var settled = !!t.moveOutSettledAt || (settlement && settlement.status === 'completed');
+      if (settled) return;
+      var upcoming = date && date >= TODAY;
+      var pendingAfterLeaving = (date && date < TODAY && t.isActive !== false) || (settlement && settlement.status !== 'completed');
+      if (!upcoming && !pendingAfterLeaving) return;
+      items.push({ t: t, date: date, settlement: settlement });
+    });
+    // Upcoming (no date yet, or today onwards) soonest first; already-gone-but-not-settled newest first.
+    var upcoming = items.filter(function(it){ return !it.date || it.date >= TODAY; })
+      .sort(function(a,b){ return (a.date||'9999').localeCompare(b.date||'9999'); });
+    var past = items.filter(function(it){ return it.date && it.date < TODAY; })
+      .sort(function(a,b){ return b.date.localeCompare(a.date); });
+    return { upcoming: upcoming, past: past };
+  }
+  function dashboardMoveOutsHtml(){
+    var groups = dashboardMoveOutItems();
+    var statusLabel = { in_progress:['due','Settlement in progress'], pending_approval:['due','Awaiting your approval'] };
+    function rowHtml(it){
+      var t = it.t, s = it.settlement, prop = propertyOf(t.propertyId), room = roomOf(t.roomId);
+      var when;
+      if (!it.date) when = badge('neutral', 'No date yet');
+      else {
+        var d = daysBetween(TODAY, it.date);
+        when = d === 0 ? badge('overdue', 'Today') : d > 0 ? badge(d <= 14 ? 'due' : 'neutral', 'In '+d+' day'+(d===1?'':'s')) : badge('overdue', (-d)+' day'+(d===-1?'':'s')+' ago');
+      }
+      var details = [];
+      if (it.date) details.push((t.actualMoveOutDate ? 'Move-out ' : 'Expected ') + fullDate(it.date));
+      if (s){
+        var by = s.startedByRole === 'tenant' ? 'Tenant gave notice' : 'Started by admin';
+        var startedDay = (s.startedAt || '').slice(0,10);
+        if (startedDay) by += ' on ' + shortDate(startedDay) + (it.date && s.startedByRole === 'tenant' ? ' ('+daysBetween(startedDay, it.date)+' days\' notice)' : '');
+        details.push(by);
+      } else details.push('Move-out process not started');
+      var bond = bondOf(t.id);
+      if (bond) details.push('Bond '+money(bond.amountPaid)+(bond.heldBy ? ' · held by '+esc(bond.heldBy) : ''));
+      else details.push('No bond on file');
+      var refund = null;
+      if (s && s.status === 'pending_approval') refund = s.bondRefund;
+      else { var est = computeMoveOutEstimate(t); if (est && est.hasBond) refund = est.estimatedReturn; }
+      var st = s && statusLabel[s.status];
+      return '<a class="row" style="text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
+        '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
+        '<div class="meta">'+esc(prop ? prop.name : '')+(room ? ' • '+esc(room.name) : '')+'</div>'+
+        details.map(function(x){ return '<div class="meta" style="white-space:normal;overflow:visible;">'+x+'</div>'; }).join('')+'</div>'+
+        '<div class="amount" style="text-align:right;">'+when+
+          (st ? '<br/>'+badge(st[0], st[1]) : '')+
+          (refund != null ? '<div class="meta" style="margin-top:4px;">'+(refund < 0 ? '<span style="color:var(--status-overdue);">Tenant owes '+money(-refund)+'</span>' : 'Est. refund '+money(refund))+'</div>' : '')+
+        '</div></a>';
+    }
+    function sub(text){ return '<div style="font-size:11.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--text-faint);margin:12px 0 2px;">'+text+'</div>'; }
+    var total = groups.upcoming.length + groups.past.length;
+    var body = (groups.upcoming.length
+        ? groups.upcoming.map(rowHtml).join('')
+        : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No move-outs coming up.</p>') +
+      (groups.past.length ? sub('Moved out — settlement not finished ('+groups.past.length+')') + groups.past.map(rowHtml).join('') : '');
+    return '<div class="card"><h2>Move-outs'+(total ? ' ('+total+')' : '')+'</h2>'+body+'</div>';
   }
 
   /** Makes the Dashboard's summary tiles clickable: each one jumps to the page (and filter) that
