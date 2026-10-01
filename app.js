@@ -10204,7 +10204,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return '<div class="field-row" style="padding-left:12px;"><span class="k" style="font-size:12.5px;">'+esc(x.bill.provider||x.bill.billType||'Bill')+' · due '+shortDate(x.bill.dueDate)+'</span><span class="v" style="font-size:12.5px;">'+money(x.alloc.amount)+'</span></div>';
       }).join('')+
       '</details>';
-    return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') + realEstateInspectionBannerHtml(true) +
+    return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') + tenantOverdueRentBannerHtml(t) + realEstateInspectionBannerHtml(true) +
       '<div class="card">'+
       '<div class="field-row"><span class="k">Property</span><span class="v">'+(p?esc(p.address||p.name):'—')+'</span></div>'+
       '<div class="field-row"><span class="k">Room</span><span class="v">'+(r?esc(r.name):'—')+'</span></div>'+
@@ -10215,6 +10215,35 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>'+
       tenantRentHistoryHtml(t.id) +
       renderTenantMyBondHtml(t);
+  }
+
+  /** Tenant dashboard alert when rent is overdue: how much, how many periods, and how many days
+   *  since it should have been paid (from the oldest unpaid period's due date). Shows "under
+   *  review" instead of the button while a payment they reported is waiting for confirmation. */
+  function tenantOverdueRentBannerHtml(t){
+    var overdue = rentCharges.filter(function(c){ return c.tenantId===t.id && c.status!=='paid' && c.periodStart <= TODAY && c.remaining > 0.004; })
+      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+    if (!overdue.length) return '';
+    var total = overdue.reduce(function(sum,c){ return sum + c.remaining; }, 0);
+    var oldest = overdue[0];
+    var days = Math.max(0, daysBetween(oldest.periodStart, TODAY));
+    var pending = rentPaymentReports.some(function(r){ return r.tenantId===t.id && r.status==='pending'; });
+    var ref = tenantPaymentRef(t);
+    return '<div class="overdue-banner">'+
+      '<div class="overdue-banner-head">⚠️ Your rent is overdue</div>'+
+      '<div class="overdue-banner-amount">'+money(total)+'</div>'+
+      '<div class="overdue-banner-detail">'+
+        (overdue.length === 1
+          ? 'For '+shortDate(oldest.periodStart)+' – '+shortDate(oldest.periodEnd)+'. '
+          : overdue.length+' rent periods unpaid, since '+shortDate(oldest.periodStart)+'. ')+
+        'It was due '+(days === 0 ? '<b>today</b>' : '<b>'+days+' day'+(days===1?'':'s')+' ago</b>')+' ('+shortDate(oldest.periodStart)+').'+
+        (ref ? ' Use your reference <b>'+esc(ref)+'</b> on the transfer.' : '')+
+      '</div>'+
+      (pending
+        ? '<div class="overdue-banner-note">⏳ Your payment report is waiting for your administrator to confirm it.</div>'
+        : '<div class="overdue-banner-actions"><button class="mini-btn primary" onclick="openRentReportModal(\''+oldest.id+'\')">I paid</button>'+
+          '<a class="mini-btn" href="#/payments">See details</a></div>')+
+      '</div>';
   }
 
   function renderTenantPayments(){

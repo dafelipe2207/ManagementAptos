@@ -1354,3 +1354,12 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 .audit-who{font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .audit-what{color:var(--text-dim);overflow-wrap:anywhere;}
 .audit-row.login .audit-what{color:var(--status-paid);}
+
+/* Tenant dashboard: overdue rent alert */
+.overdue-banner{border:1.5px solid var(--status-overdue);background:var(--status-overdue-bg);border-radius:14px;padding:16px 18px;}
+.overdue-banner-head{font-size:13.5px;font-weight:700;color:var(--status-overdue);}
+.overdue-banner-amount{font-size:28px;font-weight:700;color:var(--status-overdue);margin:4px 0 6px;font-variant-numeric:tabular-nums;}
+.overdue-banner-detail{font-size:13px;color:var(--text);line-height:1.45;}
+.overdue-banner-note{font-size:12.5px;color:var(--text-dim);margin-top:10px;}
+.overdue-banner-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+.overdue-banner-actions a.mini-btn{text-decoration:none;display:inline-flex;align-items:center;}
