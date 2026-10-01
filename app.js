@@ -5877,6 +5877,41 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<button type="button" class="wa-btn'+(extraClass?' '+extraClass:'')+'" title="'+title+'" aria-label="'+title+'" onclick="'+onclick+'">'+WA_ICON+'</button>';
   }
 
+  /** Copies text in a way iPhone Safari honours: a synchronous execCommand('copy') from a
+   *  hidden, selected textarea (done inside the tap), plus the async Clipboard API as a backup.
+   *  Returns a promise that resolves to true/false once the copy has had a chance to finish. */
+  function copyTextReliably(text){
+    var ok = false;
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;';
+      document.body.appendChild(ta);
+      var range = document.createRange();
+      range.selectNodeContents(ta);
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      ta.setSelectionRange(0, text.length);
+      ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      document.body.removeChild(ta);
+    } catch(_e){}
+    var asyncCopy = (navigator.clipboard && navigator.clipboard.writeText)
+      ? navigator.clipboard.writeText(text).then(function(){ return true; }, function(){ return false; })
+      : Promise.resolve(false);
+    var timeout = new Promise(function(res){ setTimeout(function(){ res(false); }, 600); });
+    return Promise.race([asyncCopy, timeout]).then(function(asyncOk){ return ok || asyncOk; });
+  }
+  /** Copy the message FIRST, and only then leave for WhatsApp — switching apps straight away
+   *  was cancelling the copy on iPhone, so the group opened with nothing to paste. */
+  function copyThenOpenWhatsApp(message, url, okText){
+    copyTextReliably(message).then(function(copied){
+      showToast(copied ? (okText || 'Message copied — paste it in the group and send.')
+        : 'Opening the group — copy the message by hand:\n\n' + message, copied ? 'success' : 'info');
+      openWhatsApp(url);
+    });
+  }
+
   function openWhatsApp(httpsUrl){
     if (!httpsUrl) return;
     if (isAppleMobile()){
@@ -6125,12 +6160,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var message = billGroupWhatsAppMessage(bill, property, tenantsForMsg);
     var invoiceUrl = bill.receiptPath ? billInvoiceLinkCache[bill.receiptPath] : null;
     if (invoiceUrl) message += '\n\nBill: ' + invoiceUrl;
-    var copied = false;
-    try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(message); copied = true; } } catch(_e){}
-    openWhatsApp(property.whatsappGroupLink);
-    showToast(copied
-      ? 'Message copied' + (invoiceUrl ? ' (with the bill link)' : '') + ' — paste it in the group and send.'
-      : 'Opening the group — copy the message by hand:\n\n' + message, copied ? 'success' : 'info');
+    copyThenOpenWhatsApp(message, property.whatsappGroupLink,
+      'Message copied' + (invoiceUrl ? ' (with the bill link)' : '') + ' — paste it in the group and send.');
     markBillSharedToGroup(bill, true);
   }
   window.sendBillToWhatsAppGroup = sendBillToWhatsAppGroup;
@@ -9014,10 +9045,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var message = '🏠 Property inspection — ' + (p.address || p.name) + '\n' +
       '📅 ' + reiWhenText(i) + '\n\n' +
       reiTenantText(i.notes || REI_DEFAULT_NOTES, i.agency) + '\n\nThank you!';
-    var copied = false;
-    try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(message); copied = true; } } catch(_e){}
-    openWhatsApp(p.whatsappGroupLink);
-    showToast(copied ? 'Message copied — paste it in the group and send.' : 'Opening the group — copy the message by hand:\n\n' + message, copied ? 'success' : 'info');
+    copyThenOpenWhatsApp(message, p.whatsappGroupLink);
   }
   window.sendInspectionToWhatsAppGroup = sendInspectionToWhatsAppGroup;
 
