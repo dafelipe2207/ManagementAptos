@@ -23,7 +23,7 @@
     <div class="card modal-card" style="max-width:320px;">
       <h2 id="auth-title" style="text-transform:none;letter-spacing:0;font-size:16px;">Sign in</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:4px 0 14px;">Manager stores your data in your own private Supabase project. Accounts are created by a Super Admin — if you don't have one yet, ask them.</p>
-      <div class="form-row"><label for="auth-email">Email or phone number</label><input id="auth-email" type="text" autocomplete="username" placeholder="Tenants: your phone, e.g. 0487 352 329" /></div>
+      <div class="form-row"><label for="auth-email">Email, phone or tenant ID</label><input id="auth-email" type="text" autocomplete="username" autocapitalize="none" placeholder="Tenants: your ID (e.g. NOE105) or phone" /></div>
       <div class="form-row"><label for="auth-password">Password</label><span class="pw-wrap"><input id="auth-password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAuthForm()" /><button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility('auth-password', this)"><svg class="eye-open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a18.4 18.4 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg></button></span></div>
       <p id="auth-error" class="form-error" hidden></p>
       <div class="modal-actions" style="justify-content:space-between;">
@@ -1217,6 +1217,6 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
-<script type="module" src="app.js?v=144"></script>
+<script type="module" src="app.js?v=145"></script>
 </body>
 </html>

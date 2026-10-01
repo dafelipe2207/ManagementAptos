@@ -3,7 +3,7 @@
 // from artifact/index.html, preserved as closely as possible; the main
 // structural change is that persistence now goes through the async
 // services/* modules instead of synchronous localStorage.
-import * as auth from './lib/auth.js?v=2';
+import * as auth from './lib/auth.js?v=3';
 import { friendlyErrorMessage } from './lib/errors.js';
 import { supabase as realtimeClient } from './lib/supabaseClient.js';
 import * as propertyService from './services/propertyService.js?v=2';
@@ -12901,7 +12901,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var errorEl = document.getElementById('auth-error');
     var btn = document.getElementById('auth-submit-btn');
     if (!rawInput || !password){
-      errorEl.textContent = 'Enter your email or phone number, and your password.';
+      errorEl.textContent = 'Enter your email, phone number or tenant ID, and your password.';
       errorEl.hidden = false;
       return;
     }
@@ -12909,6 +12909,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     btn.disabled = true; btn.textContent = 'Signing in…';
     errorEl.hidden = true;
     try {
+      // Tenant ID / payment reference (e.g. NOE105) — signed in via the login-by-reference function.
+      if (rawInput.indexOf('@') < 0 && auth.looksLikePaymentReference(rawInput)){
+        await auth.signInWithReference(rawInput, password);
+        await enterApp();
+        return;
+      }
       var candidates = loginEmailCandidates(rawInput);
       var lastErr = null, signedIn = false;
       for (var ci = 0; ci < candidates.length && !signedIn; ci++){
