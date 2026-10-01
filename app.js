@@ -1550,14 +1550,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  covers PRE-FILLED with whatever the system already computes as the next due date — but fully
    *  editable, because that default date might not match the invoice's actual period
    *  (e.g. if the payment arrived late or the actual cycle doesn't line up exactly). */
-  function openLeasePaymentModal(propertyId){
+  function openLeasePaymentModal(propertyId, presetStart){
     var p = propertyOf(propertyId);
     if (!p) return;
     leasePaymentModalPropertyId = propertyId;
     leasePaymentEditId = null;
     document.getElementById('lease-payment-modal-title').textContent = 'Mark lease payment as paid';
     document.getElementById('lease-payment-file-label').textContent = 'Invoice / payment receipt (optional)';
-    var defaultStart = nextLeaseDueDate(p, TODAY) || TODAY;
+    var defaultStart = presetStart || nextLeaseDueDate(p, TODAY) || TODAY;
     document.getElementById('lease-payment-modal-sub').textContent =
       p.name + (p.leasePaymentAmount!=null ? ' • ' + money(p.leasePaymentAmount) : '') + ' • ' + (p.leasePaymentFrequency==='fortnightly'?'Fortnightly':'Monthly');
     document.getElementById('lease-payment-start').value = defaultStart;
@@ -1646,6 +1646,36 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     } finally {
       if (btn){ btn.disabled = false; btn.textContent = 'Confirm'; }
     }
+  }
+
+  /** Periods still to pay to the real estate — every period from the one after the last paid up
+   *  to today (overdue / due today), plus the next upcoming one — the same "Due & upcoming" idea as
+   *  a tenant's rent history. Each row has its own "Mark paid" that pre-fills that period. */
+  function leaseDuePeriods(p){
+    var start = nextLeaseDueDate(p, TODAY);
+    if (!start) return [];
+    var out = [], guard = 0;
+    function next(d){ return p.leasePaymentFrequency === 'fortnightly' ? stepDateIso(d, 14) : addMonthsIso(d, 1); }
+    while (start <= TODAY && guard++ < 60){ out.push(start); start = next(start); }
+    out.push(start); // the next upcoming one
+    return out;
+  }
+  function leaseDueListHtml(p){
+    var periods = leaseDuePeriods(p);
+    if (!periods.length) return '';
+    var rows = periods.slice().reverse().map(function(start){ // newest first, like the tenants' lists
+      var d = daysBetween(start, TODAY);
+      var b = d > 0 ? badge('overdue', d+' day'+(d===1?'':'s')+' overdue') : d === 0 ? badge('due', 'Due today') : badge('upcoming', 'Due in '+(-d)+' day'+(d===-1?'':'s'));
+      return '<div class="row" style="padding:8px 0;">'+
+        '<div class="who"><div class="name" style="font-size:13px;">'+shortDate(start)+' – '+shortDate(leasePeriodEnd(p, start))+'</div>'+
+        '<div class="meta">Due '+fullDate(start)+'</div></div>'+
+        '<div style="display:flex;align-items:center;gap:8px;">'+
+          '<div class="amount" style="text-align:right;">'+(p.leasePaymentAmount != null ? money(p.leasePaymentAmount) : '—')+'<br/>'+b+'</div>'+
+          '<button type="button" class="view-btn" onclick="openLeasePaymentModal(\''+p.id+'\',\''+start+'\')">MARK AS PAID</button>'+
+        '</div></div>';
+    }).join('');
+    var overdueCount = periods.filter(function(x){ return x < TODAY; }).length;
+    return '<h3 style="font-size:12.5px;margin:14px 0 4px;">Due &amp; upcoming'+(overdueCount ? ' · <span style="color:var(--status-overdue);">'+overdueCount+' overdue ('+(p.leasePaymentAmount != null ? money(round2(overdueCount*p.leasePaymentAmount)) : '')+')</span>' : '')+'</h3>'+rows;
   }
 
   /** Payment history to the real estate for one property, newest period first, each with its
@@ -1757,6 +1787,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(p.bankAccountNumber)+'</span></div>';
     }
     return '<div class="card"><h2>Landlord\'s lease (payment to the real estate)</h2><div class="field-list">'+rows+'</div>'+
+      leaseDueListHtml(p)+
       leasePaymentHistoryHtml(p)+
       '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="openLeasePaymentModal(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
   }
@@ -9809,8 +9840,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var all = realEstateInspections.filter(function(i){ return i.propertyId===p.id; });
     var upcoming = all.filter(function(i){ return i.status==='scheduled' && i.date >= TODAY; })
       .sort(function(a,b){ return (a.date+a.startTime).localeCompare(b.date+b.startTime); });
-    var past = all.filter(function(i){ return !(i.status==='scheduled' && i.date >= TODAY); })
-      .sort(function(a,b){ return b.date.localeCompare(a.date); });
+    var past = []; // inspections already gone (done/cancelled/expired) aren't shown on the property page any more
     function item(i, isUpcoming){
       var cd = isUpcoming ? reiCountdown(i) : null;
       var state = isUpcoming ? badge(cd.urgent?'overdue':'upcoming', cd.small ? 'In '+cd.big+' days' : cd.big)
@@ -9826,7 +9856,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Real estate inspections</h2>'+
       '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">+ Schedule</button></div>'+
-      (all.length ? '' : '<p style="font-size:13px;color:var(--text-dim);margin:0;">No inspections on record. Schedule the next one, or add a past one to keep the history.</p>')+
+      (upcoming.length ? '' : '<p style="font-size:13px;color:var(--text-dim);margin:0;">No upcoming inspections. Schedule the next one.</p>')+
       (upcoming.length ? '<div class="rei-hist-group">Upcoming</div>'+upcoming.map(function(i){ return item(i, true); }).join('') : '')+
       (past.length ? '<div class="rei-hist-group">History</div>'+past.map(function(i){ return item(i, false); }).join('') : '')+
       '</div>';
