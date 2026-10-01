@@ -9547,6 +9547,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function setUsersViewTab(tab){ usersViewTab = tab; renderPreservingScroll(); }
   window.setUsersViewTab = setUsersViewTab;
 
+  var usersPropertyFilter = 'all';
+  function setUsersPropertyFilter(v){ usersPropertyFilter = v; renderPreservingScroll(); }
+  window.setUsersPropertyFilter = setUsersPropertyFilter;
   function renderUsers(){
     if (!isSuperAdmin()) return accessDeniedPage();
     var USERS_TABS = [['administrator','Admins'],['super_admin','Super Admins'],['tenant','Tenants']];
@@ -9555,6 +9558,29 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<button class="chip'+(usersViewTab===tb[0]?' active':'')+'" onclick="setUsersViewTab(\''+tb[0]+'\')">'+tb[1]+' ('+count+')</button>';
     }).join('') + '</div>';
     var scopedProfiles = allProfiles.filter(function(p){ return p.role === usersViewTab; });
+    // Tenants tab: filter by the property the tenant lives at (via their linked tenant record).
+    var usersPropertyFilterHtml = '';
+    if (usersViewTab === 'tenant'){
+      var tenantOfProfile = function(p){ return tenants.find(function(t){ return t.authUserId && t.authUserId === p.authUserId; }); };
+      usersPropertyFilterHtml = '<div style="max-width:320px;margin:0 0 12px;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by property</label>'+
+        '<select class="modal-input" onchange="setUsersPropertyFilter(this.value)">'+
+        '<option value="all"'+(usersPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
+        properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(pr){
+          var n = scopedProfiles.filter(function(p){ var t = tenantOfProfile(p); return t && t.propertyId === pr.id; }).length;
+          return '<option value="'+pr.id+'"'+(usersPropertyFilter===pr.id?' selected':'')+'>'+esc(pr.name)+' ('+n+')</option>';
+        }).join('')+
+        '<option value="none"'+(usersPropertyFilter==='none'?' selected':'')+'>Not linked to a tenant</option>'+
+        '</select></div>';
+      if (usersPropertyFilter !== 'all'){
+        scopedProfiles = scopedProfiles.filter(function(p){
+          var t = tenantOfProfile(p);
+          return usersPropertyFilter === 'none' ? !t : (t && t.propertyId === usersPropertyFilter);
+        });
+      }
+      scopedProfiles = scopedProfiles.slice().sort(function(a,b){
+        return ((a.firstName||'')+(a.lastName||'')).localeCompare((b.firstName||'')+(b.lastName||''));
+      });
+    }
     var rows = scopedProfiles.map(function(p){
       var phoneLogin = isPhoneLoginProfile(p);
       var identityLine = phoneLogin ? ('Logs in with: '+esc(p.phone||'—')) : (esc(p.email)+(p.phone?' · '+esc(p.phone):''));
@@ -9598,7 +9624,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }).join('');
     return pageHeader('Users', 'Every account and its role. Only a Super Admin sees this page.') +
       '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openUserModal()">Create user</button>'+
-      tabsHtml +
+      tabsHtml + usersPropertyFilterHtml +
       (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No '+ (USERS_TABS.find(function(tb){return tb[0]===usersViewTab;})||['','users'])[1].toLowerCase() +' yet.</p></div>');
   }
 
