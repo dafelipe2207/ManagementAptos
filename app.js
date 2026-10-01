@@ -3165,6 +3165,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="openPartialModal(\''+c.id+'\')">Partial</button>')+
         '</span></div>';
     }
+    /** Periods settled by ONE payment (same paid date) are one row: one transfer = one receipt.
+     *  Showing each period on its own row made a single upload look like several receipts. */
+    function groupPaidByPayment(list){
+      var groups = [];
+      list.forEach(function(c){
+        var last = groups[groups.length-1];
+        if (last && c.paidDate && last.paidDate === c.paidDate && last.tenantId === c.tenantId) last.items.push(c);
+        else groups.push({ paidDate:c.paidDate, tenantId:c.tenantId, items:[c] });
+      });
+      return groups;
+    }
+    function paidGroupRow(g){
+      if (g.items.length === 1) return paidRow(g.items[0]);
+      var sorted = g.items.slice().sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+      var total = g.items.reduce(function(sum,c){ return sum + (Number(c.amountDue)||0); }, 0);
+      return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(sorted[0].periodStart)+' – '+shortDate(sorted[sorted.length-1].periodEnd)+
+        ' <span style="color:var(--text-faint);">(paid '+shortDate(g.paidDate)+' · '+g.items.length+' periods in one payment)</span></span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(total)+paidChargeReceiptHtml(g.items[0])+'</span></div>';
+    }
     function paidRow(c){
       var paidNote = c.paidDate ? ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>' : '';
       return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+'</span>'+
@@ -3284,7 +3303,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>'))+
             (newestFirst ? '' : upcomingHtml)+
             (!showPaid ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
-            limitedSection(paid, paidRow, 'No payments recorded yet.', 'Paid', t.id))+
+            limitedSection(groupPaidByPayment(paid), paidGroupRow, 'No payments recorded yet.', 'Paid', t.id))+
             (!showBills ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
             '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
