@@ -2722,7 +2722,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           (hasActionCol ? '<span class="rh-act">'+receiptIconHtml(receiptForPaidDate(g.paidDate))+'</span>' : '')+
         '</span></div>';
     }
-    var PAID_CAP = 12;
+    var PAID_CAP = Infinity; // every payment is shown (tenant and admin views) — no "earlier payments not shown"
     var pendingShown = pending; // pending items are always shown in full, never truncated
     var pendingExtra = 0;
     var paidShown = paidGroups.slice(0, PAID_CAP);
@@ -3046,7 +3046,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return out.sort(function(x,y){ return (x.bill.dueDate||'').localeCompare(y.bill.dueDate||''); });
   }
 
-  var PAYMENTS_ROW_LIMIT = 5; // how many rows are shown per block before sending to "View history"
+  var PAYMENTS_ROW_LIMIT = Infinity; // every paid period is listed on the card (View history is still there for editing)
 
   /** Was the tenant living at the property at any point during month 'YYYY-MM'? Moved in on
    *  or before the month's last day, and not moved out before its first day. Used so picking a
