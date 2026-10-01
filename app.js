@@ -10156,17 +10156,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   function renderTenantPayments(){
     var t = myTenantRecord();
-    var rows = t ? paymentRecords.filter(function(x){ return x.tenantId===t.id; }).sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); }) : [];
-    var body = rows.length === 0
-      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No payments recorded yet.</p></div>'
-      : '<div class="card"><div class="field-list">'+rows.map(function(pmt){
-          return '<div class="field-row"><span class="k">'+shortDate(pmt.date)+'</span><span class="v">'+money(pmt.amount)+'</span></div>';
-        }).join('')+'</div></div>';
+    // "Payments on file" (a flat list of every payment) was removed for tenants: the same payments
+    // already show, with their periods and receipts, in Rent history.
     return pageHeader('My Payments', 'Your rent. Paid it? Tap "I paid" and attach the receipt — it stays pending until your administrator confirms it.') +
       tenantPaymentRefCardHtml(t) +
-      (t ? tenantRentHistoryHtml(t.id) : '') +
-      '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">Payments on file</h2>' + body;
+      (t ? tenantRentHistoryHtml(t.id) : '');
   }
+
 
   var MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   function monthYearLabel(ym){
