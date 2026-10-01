@@ -8,3 +8,9 @@ export async function getRecent(limit) {
   if (error) throw error;
   return data;
 }
+
+/** One "signed in" entry per user per 30 minutes (the database function de-duplicates). */
+export async function logLogin(device) {
+  const { error } = await supabase.rpc('log_app_login', { p_device: device || null });
+  if (error) throw error;
+}

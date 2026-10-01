@@ -26,7 +26,7 @@ import * as rentPaymentReportService from './services/rentPaymentReportService.j
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
-import * as auditService from './services/auditService.js';
+import * as auditService from './services/auditService.js?v=2';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
@@ -9938,27 +9938,145 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     window.open('mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(message), '_blank');
   }
 
-  /* ============ Audit log (Super Admin only) ============ */
+  /* ============ Audit log (Super Admin only) ============
+   * Who signed in (tenant or admin, and from what device) and what each person did in the app:
+   * every change to payments, bills and their shares, payment reports, tenants, bonds, rooms,
+   * properties, maintenance, inspections, documents and users is recorded by database triggers;
+   * sign-ins by log_app_login() when the app opens. Filters: type, role and person. */
   var auditLogRows = null; // lazy-loaded on first visit
+  var auditFilterType = 'all';   // 'all' | 'logins' | 'changes'
+  var auditFilterRole = 'all';   // 'all' | 'tenant' | 'staff'
+  var auditFilterUser = 'all';
+  function setAuditFilter(kind, v){
+    if (kind==='type') auditFilterType = v; else if (kind==='role') auditFilterRole = v; else auditFilterUser = v;
+    renderPreservingScroll();
+  }
+  window.setAuditFilter = setAuditFilter;
+  function refreshAuditLog(){ auditLogRows = null; render(); }
+  window.refreshAuditLog = refreshAuditLog;
+
+  var AUDIT_TABLE_LABEL = {
+    payments:'rent payment', bills:'bill', bill_allocations:'bill share', payment_reports:'bill payment report',
+    rent_payment_reports:'rent payment report', tenants:'tenant', bonds:'bond', rooms:'room', properties:'property',
+    profiles:'user', maintenance_requests:'maintenance request', real_estate_inspections:'inspection',
+    recurring_bills:'recurring bill', move_out_settlements:'move-out settlement', tenant_documents:'document',
+    cleaning_submissions:'cleaning task', inspection_submissions:'inspection photos'
+  };
+  function auditProfile(userId){ return userId ? allProfiles.find(function(p){ return p.authUserId === userId; }) : null; }
+  function auditWho(r){
+    var p = auditProfile(r.user_id);
+    if (!r.user_id) return { name:'System', role:'system' };
+    if (!p) return { name:'Unknown user', role:'unknown' };
+    var name = ((p.firstName||'') + ' ' + (p.lastName||'')).trim() || p.email || 'User';
+    return { name:name, role:p.role, profile:p };
+  }
+  function auditTenantName(id){ var t = id && tenantOf(id); return t ? t.fullName : null; }
+  function auditDescribe(r){
+    var n = r.new_data || {}, o = r.old_data || {};
+    var d = r.action === 'DELETE' ? o : n;
+    var label = AUDIT_TABLE_LABEL[r.table_name] || r.table_name;
+    var who = auditTenantName(d.tenant_id);
+    var forWho = who ? ' for ' + who : (r.table_name==='tenants' && d.full_name ? ' ' + d.full_name : (r.table_name==='properties' || r.table_name==='rooms') && d.name ? ' ' + d.name : '');
+    if (r.action === 'LOGIN') return 'Signed in' + (n.device ? ' · ' + n.device : '');
+    switch (r.table_name){
+      case 'payments':
+        if (r.action==='INSERT') return 'Recorded a rent payment of ' + money(Number(n.amount)||0) + forWho + (n.payment_date ? ' (paid ' + shortDate(n.payment_date) + ')' : '');
+        if (r.action==='DELETE') return 'Deleted a rent payment of ' + money(Number(o.amount)||0) + forWho;
+        if ((o.receipt_path||null) !== (n.receipt_path||null)) return (n.receipt_path ? 'Attached a receipt to' : 'Removed the receipt from') + ' a rent payment' + forWho;
+        break;
+      case 'bill_allocations':
+        var b = billOf(d.bill_id); var bl = b ? billTypeLabel(b.billType) + (b.provider ? ' (' + b.provider + ')' : '') : 'a bill';
+        if (r.action==='UPDATE' && o.paid !== n.paid) return (n.paid ? 'Marked as paid: ' : 'Marked as unpaid: ') + (who || 'a') + "'s share of " + bl + ' — ' + money(Number(n.amount)||0);
+        if (r.action==='UPDATE' && (o.receipt_path||null) !== (n.receipt_path||null)) return (n.receipt_path ? 'Uploaded a receipt for ' : 'Removed the receipt for ') + (who || 'a') + "'s share of " + bl;
+        if (r.action==='INSERT') return 'Split ' + bl + ': ' + (who || 'admin') + ' — ' + money(Number(n.amount)||0);
+        if (r.action==='DELETE') return 'Removed ' + (who || 'admin') + "'s share of " + bl;
+        break;
+      case 'payment_reports':
+        if (r.action==='INSERT') return 'Reported paying a bill' + (n.proof_path ? ' (with receipt)' : '');
+        if (r.action==='UPDATE' && o.status !== n.status) return (n.status==='confirmed' ? 'Confirmed' : n.status==='rejected' ? 'Rejected' : 'Updated') + ' a bill payment report' + forWho + (n.status==='rejected' && n.rejection_reason ? ' — "' + n.rejection_reason + '"' : '');
+        break;
+      case 'rent_payment_reports':
+        if (r.action==='INSERT') return 'Reported paying rent: ' + money(Number(n.amount)||0) + (n.proof_path ? ' (with receipt)' : '');
+        if (r.action==='UPDATE' && o.status !== n.status) return (n.status==='confirmed' ? 'Confirmed' : n.status==='rejected' ? 'Rejected' : 'Updated') + ' a rent payment report' + forWho + ' — ' + money(Number(n.amount)||0);
+        break;
+      case 'bills':
+        var bn = billTypeLabel(d.type) + (d.provider ? ' (' + d.provider + ')' : '') + ' ' + money(Number(d.amount)||0);
+        if (r.action==='INSERT') return 'Added bill ' + bn;
+        if (r.action==='DELETE') return 'Deleted bill ' + bn;
+        if (o.admin_paid !== n.admin_paid) return (n.admin_paid ? 'Paid the provider for ' : 'Marked as not paid to provider: ') + bn;
+        if ((o.whatsapp_group_share_count||0) !== (n.whatsapp_group_share_count||0)) return 'Sent ' + bn + ' to the WhatsApp group';
+        break;
+      case 'tenants':
+        if (r.action==='INSERT') return 'Added tenant ' + d.full_name;
+        if (r.action==='DELETE') return 'Deleted tenant ' + d.full_name;
+        break;
+      case 'profiles':
+        var pn = ((d.first_name||'') + ' ' + (d.last_name||'')).trim();
+        if (r.action==='UPDATE' && o.role !== n.role) return 'Changed ' + pn + "'s role to " + (ROLE_LABEL[n.role]||n.role);
+        if (r.action==='UPDATE' && o.is_active !== n.is_active) return (n.is_active ? 'Activated ' : 'Deactivated ') + pn + "'s login";
+        if (r.action==='UPDATE' && o.current_password !== n.current_password) return 'Changed the password of ' + pn;
+        if (r.action==='INSERT') return 'Created user ' + pn;
+        break;
+      case 'maintenance_requests':
+        if (r.action==='INSERT') return 'Reported a maintenance issue: ' + (d.title||'');
+        if (r.action==='UPDATE' && o.status !== n.status) return 'Maintenance "' + (d.title||'') + '" → ' + n.status;
+        break;
+    }
+    // Generic fallback: what changed, in plain words
+    if (r.action==='INSERT') return 'Added ' + label + forWho;
+    if (r.action==='DELETE') return 'Deleted ' + label + forWho;
+    var changed = Object.keys(n).filter(function(k){ return k!=='updated_at' && JSON.stringify(n[k]) !== JSON.stringify(o[k]); });
+    return 'Updated ' + label + forWho + (changed.length ? ' (' + changed.slice(0,4).join(', ').replace(/_/g,' ') + (changed.length>4?'…':'') + ')' : '');
+  }
   function renderAuditLog(){
     if (!isSuperAdmin()) return accessDeniedPage();
+    var header = pageHeader('Audit log', 'Who signed in — tenant or admin — and what each person did in the app.');
     if (auditLogRows === null){
       loadAuditLog();
-      return pageHeader('Audit log', 'Every change to payments, bills, tenants, rooms, properties and roles.') +
-        '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Loading…</p></div>';
+      return header + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Loading…</p></div>';
     }
-    var rows = auditLogRows.map(function(r){
-      return '<div class="card">'+
-        '<p style="font-size:12.5px;margin:0 0 2px;"><strong>'+esc(r.action)+'</strong> on <strong>'+esc(r.table_name)+'</strong></p>'+
-        '<p style="font-size:11.5px;color:var(--text-faint);margin:0;">'+new Date(r.created_at).toLocaleString()+'</p>'+
-        '</div>';
+    var people = {};
+    auditLogRows.forEach(function(r){ if (r.user_id) people[r.user_id] = auditWho(r).name; });
+    var rows = auditLogRows.filter(function(r){
+      if (auditFilterType==='logins' && r.action!=='LOGIN') return false;
+      if (auditFilterType==='changes' && r.action==='LOGIN') return false;
+      var w = auditWho(r);
+      if (auditFilterRole==='tenant' && w.role!=='tenant') return false;
+      if (auditFilterRole==='staff' && !(w.role==='administrator' || w.role==='super_admin')) return false;
+      if (auditFilterUser!=='all' && r.user_id!==auditFilterUser) return false;
+      return true;
+    });
+    var chips = '<div class="filter-chips">'+[['all','All'],['logins','Sign-ins'],['changes','Changes']].map(function(c){
+      return '<button class="chip'+(auditFilterType===c[0]?' active':'')+'" onclick="setAuditFilter(\'type\',\''+c[0]+'\')">'+c[1]+'</button>'; }).join('')+'</div>';
+    var selects = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">'+
+      '<div style="flex:1;min-width:160px;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Who</label>'+
+      '<select class="modal-input" onchange="setAuditFilter(\'role\',this.value)">'+
+        [['all','Everyone'],['tenant','Tenants'],['staff','Admins']].map(function(o){ return '<option value="'+o[0]+'"'+(auditFilterRole===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>'+
+      '<div style="flex:1;min-width:160px;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Person</label>'+
+      '<select class="modal-input" onchange="setAuditFilter(\'user\',this.value)"><option value="all">All people</option>'+
+        Object.keys(people).sort(function(a,b){ return people[a].localeCompare(people[b]); }).map(function(id){ return '<option value="'+id+'"'+(auditFilterUser===id?' selected':'')+'>'+esc(people[id])+'</option>'; }).join('')+'</select></div>'+
+      '<button type="button" class="mini-btn" style="align-self:flex-end;" onclick="refreshAuditLog()">Refresh</button></div>';
+    var ROLE_BADGE = { tenant:['upcoming','Tenant'], administrator:['move','Admin'], super_admin:['move','Super Admin'], system:['neutral','System'], unknown:['neutral','Unknown'] };
+    var lastDay = '';
+    var list = rows.map(function(r){
+      var w = auditWho(r);
+      var when = new Date(r.created_at);
+      var day = when.toLocaleDateString('en-AU', { weekday:'short', day:'2-digit', month:'short', year:'numeric' });
+      var head = day !== lastDay ? '<div class="audit-day">'+esc(day)+'</div>' : '';
+      lastDay = day;
+      var rb = ROLE_BADGE[w.role] || ROLE_BADGE.unknown;
+      return head + '<div class="audit-row'+(r.action==='LOGIN'?' login':'')+'">'+
+        '<span class="audit-time">'+when.toLocaleTimeString('en-AU', { hour:'numeric', minute:'2-digit' })+'</span>'+
+        '<span class="audit-main"><span class="audit-who">'+esc(w.name)+' '+badge(rb[0], rb[1])+'</span>'+
+        '<span class="audit-what">'+esc(auditDescribe(r))+'</span></span></div>';
     }).join('');
-    return pageHeader('Audit log', 'Every change to payments, bills, tenants, rooms, properties and roles. Showing the latest 100.') +
-      (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No changes recorded yet.</p></div>');
+    return header + '<div class="card">'+chips+selects+
+      (list ? '<div class="audit-list">'+list+'</div>' : '<p style="font-size:13px;color:var(--text-faint);margin:6px 0 0;">Nothing matches these filters.</p>')+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:10px 0 0;">Showing the latest '+auditLogRows.length+' entries.</p></div>';
   }
   async function loadAuditLog(){
     try {
-      auditLogRows = await auditService.getRecent(100);
+      auditLogRows = await auditService.getRecent(500);
     } catch(_e){
       auditLogRows = [];
     }
@@ -13194,6 +13312,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.confirmSignOut = confirmSignOut;
 
+  /** Short, human device description for the sign-in log: "iPhone · Safari", "Windows · Chrome". */
+  function deviceLabel(){
+    var ua = navigator.userAgent || '';
+    var os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad'
+      : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Device';
+    var br = /CriOS|Chrome\//.test(ua) && !/Edg\//.test(ua) ? 'Chrome' : /Edg\//.test(ua) ? 'Edge' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+    var app = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone ? ' (home-screen app)' : '';
+    return os + ' · ' + br + app;
+  }
   async function enterApp(){
     document.getElementById('auth-screen').hidden = true;
     document.getElementById('app-loading-screen').hidden = false;
@@ -13221,6 +13348,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.querySelector('.shell').hidden = false;
     startRouter();
     setupAutoRefresh();
+    auditService.logLogin(deviceLabel()).catch(function(){}); // sign-in entry for the Audit log
     // Upkeep (recurring bills, duties, automatic notifications) runs after the app is on screen,
     // then the page quietly redraws with anything it created.
     runMaintenanceTasks().then(function(){ if (!anyModalOpen()) render(true); })
