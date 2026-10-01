@@ -658,7 +658,7 @@
 
   <div class="modal-overlay" id="lease-payment-modal" hidden>
     <div class="card modal-card" style="max-width:360px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Mark lease payment as paid</h2>
+      <h2 id="lease-payment-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Mark lease payment as paid</h2>
       <p id="lease-payment-modal-sub" style="font-size:12px;color:var(--text-faint);margin:0 0 10px;"></p>
       <div class="form-row">
         <label for="lease-payment-start">This payment covers the period starting</label>
@@ -671,7 +671,7 @@
         <div><label for="lease-payment-paid-date">Paid on</label><input id="lease-payment-paid-date" type="date" /></div>
       </div>
       <div class="form-row">
-        <label for="lease-payment-file">Invoice / payment receipt (optional)</label>
+        <label for="lease-payment-file" id="lease-payment-file-label">Invoice / payment receipt (optional)</label>
         <input id="lease-payment-file" type="file" accept="image/*,application/pdf" />
       </div>
       <div class="form-row">
@@ -1265,6 +1265,6 @@
 <input id="admin-pay-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleAdminPayReceiptFile(event)" />
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
-<script type="module" src="app.js?v=170"></script>
+<script type="module" src="app.js?v=171"></script>
 </body>
 </html>

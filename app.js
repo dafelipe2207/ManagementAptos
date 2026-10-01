@@ -1524,6 +1524,28 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   var leasePaymentModalPropertyId = null;
+  var leasePaymentEditId = null; // set while editing an existing history entry
+  /** Edit a payment already in the history: its period start (the end follows the frequency),
+   *  amount, paid date, notes, and optionally replace the invoice. */
+  function openEditLeasePayment(id){
+    var x = leasePayments.find(function(r){ return r.id === id; });
+    var p = x && propertyOf(x.propertyId);
+    if (!p) return;
+    leasePaymentModalPropertyId = p.id;
+    leasePaymentEditId = id;
+    document.getElementById('lease-payment-modal-title').textContent = 'Edit lease payment';
+    document.getElementById('lease-payment-modal-sub').textContent = p.name + ' • ' + (p.leasePaymentFrequency==='fortnightly'?'Fortnightly':'Monthly');
+    document.getElementById('lease-payment-start').value = x.periodStart;
+    document.getElementById('lease-payment-amount').value = x.amount != null ? x.amount : '';
+    document.getElementById('lease-payment-paid-date').value = x.paidDate || '';
+    document.getElementById('lease-payment-file').value = '';
+    document.getElementById('lease-payment-file-label').textContent = x.receiptPath ? 'Replace the invoice (optional — leave empty to keep the current one)' : 'Invoice / payment receipt (optional)';
+    document.getElementById('lease-payment-notes').value = x.notes || '';
+    updateLeasePaymentEndPreview();
+    document.getElementById('lease-payment-modal-error').hidden = true;
+    document.getElementById('lease-payment-modal').hidden = false;
+  }
+  window.openEditLeasePayment = openEditLeasePayment;
   /** Opens a dialog to confirm the payment to the real estate, with the dates of the period it
    *  covers PRE-FILLED with whatever the system already computes as the next due date — but fully
    *  editable, because that default date might not match the invoice's actual period
@@ -1532,6 +1554,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var p = propertyOf(propertyId);
     if (!p) return;
     leasePaymentModalPropertyId = propertyId;
+    leasePaymentEditId = null;
+    document.getElementById('lease-payment-modal-title').textContent = 'Mark lease payment as paid';
+    document.getElementById('lease-payment-file-label').textContent = 'Invoice / payment receipt (optional)';
     var defaultStart = nextLeaseDueDate(p, TODAY) || TODAY;
     document.getElementById('lease-payment-modal-sub').textContent =
       p.name + (p.leasePaymentAmount!=null ? ' • ' + money(p.leasePaymentAmount) : '') + ' • ' + (p.leasePaymentFrequency==='fortnightly'?'Fortnightly':'Monthly');
@@ -1555,6 +1580,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function closeLeasePaymentModal(){
     document.getElementById('lease-payment-modal').hidden = true;
     leasePaymentModalPropertyId = null;
+    leasePaymentEditId = null;
   }
   window.closeLeasePaymentModal = closeLeasePaymentModal;
   async function confirmLeasePaymentModal(){
@@ -1571,11 +1597,35 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (amount != null && (!isFinite(amount) || amount < 0)){
       errorEl.textContent = 'Enter a valid amount (or leave it empty).'; errorEl.hidden = false; return;
     }
-    var paidDate = document.getElementById('lease-payment-paid-date').value || TODAY;
+    var paidDate = document.getElementById('lease-payment-paid-date').value || (leasePaymentEditId ? null : TODAY);
     var file = document.getElementById('lease-payment-file').files[0] || null;
     var notes = document.getElementById('lease-payment-notes').value.trim();
     var btn = document.querySelector('#lease-payment-modal .mini-btn.primary');
     if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    if (leasePaymentEditId){
+      try {
+        var x = leasePayments.find(function(r){ return r.id === leasePaymentEditId; });
+        var newPath = file ? await storageService.uploadReceipt('lease-' + p.id, file) : x.receiptPath;
+        var upd = await leasePaymentService.update(x.id, Object.assign({}, x, { periodStart: start, periodEnd: leasePeriodEnd(p, start),
+          amount: amount, paidDate: paidDate, receiptPath: newPath, notes: notes }));
+        Object.assign(x, upd);
+        // Keep "last period paid" (and so "next payment due") in step with the latest period in the history.
+        var latest = leasePayments.filter(function(r){ return r.propertyId === p.id; }).map(function(r){ return r.periodStart; }).sort().pop() || null;
+        if (latest && latest !== p.lastLeasePaymentDate){
+          var savedP = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: latest }));
+          Object.assign(p, savedP);
+        }
+        closeLeasePaymentModal();
+        showToast('Lease payment updated.', 'success');
+        render();
+      } catch(err){
+        errorEl.textContent = 'Could not save this. ' + friendlyErrorMessage(err);
+        errorEl.hidden = false;
+      } finally {
+        if (btn){ btn.disabled = false; btn.textContent = 'Confirm'; }
+      }
+      return;
+    }
     try {
       var receiptPath = file ? await storageService.uploadReceipt('lease-' + p.id, file) : null;
       var row = await leasePaymentService.create({ propertyId: p.id, periodStart: start, periodEnd: leasePeriodEnd(p, start),
@@ -1618,6 +1668,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="meta" style="white-space:normal;">'+meta.join(' • ')+'</div></div>'+
         '<div style="display:flex;align-items:center;gap:6px;">'+
           '<span class="amount" style="margin-right:4px;">'+(x.amount != null ? money(x.amount) : '—')+'</span>'+icons+
+          '<button type="button" class="rcpt-btn" title="Edit this payment" aria-label="Edit this payment" onclick="openEditLeasePayment(\''+x.id+'\')">'+svg('edit')+'</button>'+
           '<button type="button" class="rcpt-btn rm" title="Delete this payment" aria-label="Delete this payment" onclick="deleteLeasePayment(\''+x.id+'\')">'+svg('trash')+'</button>'+
         '</div></div>';
     }).join('');
