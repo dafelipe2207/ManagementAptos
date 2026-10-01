@@ -2591,7 +2591,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var paid = charges.filter(function(c){ return c.status==='paid'; })
       .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); });
     var pending = charges.filter(function(c){ return c.status!=='paid'; })
-      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); }); // oldest first: overdue on top, then due, then upcoming
+      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart); }); // newest first, same order as Paid below and the Payments page
     var tenantView = isTenantRole();
     // Rows sit in fixed columns (amount · status · action) so amounts and badges line up
     // across both lists instead of shifting with each badge's width.
