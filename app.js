@@ -26,6 +26,7 @@ import * as rentPaymentReportService from './services/rentPaymentReportService.j
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
+import * as leasePaymentService from './services/leasePaymentService.js?v=1';
 import * as auditService from './services/auditService.js?v=2';
 import * as recurringBillService from './services/recurringBillService.js';
 import * as cleaningService from './services/cleaningService.js?v=3';
@@ -71,6 +72,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var rentPaymentReports = []; // tenant "I paid my rent" reports (pending until staff confirm) — rentPaymentReportService.js
   var houseRules = []; // one per property — houseRulesService.js
   var maintenanceLog = []; // create/edit/delete history of maintenance requests — maintenanceLogService.js
+  var leasePayments = []; // admin's payments to the real estate (history + invoices) — leasePaymentService.js
   var realEstateInspections = []; // agency inspection visits per property — realEstateInspectionService.js
   var cleaningTasks = [];
   var cleaningSubmissions = [];
@@ -969,6 +971,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     wrench:'<path d="M14.5 5.5a4.5 4.5 0 0 1 5.9-1.3l-3 3 .9 2.5 2.5.9 3-3a4.5 4.5 0 0 1-6.2 5.6L9.7 21.1a2.3 2.3 0 0 1-3.2-3.2l7.9-7.9a4.5 4.5 0 0 1 .1-4.5z"/>',
     broom:'<path d="M19 3l-6.5 6.5"/><path d="M11 8l5 5"/><path d="M10.5 9.5c-2 .5-4.5 2.5-5.5 5L3 21l6.5-2c2.5-1 4.5-3.5 5-5.5"/><path d="M6.5 16.5l2 2M8 14l2.5 2.5"/>',
     inspect:'<rect x="5" y="4" width="14" height="18" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M8.5 13l2.3 2.3 4.7-4.8"/>',
+    trash:'<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/>',
     overview:'<rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/>'
   };
   function svg(name, extra){
@@ -1533,6 +1536,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('lease-payment-modal-sub').textContent =
       p.name + (p.leasePaymentAmount!=null ? ' • ' + money(p.leasePaymentAmount) : '') + ' • ' + (p.leasePaymentFrequency==='fortnightly'?'Fortnightly':'Monthly');
     document.getElementById('lease-payment-start').value = defaultStart;
+    document.getElementById('lease-payment-amount').value = p.leasePaymentAmount != null ? p.leasePaymentAmount : '';
+    document.getElementById('lease-payment-paid-date').value = TODAY;
+    document.getElementById('lease-payment-file').value = '';
+    document.getElementById('lease-payment-notes').value = '';
     updateLeasePaymentEndPreview();
     document.getElementById('lease-payment-modal-error').hidden = true;
     document.getElementById('lease-payment-modal').hidden = false;
@@ -1559,17 +1566,108 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       errorEl.hidden = false;
       return;
     }
+    var amountRaw = document.getElementById('lease-payment-amount').value;
+    var amount = amountRaw === '' ? null : parseFloat(amountRaw);
+    if (amount != null && (!isFinite(amount) || amount < 0)){
+      errorEl.textContent = 'Enter a valid amount (or leave it empty).'; errorEl.hidden = false; return;
+    }
+    var paidDate = document.getElementById('lease-payment-paid-date').value || TODAY;
+    var file = document.getElementById('lease-payment-file').files[0] || null;
+    var notes = document.getElementById('lease-payment-notes').value.trim();
+    var btn = document.querySelector('#lease-payment-modal .mini-btn.primary');
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
     try {
-      var saved = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: start }));
-      Object.assign(p, saved);
+      var receiptPath = file ? await storageService.uploadReceipt('lease-' + p.id, file) : null;
+      var row = await leasePaymentService.create({ propertyId: p.id, periodStart: start, periodEnd: leasePeriodEnd(p, start),
+        amount: amount, paidDate: paidDate, method: p.leasePaymentMethod, receiptPath: receiptPath, notes: notes });
+      leasePayments.unshift(row);
+      // The "next due" date follows the latest period paid — recording an older, missed period
+      // in the history must not move it backwards.
+      if (!p.lastLeasePaymentDate || start >= p.lastLeasePaymentDate){
+        var saved = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: start }));
+        Object.assign(p, saved);
+      }
       closeLeasePaymentModal();
-      showToast('Lease payment marked as paid.', 'success');
+      showToast('Lease payment recorded' + (receiptPath ? ' with its invoice.' : '.'), 'success');
       render();
     } catch(err){
       errorEl.textContent = 'Could not save this. ' + friendlyErrorMessage(err);
       errorEl.hidden = false;
+    } finally {
+      if (btn){ btn.disabled = false; btn.textContent = 'Confirm'; }
     }
   }
+
+  /** Payment history to the real estate for one property, newest period first, each with its
+   *  invoice/receipt (view, attach or remove) and a delete button. */
+  function leasePaymentHistoryHtml(p){
+    var rows = leasePayments.filter(function(x){ return x.propertyId === p.id; })
+      .sort(function(a,b){ return b.periodStart.localeCompare(a.periodStart) || (b.createdAt||'').localeCompare(a.createdAt||''); });
+    var head = '<h3 style="font-size:12.5px;margin:14px 0 4px;">Payment history'+(rows.length ? ' ('+rows.length+')' : '')+'</h3>';
+    if (!rows.length) return head + '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet — use "Mark lease payment as paid" below.</p>';
+    return head + rows.map(function(x){
+      var icons = x.receiptPath
+        ? '<button type="button" class="rcpt-btn has" title="View invoice" aria-label="View invoice" onclick="viewReceipt(\'receipts\',\''+x.receiptPath+'\')">'+RECEIPT_VIEW_ICON+'</button>'+
+          '<button type="button" class="rcpt-btn rm" title="Remove invoice" aria-label="Remove invoice" onclick="removeLeaseReceipt(\''+x.id+'\')">'+RECEIPT_REMOVE_ICON+'</button>'
+        : '<button type="button" class="rcpt-btn" title="Attach invoice" aria-label="Attach invoice" onclick="pickLeaseReceipt(\''+x.id+'\')">'+RECEIPT_UPLOAD_ICON+'</button>';
+      var meta = [];
+      meta.push(x.paidDate ? 'Paid ' + fullDate(x.paidDate) : 'Paid date not recorded');
+      if (x.notes) meta.push(esc(x.notes));
+      return '<div class="row" style="padding:8px 0;">'+
+        '<div class="who"><div class="name" style="font-size:13px;">'+shortDate(x.periodStart)+(x.periodEnd ? ' – '+shortDate(x.periodEnd) : '')+'</div>'+
+        '<div class="meta" style="white-space:normal;">'+meta.join(' • ')+'</div></div>'+
+        '<div style="display:flex;align-items:center;gap:6px;">'+
+          '<span class="amount" style="margin-right:4px;">'+(x.amount != null ? money(x.amount) : '—')+'</span>'+icons+
+          '<button type="button" class="rcpt-btn rm" title="Delete this payment" aria-label="Delete this payment" onclick="deleteLeasePayment(\''+x.id+'\')">'+svg('trash')+'</button>'+
+        '</div></div>';
+    }).join('');
+  }
+  var leaseReceiptTargetId = null;
+  function pickLeaseReceipt(id){ leaseReceiptTargetId = id; document.getElementById('lease-receipt-input').click(); }
+  async function handleLeaseReceiptFile(event){
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    var x = leasePayments.find(function(r){ return r.id === leaseReceiptTargetId; });
+    if (!file || !x) return;
+    try {
+      var path = await storageService.uploadReceipt('lease-' + x.propertyId, file);
+      var saved = await leasePaymentService.update(x.id, Object.assign({}, x, { receiptPath: path }));
+      Object.assign(x, saved);
+      showToast('Invoice attached.', 'success');
+      renderPreservingScroll();
+    } catch(err){ showToast('Could not attach the invoice. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  async function removeLeaseReceipt(id){
+    var x = leasePayments.find(function(r){ return r.id === id; });
+    if (!x) return;
+    try {
+      var saved = await leasePaymentService.update(x.id, Object.assign({}, x, { receiptPath: null }));
+      Object.assign(x, saved);
+      renderPreservingScroll();
+    } catch(err){ showToast('Could not remove the invoice. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  /** Deleting a history entry also moves "last period paid" back to the latest one left. */
+  async function deleteLeasePayment(id){
+    var x = leasePayments.find(function(r){ return r.id === id; });
+    if (!x) return;
+    try {
+      await leasePaymentService.remove(id);
+      leasePayments = leasePayments.filter(function(r){ return r.id !== id; });
+      var p = propertyOf(x.propertyId);
+      if (p && p.lastLeasePaymentDate === x.periodStart){
+        var latest = leasePayments.filter(function(r){ return r.propertyId === p.id; })
+          .map(function(r){ return r.periodStart; }).sort().pop() || null;
+        var saved = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: latest }));
+        Object.assign(p, saved);
+      }
+      showToast('Lease payment deleted.', 'success');
+      renderPreservingScroll();
+    } catch(err){ showToast('Could not delete the payment. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  window.pickLeaseReceipt = pickLeaseReceipt;
+  window.handleLeaseReceiptFile = handleLeaseReceiptFile;
+  window.removeLeaseReceipt = removeLeaseReceipt;
+  window.deleteLeasePayment = deleteLeasePayment;
   window.confirmLeasePaymentModal = confirmLeasePaymentModal;
 
   /** Detail card for the admin's own lease with the real estate (payment day/frequency,
@@ -1608,6 +1706,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(p.bankAccountNumber)+'</span></div>';
     }
     return '<div class="card"><h2>Landlord\'s lease (payment to the real estate)</h2><div class="field-list">'+rows+'</div>'+
+      leasePaymentHistoryHtml(p)+
       '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="openLeasePaymentModal(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
   }
 
@@ -13287,7 +13386,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       rentPaymentReportService.getAll().catch(function(e){ console.error('rent reports', e); return []; }),
       houseRulesService.getAll().catch(function(e){ console.error('house rules', e); return []; }),
       maintenanceLogService.getAll().catch(function(e){ console.error('maintenance log', e); return []; }),
-      realEstateInspectionService.getAll().catch(function(e){ console.error('real estate inspections', e); return []; })
+      realEstateInspectionService.getAll().catch(function(e){ console.error('real estate inspections', e); return []; }),
+      (isTenantRole() ? Promise.resolve([]) : leasePaymentService.getAll().catch(function(e){ console.error('lease payments', e); return []; }))
     ]);
     properties = results[0];
     rooms = results[1];
@@ -13324,6 +13424,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     houseRules = results[28];
     maintenanceLog = results[29];
     realEstateInspections = results[30];
+    leasePayments = results[31];
     if (isSuperAdmin()){
       var sa = await Promise.all([
         profileService.getAll().catch(function(){ return []; }),
@@ -13545,7 +13646,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  If a form is open, the reload waits until it's closed so nothing typed is lost. The 60s poll
    *  and the on-return-to-app refresh above stay as a backup (e.g. if the connection drops). */
   var REALTIME_TABLES = ['bills','bill_allocations','payments','payment_reports','rent_payment_reports',
-    'rent_schedules','tenants','bonds','maintenance_requests','move_out_settlements','rooms','properties','recurring_bills'];
+    'rent_schedules','tenants','bonds','maintenance_requests','move_out_settlements','rooms','properties','recurring_bills','lease_payments'];
   var realtimeRefreshTimer = null;
   function scheduleRealtimeRefresh(){
     clearTimeout(realtimeRefreshTimer);
@@ -13965,6 +14066,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   requireConfirm('unmarkAllocationPaid', 'Mark as unpaid?', function(billId, tenantId){
     var t = tenantOf(tenantId); return (t ? t.fullName + '\'s' : 'This') + ' payment for this bill will be removed and it will show as unpaid again.';
   }, 'Mark as unpaid');
+  requireConfirm('deleteLeasePayment', 'Delete this lease payment?', 'It will be removed from the payment history (with its attached invoice link). This can\'t be undone.');
+  requireConfirm('removeLeaseReceipt', 'Remove this invoice?', 'The invoice will be detached from this payment. The payment itself stays.', 'Remove');
   requireConfirm('removePaymentReceipt', 'Remove this receipt?', 'The receipt will be detached from this payment. The payment itself stays.', 'Remove');
   requireConfirm('removeReceipt', 'Delete this receipt?', 'The attached receipt file will be deleted. This can\'t be undone.');
   requireConfirm('unmarkBillAdminPaid', 'Mark as unpaid to provider?', 'The payment to the provider will be removed and the bill will show as not paid.', 'Mark as unpaid');

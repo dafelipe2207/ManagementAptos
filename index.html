@@ -666,6 +666,18 @@
       </div>
       <div class="field-row"><span class="k">Period ends</span><span class="v" id="lease-payment-end-preview">—</span></div>
       <p style="font-size:11px;color:var(--text-faint);margin:8px 0 0;">Defaulted to what the system currently expects — change it if the real invoice covers a different period.</p>
+      <div class="form-row form-row-2" style="margin-top:10px;">
+        <div><label for="lease-payment-amount">Amount paid</label><input id="lease-payment-amount" type="number" step="0.01" min="0" inputmode="decimal" /></div>
+        <div><label for="lease-payment-paid-date">Paid on</label><input id="lease-payment-paid-date" type="date" /></div>
+      </div>
+      <div class="form-row">
+        <label for="lease-payment-file">Invoice / payment receipt (optional)</label>
+        <input id="lease-payment-file" type="file" accept="image/*,application/pdf" />
+      </div>
+      <div class="form-row">
+        <label for="lease-payment-notes">Notes (optional)</label>
+        <input id="lease-payment-notes" type="text" maxlength="200" placeholder="e.g. BPay receipt no." />
+      </div>
       <p id="lease-payment-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeLeasePaymentModal()">Cancel</button>
@@ -1252,6 +1264,7 @@
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
 <input id="admin-pay-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleAdminPayReceiptFile(event)" />
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
-<script type="module" src="app.js?v=169"></script>
+<input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
+<script type="module" src="app.js?v=170"></script>
 </body>
 </html>
