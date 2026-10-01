@@ -106,3 +106,18 @@ export async function appendTimelineEntry(id, timelineEntry) {
   if (error) throw error;
   return fromRow(data);
 }
+
+/** Fresh copy of one settlement straight from the database (used right before approving, so the
+ *  approval never acts on a stale in-memory copy). */
+export async function getById(id) {
+  const { data, error } = await supabase.from('move_out_settlements').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ? fromRow(data) : null;
+}
+
+/** Cancels a move-out that hasn't been approved yet (RLS only allows deleting non-completed rows). */
+export async function remove(id) {
+  const { data, error } = await supabase.from('move_out_settlements').delete().eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('This move-out could not be cancelled (it may already be approved).');
+}

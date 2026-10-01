@@ -34,7 +34,7 @@ import * as inspectionService from './services/inspectionService.js';
 import * as weeklyDutyService from './services/weeklyDutyService.js?v=3';
 import * as binDutyService from './services/binDutyService.js';
 import * as binOutTaskService from './services/binOutTaskService.js?v=4';
-import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=1';
+import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=2';
 import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
@@ -1188,31 +1188,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
   }
 
-  /** Dashboard "Move-outs" card: every tenant with a move-out on the way (actual or expected
-   *  date today or later) plus anyone already gone whose settlement isn't finished yet — with
-   *  the date, who gave notice, how much notice, settlement status, bond (and who holds it) and
-   *  the estimated refund. Soonest first; each row opens the tenant page. */
+  /** Dashboard "Move-outs" card: only tenants who are still living in the property (not moved
+   *  out yet) and have a move-out coming — a date set by them or by an admin, or a move-out
+   *  process started. Shows the date, who gave notice and how much notice, settlement status,
+   *  bond (and who holds it) and the estimated refund, with Change date / Cancel buttons.
+   *  Soonest first; tapping a row opens the tenant page. */
   function dashboardMoveOutItems(){
     var items = [];
     tenants.forEach(function(t){
+      if (t.isActive === false || tenantHasMovedOut(t)) return; // already gone — not on the dashboard
       var date = t.actualMoveOutDate || t.expectedMoveOutDate || null;
       var settlement = moveOutSettlementOf(t.id);
-      var settled = !!t.moveOutSettledAt || (settlement && settlement.status === 'completed');
-      if (settled) return;
-      var upcoming = date && date >= TODAY;
-      var pendingAfterLeaving = (date && date < TODAY && t.isActive !== false) || (settlement && settlement.status !== 'completed');
-      if (!upcoming && !pendingAfterLeaving) return;
+      if (settlement && settlement.status === 'completed') settlement = null;
+      if (!date && !settlement) return;
       items.push({ t: t, date: date, settlement: settlement });
     });
-    // Upcoming (no date yet, or today onwards) soonest first; already-gone-but-not-settled newest first.
-    var upcoming = items.filter(function(it){ return !it.date || it.date >= TODAY; })
-      .sort(function(a,b){ return (a.date||'9999').localeCompare(b.date||'9999'); });
-    var past = items.filter(function(it){ return it.date && it.date < TODAY; })
-      .sort(function(a,b){ return b.date.localeCompare(a.date); });
-    return { upcoming: upcoming, past: past };
+    return items.sort(function(a,b){ return (a.date||'9999').localeCompare(b.date||'9999'); });
   }
   function dashboardMoveOutsHtml(){
-    var groups = dashboardMoveOutItems();
+    var items = dashboardMoveOutItems();
     var statusLabel = { in_progress:['due','Settlement in progress'], pending_approval:['due','Awaiting your approval'] };
     function rowHtml(it){
       var t = it.t, s = it.settlement, prop = propertyOf(t.propertyId), room = roomOf(t.roomId);
@@ -1220,7 +1214,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (!it.date) when = badge('neutral', 'No date yet');
       else {
         var d = daysBetween(TODAY, it.date);
-        when = d === 0 ? badge('overdue', 'Today') : d > 0 ? badge(d <= 14 ? 'due' : 'neutral', 'In '+d+' day'+(d===1?'':'s')) : badge('overdue', (-d)+' day'+(d===-1?'':'s')+' ago');
+        when = d === 0 ? badge('overdue', 'Today') : badge(d <= 14 ? 'due' : 'neutral', 'In '+d+' day'+(d===1?'':'s'));
       }
       var details = [];
       if (it.date) details.push((t.actualMoveOutDate ? 'Move-out ' : 'Expected ') + fullDate(it.date));
@@ -1237,22 +1231,20 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (s && s.status === 'pending_approval') refund = s.bondRefund;
       else { var est = computeMoveOutEstimate(t); if (est && est.hasBond) refund = est.estimatedReturn; }
       var st = s && statusLabel[s.status];
-      return '<a class="row" style="text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
+      var go = 'location.hash=\'#/tenants/'+t.id+'\'';
+      return '<div class="row" role="link" tabindex="0" style="cursor:pointer;" onclick="'+go+'" onkeydown="if(event.key===\'Enter\'&&event.target===this){'+go+';}">'+
         '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
         '<div class="meta">'+esc(prop ? prop.name : '')+(room ? ' • '+esc(room.name) : '')+'</div>'+
-        details.map(function(x){ return '<div class="meta" style="white-space:normal;overflow:visible;">'+x+'</div>'; }).join('')+'</div>'+
+        details.map(function(x){ return '<div class="meta" style="white-space:normal;overflow:visible;">'+x+'</div>'; }).join('')+
+        moveOutAdminActionsHtml(t, true)+'</div>'+
         '<div class="amount" style="text-align:right;">'+when+
           (st ? '<br/>'+badge(st[0], st[1]) : '')+
           (refund != null ? '<div class="meta" style="margin-top:4px;">'+(refund < 0 ? '<span style="color:var(--status-overdue);">Tenant owes '+money(-refund)+'</span>' : 'Est. refund '+money(refund))+'</div>' : '')+
-        '</div></a>';
+        '</div></div>';
     }
-    function sub(text){ return '<div style="font-size:11.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--text-faint);margin:12px 0 2px;">'+text+'</div>'; }
-    var total = groups.upcoming.length + groups.past.length;
-    var body = (groups.upcoming.length
-        ? groups.upcoming.map(rowHtml).join('')
-        : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No move-outs coming up.</p>') +
-      (groups.past.length ? sub('Moved out — settlement not finished ('+groups.past.length+')') + groups.past.map(rowHtml).join('') : '');
-    return '<div class="card"><h2>Move-outs'+(total ? ' ('+total+')' : '')+'</h2>'+body+'</div>';
+    return '<div class="card"><h2>Move-outs'+(items.length ? ' ('+items.length+')' : '')+'</h2>'+
+      (items.length ? items.map(rowHtml).join('') : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No move-outs coming up.</p>')+
+      '</div>';
   }
 
   /** Makes the Dashboard's summary tiles clickable: each one jumps to the page (and filter) that
@@ -1860,6 +1852,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  settled under the OLD automatic flow (t.moveOutSettledAt set, no move_out_settlements row)
    *  — those keep showing bondSettlementSummaryHtml unchanged. */
   function moveOutSettlementCardHtml(t){
+    var html = moveOutSettlementCardBodyHtml(t);
+    var actions = html ? moveOutAdminActionsHtml(t) : '';
+    if (!actions) return html;
+    var at = html.lastIndexOf('</div>');
+    var s = moveOutSettlementOf(t.id), date = t.actualMoveOutDate || t.expectedMoveOutDate;
+    var dateRow = date ? '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(date)+(s && s.startedByRole==='tenant' ? ' (given by the tenant)' : '')+'</span></div>' : '';
+    return html.slice(0, at) + dateRow + actions + html.slice(at);
+  }
+  function moveOutSettlementCardBodyHtml(t){
     if (t.moveOutSettledAt) return ''; // legacy-settled tenant — bondSettlementSummaryHtml handles it
     var settlement = moveOutSettlementOf(t.id);
     if (!settlement){
@@ -2279,15 +2280,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * date (e.g. recording a move-out after the fact). Resolves to 'YYYY-MM-DD' or null (cancelled). */
   var MOVE_OUT_NOTICE_DAYS = 14;
   var moveOutDateResolve = null;
-  function askMoveOutDate(t){
+  function askMoveOutDate(t, opts){
+    opts = opts || {};
     var tenant = isTenantRole();
     var earliest = tenant ? stepDateIso(TODAY, MOVE_OUT_NOTICE_DAYS) : (t.moveInDate || '');
     var input = document.getElementById('move-out-date-input');
     input.min = earliest;
-    input.value = tenant ? earliest : TODAY;
-    document.getElementById('move-out-date-note').textContent = tenant
+    input.value = opts.current || (tenant ? earliest : TODAY);
+    document.getElementById('move-out-date-note').textContent = opts.note || (tenant
       ? 'Please give at least two weeks\' notice — the earliest move-out date is ' + shortDate(earliest) + '. Your administrator will be notified.'
-      : 'The day this tenant leaves (or left) the room.';
+      : 'The day this tenant leaves (or left) the room.');
     document.getElementById('move-out-date-error').hidden = true;
     document.getElementById('move-out-date-modal').hidden = false;
     return new Promise(function(resolve){ moveOutDateResolve = resolve; });
@@ -2360,6 +2362,94 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   window.startMoveOutProcess = startMoveOutProcess;
+
+  /** Staff: change the move-out date a tenant (or an admin) set. A proposal already calculated
+   *  for the old date goes back to "in progress" so it's recalculated for the new one. The tenant
+   *  is told in the app. */
+  async function changeMoveOutDate(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t || isTenantRole()) return;
+    var current = t.actualMoveOutDate || t.expectedMoveOutDate || '';
+    var dateInput = await askMoveOutDate(t, { current: current || TODAY,
+      note: 'Pick the new move-out date for ' + t.fullName + (current ? ' (currently ' + fullDate(current) + ')' : '') + '. They\'ll be notified in the app.' });
+    if (!dateInput || dateInput === current) return;
+    try {
+      var saved = await tenantService.update(tenantId, Object.assign({}, tenantToDraft(t), { actualMoveOutDate: dateInput }));
+      delete t.actualMoveOutDate;
+      Object.assign(t, saved);
+      var s = moveOutSettlementOf(tenantId);
+      if (s && s.status === 'pending_approval'){
+        var reverted = await moveOutSettlementService.revertToInProgress(s.id, [
+          { at:new Date().toISOString(), action:'Move-out date changed to ' + dateInput + ' — proposal needs recalculating.', fromStatus:'pending_approval', toStatus:'in_progress' }
+        ]);
+        Object.assign(s, reverted);
+      } else if (s && s.status === 'in_progress'){
+        try {
+          var withEntry = await moveOutSettlementService.appendTimelineEntry(s.id, { at:new Date().toISOString(), action:'Move-out date changed to ' + dateInput + '.' });
+          Object.assign(s, withEntry);
+        } catch(_e){ /* the timeline note is a nice-to-have */ }
+      }
+      if (t.authUserId){
+        notificationService.notify(t.authUserId, 'Your move-out date was changed',
+          'Your move-out date is now ' + fullDate(dateInput) + '. Contact your administrator if this isn\'t right.',
+          'tenants', t.id, { category:'check_out', propertyId:t.propertyId, tenantId:t.id, createdByProfileId: currentProfile ? currentProfile.id : null });
+      }
+      recomputeRentCharges();
+      showToast('Move-out date changed to ' + fullDate(dateInput) + '.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not change the move-out date. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.changeMoveOutDate = changeMoveOutDate;
+
+  /** Staff: cancel a move-out that hasn't been approved — the tenant stays. Removes the move-out
+   *  date and the unapproved settlement (nothing was ever deducted before approval, so bills and
+   *  the bond are untouched). The tenant is told in the app. */
+  function cancelMoveOut(tenantId){
+    var t = tenantOf(tenantId);
+    if (!t || isTenantRole()) return;
+    var s = moveOutSettlementOf(tenantId);
+    if (s && s.status === 'completed'){ showToast('This move-out was already approved and can\'t be cancelled.', 'error'); return; }
+    openConfirmModal('Cancel ' + t.fullName + '\'s move-out?',
+      'The move-out date' + (s ? ' and the move-out settlement in progress' : '') + ' will be removed and ' + t.fullName + ' stays as a current tenant. Bills and the bond aren\'t touched.',
+      async function(){
+        try {
+          if (s){
+            await moveOutSettlementService.remove(s.id);
+            moveOutSettlements = moveOutSettlements.filter(function(x){ return x.id !== s.id; });
+          }
+          var draft = tenantToDraft(t);
+          draft.actualMoveOutDate = null; draft.expectedMoveOutDate = null;
+          var saved = await tenantService.update(tenantId, draft);
+          delete t.actualMoveOutDate; delete t.expectedMoveOutDate;
+          Object.assign(t, saved);
+          if (t.authUserId){
+            notificationService.notify(t.authUserId, 'Your move-out was cancelled',
+              'Your move-out has been cancelled — you stay in your room as usual. Contact your administrator if this isn\'t right.',
+              'tenants', t.id, { category:'check_out', propertyId:t.propertyId, tenantId:t.id, createdByProfileId: currentProfile ? currentProfile.id : null });
+          }
+          recomputeRentCharges();
+          showToast('Move-out cancelled.', 'success');
+          render();
+        } catch(err){
+          return { blocked:true, message:'Could not cancel the move-out. ' + friendlyErrorMessage(err) };
+        }
+      },
+      { confirmLabel:'Cancel move-out', danger:true });
+  }
+  window.cancelMoveOut = cancelMoveOut;
+
+  /** "Change date" / "Cancel move-out" buttons for staff, shown wherever a move-out is pending. */
+  function moveOutAdminActionsHtml(t, stop){
+    var s = moveOutSettlementOf(t.id);
+    if (isTenantRole() || tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
+    if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
+    var st = stop ? 'event.stopPropagation();event.preventDefault();' : '';
+    return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
+      '<button type="button" class="mini-btn" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Change date</button>'+
+      '<button type="button" class="mini-btn danger" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel move-out</button></div>';
+  }
 
   var moveOutDeductionModalSettlementId = null;
   var moveOutDeductionModalEditId = null;
@@ -2610,11 +2700,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  snapshot line whose allocation is already paid (Review Focus item 4 — e.g. the tenant paid
    *  cash between Calculate and Approve) so it never double-counts or errors on a stale row. */
   async function approveMoveOutSettlement(settlementId){
+    // Always act on the database's current copy, never a possibly stale in-memory one — and say
+    // WHY when it can't go ahead, instead of silently doing nothing.
+    var fresh = await moveOutSettlementService.getById(settlementId);
+    if (!fresh) throw new Error('This move-out settlement no longer exists — it may have been cancelled. Reload and try again.');
     var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
-    if (!settlement || !settlement.billsSnapshot) return;
-    if (settlement.status !== 'pending_approval') return;
+    if (settlement) Object.assign(settlement, fresh); else { settlement = fresh; moveOutSettlements.push(settlement); }
+    if (settlement.status === 'completed') throw new Error('This settlement was already approved.');
+    if (settlement.status !== 'pending_approval' || !settlement.billsSnapshot) throw new Error('This proposal changed since you opened it (it\'s back in progress). Calculate the settlement again, then approve.');
     var t = tenantOf(settlement.tenantId);
-    if (!t) return;
+    if (!t) throw new Error('The tenant for this settlement could not be found. Reload and try again.');
     var settleDate = t.actualMoveOutDate || TODAY;
     var bond = bondOf(t.id);
     var timelineEntries = [];
@@ -2724,17 +2819,59 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     timelineEntries.push({ at:new Date().toISOString(), action:'Move-out completed.', fromStatus:'pending_approval', toStatus:'completed' });
     var saved = await moveOutSettlementService.approve(settlement.id, timelineEntries);
+    if (!saved || saved.status !== 'completed') throw new Error('The database did not confirm the approval. Reload and check the settlement.');
     Object.assign(settlement, saved);
+    return settlement;
   }
+
+  /** What the tenant is told once their bond settlement is approved — used for the in-app
+   *  notification and the WhatsApp message. */
+  function bondApprovedMessage(t, settlement){
+    var bond = bondOf(t.id);
+    var lines = (bond && bond.discounts || []).filter(function(d){ return d.settlementId === settlement.id; });
+    var deducted = round2(lines.reduce(function(s,d){ return s + (d.amount||0); }, 0));
+    var refund = bond ? round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)) : null;
+    var msg = 'Hi ' + t.fullName + ', your move-out settlement has been approved and your bond has been updated.';
+    if (bond) msg += '\n\nBond paid: ' + money(bond.amountPaid);
+    lines.forEach(function(d){ msg += '\n- ' + d.label + ': -' + money(d.amount); });
+    if (bond && lines.length) msg += '\nTotal deducted: ' + money(deducted);
+    if (refund != null) msg += refund >= 0 ? '\nBond refund: ' + money(refund) : '\nAmount still owed: ' + money(-refund);
+    if (tenantPaymentRef(t)) msg += '\n\nReference: ' + tenantPaymentRef(t);
+    msg += '\n\nYou can see the details in the app under My Bond. Thank you!';
+    return msg;
+  }
+  function sendBondApprovedWhatsApp(tenantId, settlementId){
+    var t = tenantOf(tenantId); if (!t) return;
+    var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
+    var digits = phoneDigitsForWhatsApp(t.phone);
+    if (!digits || !settlement){ showToast('No phone number on file for this tenant.', 'error'); return; }
+    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(bondApprovedMessage(t, settlement)));
+  }
+  window.sendBondApprovedWhatsApp = sendBondApprovedWhatsApp;
 
   function confirmApproveMoveOutSettlement(settlementId){
     openConfirmModal('Approve Deduction & Finalise Bond',
       "Are you sure you want to approve this move-out settlement? This action will deduct the approved amounts from the tenant's bond and mark the corresponding bills as paid.",
       async function(){
         try {
-          await approveMoveOutSettlement(settlementId);
-          showToast('Move-out settlement approved and finalised.', 'success');
+          var done = await approveMoveOutSettlement(settlementId);
+          var t = tenantOf(done.tenantId);
+          // Tell the tenant in the app (best-effort) …
+          if (t && t.authUserId){
+            notificationService.notify(t.authUserId, 'Your bond has been finalised', bondApprovedMessage(t, done), 'move_out_settlements', done.id,
+              { category: 'check_out', propertyId: t.propertyId, tenantId: t.id, createdByProfileId: currentProfile ? currentProfile.id : null });
+          }
+          showToast('Move-out settlement approved — the bond was updated.', 'success');
           render();
+          // … and offer the WhatsApp message right away (the confirm modal closes after this returns).
+          if (t && phoneDigitsForWhatsApp(t.phone)){
+            setTimeout(function(){
+              openConfirmModal('Send the bond update to ' + t.fullName + '?',
+                bondApprovedMessage(t, done),
+                function(){ sendBondApprovedWhatsApp(t.id, done.id); },
+                { confirmLabel: 'Send by WhatsApp' });
+            }, 50);
+          }
         } catch(err){
           return { blocked:true, message: 'Could not finalise the settlement. ' + friendlyErrorMessage(err) };
         }
@@ -10268,6 +10405,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!names.length) return '';
     return '<div class="field-row"><span class="k">Included in your rent</span><span class="v">'+esc(names.join(', '))+'</span></div>';
   }
+  /** Tenant dashboard: once a move-out date is set (by them or the admin), show it plainly. */
+  function tenantMoveOutDateRowHtml(t){
+    var date = t.actualMoveOutDate || t.expectedMoveOutDate;
+    if (!date || date < TODAY) return '';
+    var d = daysBetween(TODAY, date);
+    return '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(date)+
+      '<br><span style="font-size:11.5px;font-weight:400;color:var(--text-faint);">'+(d===0?'Today':'In '+d+' day'+(d===1?'':'s'))+' · to change it, contact your administrator</span></span></div>';
+  }
   function tenantBondRowHtml(t){
     var bond = bondOf(t.id);
     if (!bond) return '';
@@ -10337,6 +10482,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (tenantPaymentRef(t) ? '<div class="field-row"><span class="k">Payment reference</span><span class="v">'+esc(tenantPaymentRef(t))+'</span></div>' : '')+
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+esc(t.rentFrequency)+'</span></div>'+
       tenantIncludedInRentRowHtml(t)+
+      tenantMoveOutDateRowHtml(t)+
       tenantBondRowHtml(t)+
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
@@ -11082,6 +11228,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     errEl.hidden = true; errEl.textContent = '';
     var btn = document.getElementById('confirm-modal-confirm-btn');
     btn.textContent = (opts && opts.confirmLabel) || 'Confirm';
+    btn.disabled = false; // a previous confirm's "Please wait…" state must never carry over
     btn.className = 'mini-btn' + (opts && opts.danger ? ' danger' : ' primary');
     confirmModalAction = action;
     document.getElementById('confirm-modal').hidden = false;
@@ -13261,8 +13408,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  working at the same time (e.g. the Super Admin and Geraldine) always see the same thing,
    *  without relying on someone closing the tab entirely. Skips the refresh if a modal is
    *  open (a partly filled-out form) or if one is already in progress. */
+  // A background refresh redraws the page; doing that in the middle of a click (between press and
+  // release) swallows the click — the button looks like it "does nothing". So wait until the
+  // person hasn't touched the screen/mouse/keyboard for a moment.
+  var lastUserInputAt = 0;
+  ['pointerdown','pointerup','keydown','touchstart'].forEach(function(ev){
+    document.addEventListener(ev, function(){ lastUserInputAt = Date.now(); }, { capture:true, passive:true });
+  });
+  var deferredRefreshTimer = null;
   async function refreshAllData(){
     if (isRefreshingData || anyModalOpen()) return;
+    if (Date.now() - lastUserInputAt < 1500){
+      clearTimeout(deferredRefreshTimer);
+      deferredRefreshTimer = setTimeout(refreshAllData, 1600);
+      return;
+    }
     isRefreshingData = true;
     try {
       await bootstrapData({ skipMaintenance: Date.now() - lastMaintenanceAt < 15*60*1000 });
