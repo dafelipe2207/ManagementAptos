@@ -1336,3 +1336,7 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 
 /* No pull-to-refresh / bounce reload when swiping down at the top (browser's own gesture too) */
 html, body{overscroll-behavior-y:none;}
+
+/* Visible focus ring for keyboard users on anything reachable with Tab */
+[data-kb-click]:focus-visible, .card[tabindex]:focus-visible, .row[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px;}
+a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}

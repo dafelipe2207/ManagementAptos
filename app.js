@@ -13324,6 +13324,96 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     });
   })();
 
+  /* ============ Keyboard: Tab, Enter, Esc and shortcuts work everywhere ============
+   * - Tab / Shift+Tab move through every control; inside a pop-up window they stay in that window.
+   * - Esc closes the pop-up on top (same as its × / Cancel).
+   * - Enter in a form field submits the pop-up (its main button); Enter in a text box adds a line.
+   * - Anything clickable that isn't a real button/link (cards, rows, tiles) can be reached with Tab
+   *   and opened with Enter or Space.
+   * - "/" or Ctrl/⌘+K opens search. Enter on the sign-in email field moves to the password. */
+  function topOpenModal(){
+    var open = Array.prototype.filter.call(document.querySelectorAll('.modal-overlay'), function(m){ return !m.hidden; });
+    if (!open.length) return null;
+    open.sort(function(a,b){ return (parseInt(getComputedStyle(b).zIndex,10)||0) - (parseInt(getComputedStyle(a).zIndex,10)||0); });
+    return open[0];
+  }
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  function focusablesIn(root){
+    return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE), function(el){
+      return !el.hidden && el.offsetParent !== null && !el.closest('[hidden]');
+    });
+  }
+  // When a pop-up opens, put the cursor in its first field (or its first button).
+  var modalObserver = new MutationObserver(function(muts){
+    muts.forEach(function(m){
+      var el = m.target;
+      if (m.attributeName === 'hidden' && el.classList && el.classList.contains('modal-overlay') && !el.hidden){
+        setTimeout(function(){
+          if (el.hidden || el.contains(document.activeElement)) return;
+          var fields = focusablesIn(el);
+          var first = fields.find(function(f){ return /^(INPUT|SELECT|TEXTAREA)$/.test(f.tagName) && f.type !== 'file'; }) ||
+            fields.find(function(f){ return !f.classList.contains('modal-x'); }) || fields[0];
+          if (first && !('ontouchstart' in window)) first.focus(); // no keyboard pop-up on phones
+        }, 30);
+      }
+    });
+  });
+  document.querySelectorAll('.modal-overlay').forEach(function(m){ modalObserver.observe(m, { attributes:true, attributeFilter:['hidden'] }); });
+
+  document.addEventListener('keydown', function(e){
+    var modal = topOpenModal();
+    var t = e.target;
+    var typing = t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable);
+
+    if (e.key === 'Escape' && modal){
+      var x = modal.querySelector('.modal-x');
+      if (x){ e.preventDefault(); x.click(); }
+      return;
+    }
+    if (e.key === 'Tab' && modal){
+      var f = focusablesIn(modal);
+      if (!f.length) return;
+      var idx = f.indexOf(document.activeElement);
+      if (e.shiftKey && (idx <= 0)){ e.preventDefault(); f[f.length-1].focus(); }
+      else if (!e.shiftKey && (idx === -1 || idx === f.length-1)){ e.preventDefault(); f[0].focus(); }
+      return;
+    }
+    if (e.key === 'Enter' && modal && t && t.tagName === 'INPUT' && !e.isComposing &&
+        !/^(button|submit|checkbox|radio|file)$/i.test(t.type) && !t.hasAttribute('onkeydown')){
+      var primary = modal.querySelector('.modal-actions .mini-btn.primary:not([disabled]), .modal-actions .mini-btn.danger:not([disabled])');
+      if (primary){ e.preventDefault(); primary.click(); }
+      return;
+    }
+    if (e.key === 'Enter' && t && t.id === 'auth-email'){
+      e.preventDefault(); var pw = document.getElementById('auth-password'); if (pw) pw.focus(); return;
+    }
+    if (!modal && !typing && ((e.key === '/' ) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))){
+      var shell = document.querySelector('.shell');
+      if (shell && !shell.hidden && typeof openSearchModal === 'function'){ e.preventDefault(); openSearchModal(); }
+      return;
+    }
+    // Enter / Space on clickable non-buttons (made reachable below)
+    if ((e.key === 'Enter' || e.key === ' ') && t && t.getAttribute && t.getAttribute('data-kb-click') === '1'){
+      e.preventDefault(); t.click();
+    }
+  });
+
+  // Make clickable cards / rows / tiles reachable with Tab, after every render.
+  function makeClickablesFocusable(root){
+    (root || document).querySelectorAll('[onclick]').forEach(function(el){
+      if (/^(A|BUTTON|INPUT|SELECT|TEXTAREA|LABEL|OPTION|SUMMARY)$/.test(el.tagName)) return;
+      if (el.classList.contains('modal-overlay')) return; // backdrop click, not a control
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+      if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
+      el.setAttribute('data-kb-click', '1');
+    });
+  }
+  var contentRoot = document.getElementById('content');
+  if (contentRoot){
+    makeClickablesFocusable(contentRoot);
+    new MutationObserver(function(){ makeClickablesFocusable(contentRoot); }).observe(contentRoot, { childList:true, subtree:true });
+  }
+
   /* ============ Confirm before anything is deleted or undone ============
    * Every button that deletes or undoes saved information asks first. The internal functions stay
    * as they are (other code calls them directly, e.g. after saving an import); only the versions
