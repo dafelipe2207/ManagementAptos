@@ -2917,7 +2917,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var paymentsFilter = 'all';
   var paymentsTenantFilter = 'all';
   var paymentsPropertyFilter = 'all';
-  var paymentsMonthFilter = TODAY.slice(0,7); // 'YYYY-MM', or 'all' — default = current month
+  var paymentsMonthFilter = 'all'; // 'YYYY-MM', or 'all' — default = All months; the admin picks a month when they want one
   // 'active' (default) = today's normal view: active tenants + any moved-out tenant who still
   // owes something (never hidden while they owe). 'moved_out' = every moved-out tenant, settled
   // or not — a dedicated place to review who's left, since a settled one otherwise drops off
