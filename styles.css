@@ -1333,3 +1333,6 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 @media (pointer:coarse), (max-width:1024px){ .modal-x{width:44px;height:44px;} }
 @media (max-width:640px){ .modal-x-bar{top:-15px;margin:-15px -15px 0;} }
 .history-row .del svg{display:block;}
+
+/* No pull-to-refresh / bounce reload when swiping down at the top (browser's own gesture too) */
+html, body{overscroll-behavior-y:none;}

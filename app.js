@@ -12893,7 +12893,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.manualRefresh = manualRefresh;
 
   /* Pull down from the top of the page to reload (touch screens). */
+  // Pull-to-refresh is turned OFF (the admin asked for it): swiping down at the top was reloading
+  // the app by accident. Data stays in sync on its own, and the ↻ button reloads on purpose.
   (function setupPullToRefresh(){
+    return;
     if (!('ontouchstart' in window)) return;
     var ind = document.createElement('div');
     ind.id = 'ptr-indicator';
