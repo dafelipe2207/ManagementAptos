@@ -8947,10 +8947,30 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<div class="rei-when">'+esc(reiWhenText(i))+'</div>'+
           (i.agency ? '<div class="rei-agency">'+esc(i.agency)+'</div>' : '')+
           (forTenant ? '<div class="rei-notes">'+esc(notes).replace(/\n/g,'<br>')+'</div>'
-            : '<div class="rei-actions">'+notified+'<button type="button" class="mini-btn" onclick="openReiModal(\''+i.id+'\')">Edit</button></div>')+
+            : '<div class="rei-actions">'+notified+
+              (p && p.whatsappGroupLink ? '<button type="button" class="mini-btn" onclick="sendInspectionToWhatsAppGroup(\''+i.id+'\')">💬 Send to WhatsApp group</button>' : '')+
+              '<button type="button" class="mini-btn" onclick="openReiModal(\''+i.id+'\')">Edit</button></div>')+
         '</div></div>';
     }).join('');
   }
+
+  /** Inspection notice for the property's WhatsApp group: opens the group (its saved link) with
+   *  the message copied, ready to paste — same approach as "Send to WhatsApp group" on bills,
+   *  since a group link can't carry text. Runs synchronously inside the tap so Safari allows it. */
+  function sendInspectionToWhatsAppGroup(id){
+    var i = realEstateInspections.find(function(x){ return x.id===id; });
+    if (!i) return;
+    var p = propertyOf(i.propertyId);
+    if (!p || !p.whatsappGroupLink){ showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error'); return; }
+    var message = '🏢 Real estate inspection — ' + (p.address || p.name) + '\n' +
+      '📅 ' + reiWhenText(i) + (i.agency ? '\nAgency: ' + i.agency : '') + '\n\n' +
+      (i.notes || REI_DEFAULT_NOTES) + '\n\nThank you!';
+    var copied = false;
+    try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(message); copied = true; } } catch(_e){}
+    window.open(whatsAppBusinessLink(p.whatsappGroupLink), '_blank', 'noopener');
+    showToast(copied ? 'Message copied — paste it in the group and send.' : 'Opening the group — copy the message by hand:\n\n' + message, copied ? 'success' : 'info');
+  }
+  window.sendInspectionToWhatsAppGroup = sendInspectionToWhatsAppGroup;
 
   var reiEditId = null;
   function openReiModal(id, presetPropertyId){
