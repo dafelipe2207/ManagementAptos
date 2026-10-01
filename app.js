@@ -1918,6 +1918,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>' : '')+
       '</div>'+
       '<div class="card"><h2>Contact</h2><div class="field-list">'+contactRows+'</div></div>'+
+      tenantAppAccessCardHtml(t) +
       (rentRows ? '<div class="card"><h2>Rent</h2><div class="field-list">'+rentRows+'</div></div>' : '') +
       tenantRentHistoryHtml(t.id) +
       (bondRows ? '<div class="card"><h2>Bond</h2><div class="field-list">'+bondRows+'</div></div>' : '') +
@@ -1929,6 +1930,61 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       moveOutSettlementHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
   }
+
+  /* ---------- "App access" card on the tenant page: everything the tenant needs to get in ---------- */
+  function appPublicUrl(){ return location.origin + location.pathname.replace(/index\.html$/, ''); }
+  function tenantLoginProfile(t){
+    return (t && t.authUserId) ? allProfiles.find(function(p){ return p.authUserId === t.authUserId; }) : null;
+  }
+  function tenantAccessMessage(t){
+    var prof = tenantLoginProfile(t);
+    var ref = tenantPaymentRef(t);
+    var first = (t.fullName || '').split(' ')[0] || 'there';
+    return 'Hi ' + first + ', here is your access to the house app:\n\n' +
+      '🔗 App: ' + appPublicUrl() + '\n' +
+      '👤 User: ' + (ref || t.phone || '') + (ref && t.phone ? ' (or your phone ' + t.phone + ')' : '') + '\n' +
+      (prof && prof.currentPassword ? '🔑 Password: ' + prof.currentPassword + '\n' : '') +
+      (ref ? '\n💳 Your ID ' + ref + ' is also your payment reference: put it in the description of every rent and bill transfer.\n' : '') +
+      '\nTip: on your phone, open the link and use "Add to Home Screen" to keep the app handy.';
+  }
+  function tenantAppAccessCardHtml(t){
+    var prof = tenantLoginProfile(t);
+    var ref = tenantPaymentRef(t);
+    if (!t.authUserId){
+      return '<div class="card"><h2>App access</h2><p style="font-size:13px;color:var(--text-dim);margin:0;">'+
+        'This tenant has no login yet. Create it in <a href="#/users">Users</a> (link it to this tenant) — then their access details show here.</p></div>';
+    }
+    var pw = prof && prof.currentPassword
+      ? '<span class="pw-mask" data-pw="'+esc(prof.currentPassword)+'" data-shown="0" style="letter-spacing:1px;">••••••••</span> <button type="button" class="text-link" style="display:inline;margin:0 0 0 6px;font-size:12px;" onclick="var m=this.previousElementSibling;var on=m.dataset.shown===\'1\';m.textContent=on?\'••••••••\':m.dataset.pw;m.dataset.shown=on?\'0\':\'1\';this.textContent=on?\'Show\':\'Hide\';">Show</button>'
+      : '<span style="color:var(--text-faint);">Not on file — set one in Users</span>';
+    var digits = phoneDigitsForWhatsApp(t.phone);
+    return '<div class="card"><h2>App access</h2><div class="field-list">'+
+      '<div class="field-row"><span class="k">App link</span><span class="v"><a href="'+esc(appPublicUrl())+'" target="_blank" rel="noopener">'+esc(appPublicUrl().replace(/^https?:\/\//,''))+'</a></span></div>'+
+      '<div class="field-row"><span class="k">User</span><span class="v">'+(ref ? esc(ref) : '')+(ref && t.phone ? ' <span style="font-weight:400;color:var(--text-faint);">or '+esc(t.phone)+'</span>' : (!ref ? esc(t.phone||'—') : ''))+'</span></div>'+
+      '<div class="field-row"><span class="k">Password</span><span class="v">'+pw+'</span></div>'+
+      (ref ? '<div class="field-row"><span class="k">Payment reference</span><span class="v">'+esc(ref)+'</span></div>' : '')+
+      (prof && prof.isActive === false ? '<div class="field-row"><span class="k">Status</span><span class="v" style="color:var(--status-due);">Login deactivated — activate it in Users</span></div>' : '')+
+      '</div>'+
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;">'+
+        (digits ? waButton('sendTenantAccess(\''+t.id+'\')', 'Send access details to '+esc(t.fullName)+' by WhatsApp') : '')+
+        '<button type="button" class="mini-btn" onclick="copyTenantAccess(\''+t.id+'\', this)">Copy access details</button>'+
+      '</div></div>';
+  }
+  function sendTenantAccess(tenantId){
+    var t = tenantOf(tenantId); if (!t) return;
+    var digits = phoneDigitsForWhatsApp(t.phone);
+    if (!digits){ showToast('No phone number on file for this tenant.', 'error'); return; }
+    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(tenantAccessMessage(t)));
+  }
+  function copyTenantAccess(tenantId, btn){
+    var t = tenantOf(tenantId); if (!t) return;
+    copyTextReliably(tenantAccessMessage(t)).then(function(ok){
+      if (ok && btn){ btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = 'Copy access details'; }, 1800); }
+      else if (!ok) showToast(tenantAccessMessage(t), 'info');
+    });
+  }
+  window.sendTenantAccess = sendTenantAccess;
+  window.copyTenantAccess = copyTenantAccess;
 
   /** When a tenant leaves (or is about to leave), computes an ESTIMATE of how much bond should
    *  be refunded: it takes their average daily rate from bills already invoiced (allocated amount
