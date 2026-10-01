@@ -799,7 +799,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     realEstateInspections.forEach(function(i){
       if (i.status !== 'scheduled') return;
       var p = propertyOf(i.propertyId);
-      events.push({ date: i.date, kind: 'overdue', title: (tenantMode ? '' : (p?p.name+' — ':'')) + '🏢 Real estate inspection' + (i.startTime ? ' ' + reiTimeText(i) : ''), href: tenantMode ? '#/' : '#/inspection' });
+      events.push({ date: i.date, kind: 'overdue', title: (tenantMode ? '' : (p?p.name+' — ':'')) + (tenantMode ? '🏠 Property inspection' : '🏢 Real estate inspection') + (i.startTime ? ' ' + reiTimeText(i) : ''), href: tenantMode ? '#/' : '#/inspection' });
     });
     if (!tenantMode){
       // The landlord's own lease payments/inspections with the real estate agent — never a
@@ -8905,7 +8905,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * Visits booked by the property's real estate agency. Staff schedule them (date, optional time
    * window, agency, a message for tenants); tenants are notified straight away and reminded the
    * evening before. Upcoming ones sit at the very top of both dashboards until the day passes. */
-  var REI_DEFAULT_NOTES = "The real estate agent is coming to inspect the property. Before the visit, please:\n• Tidy your room and make the bed\n• Leave the kitchen, bathroom and living areas clean\n• Take out the rubbish and clear the benches\n• Put away valuables — you don't need to be home";
+  var REI_DEFAULT_NOTES = "There will be an inspection of the property. Before the visit, please:\n• Tidy your room and make the bed\n• Leave the kitchen, bathroom and living areas clean\n• Take out the rubbish and clear the benches\n• Put away valuables — you don't need to be home";
+  /** Tenants never hear who the agency is or anything about the real estate — only that there's
+   *  a "property inspection". Scrubs any such wording out of notes written for them. */
+  function reiTenantText(text, agency){
+    var out = String(text || '');
+    if (agency && agency.trim()){ // never name the agency either, even if it was typed into the notes
+      out = out.split(agency.trim()).join('').replace(/\(\s*\)/g, '').replace(/ {2,}/g, ' ');
+    }
+    return out
+      .replace(/the real estate agent( is coming to inspect| will inspect)/gi, function(m){ return (m[0]==='T' ? 'There' : 'there') + ' will be an inspection of'; })
+      .replace(/real estate agents?|real estate agency|real estate/gi, 'property')
+      .replace(/\bproperty inspection\b/gi, 'property inspection');
+  }
   function upcomingRealEstateInspections(propertyId){
     return realEstateInspections.filter(function(i){
       return i.status==='scheduled' && i.date >= TODAY && (!propertyId || i.propertyId===propertyId);
@@ -8936,16 +8948,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return list.map(function(i){
       var p = propertyOf(i.propertyId);
       var cd = reiCountdown(i);
-      var notes = forTenant ? (i.notes || REI_DEFAULT_NOTES) : '';
+      var notes = forTenant ? reiTenantText(i.notes || REI_DEFAULT_NOTES, i.agency) : '';
       var notified = i.notifiedAt
         ? '<span class="rei-flag ok">✓ Tenants notified '+shortDate(i.notifiedAt.slice(0,10))+'</span>'
         : '<button type="button" class="rei-flag warn" onclick="notifyRealEstateInspection(\''+i.id+'\', this)">Tenants not notified yet — notify now</button>';
       return '<div class="rei-banner'+(cd.urgent?' urgent':'')+'">'+
         '<div class="rei-count"><b>'+cd.big+'</b>'+(cd.small?'<span>'+cd.small+'</span>':'')+'</div>'+
         '<div class="rei-main">'+
-          '<div class="rei-kicker">🏢 Real estate inspection'+(forTenant ? '' : ' · '+esc(p?p.name:''))+'</div>'+
+          '<div class="rei-kicker">'+(forTenant ? '🏠 Property inspection' : '🏢 Real estate inspection · '+esc(p?p.name:''))+'</div>'+
           '<div class="rei-when">'+esc(reiWhenText(i))+'</div>'+
-          (i.agency ? '<div class="rei-agency">'+esc(i.agency)+'</div>' : '')+
+          (i.agency && !forTenant ? '<div class="rei-agency">'+esc(i.agency)+'</div>' : '')+
           (forTenant ? '<div class="rei-notes">'+esc(notes).replace(/\n/g,'<br>')+'</div>'
             : '<div class="rei-actions">'+notified+
               (p && p.whatsappGroupLink ? '<button type="button" class="mini-btn" onclick="sendInspectionToWhatsAppGroup(\''+i.id+'\')">💬 Send to WhatsApp group</button>' : '')+
@@ -8962,9 +8974,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!i) return;
     var p = propertyOf(i.propertyId);
     if (!p || !p.whatsappGroupLink){ showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error'); return; }
-    var message = '🏢 Real estate inspection — ' + (p.address || p.name) + '\n' +
-      '📅 ' + reiWhenText(i) + (i.agency ? '\nAgency: ' + i.agency : '') + '\n\n' +
-      (i.notes || REI_DEFAULT_NOTES) + '\n\nThank you!';
+    var message = '🏠 Property inspection — ' + (p.address || p.name) + '\n' +
+      '📅 ' + reiWhenText(i) + '\n\n' +
+      reiTenantText(i.notes || REI_DEFAULT_NOTES, i.agency) + '\n\nThank you!';
     var copied = false;
     try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(message); copied = true; } } catch(_e){}
     window.open(whatsAppBusinessLink(p.whatsappGroupLink), '_blank', 'noopener');
@@ -9024,7 +9036,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var when = new Date(stepDateIso(i.date, -1) + 'T18:00:00');
     if (when <= new Date()) return; // too late for a "tomorrow" reminder
     await notificationService.notifyProperty(i.propertyId, reiTenantsOf(i.propertyId), '⏰ Inspection tomorrow',
-      'The real estate inspection is tomorrow, '+reiWhenText(i)+'. Please make sure your room and the common areas are tidy.',
+      'The property inspection is tomorrow, '+reiWhenText(i)+'. Please make sure your room and the common areas are tidy.',
       'important_notice', { relatedTable:'real_estate_inspections', relatedId:i.id, scheduledFor: when.toISOString(),
         dedupKeyForTenant: function(t){ return 'rei-remind-'+i.id+'-'+i.date+'-'+t.id; } });
   }
@@ -9058,8 +9070,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       realEstateInspections = realEstateInspections.filter(function(x){ return x.id!==saved.id; }).concat([saved]);
       var sent = 0;
       if (notify){
-        var title = existing ? (changedWhen ? '📅 Inspection rescheduled' : '📝 Inspection details updated') : '🏢 Real estate inspection scheduled';
-        sent = await reiNotify(saved, title, 'The real estate agent will inspect the property on '+reiWhenText(saved)+'. Open your dashboard for the details and how to prepare.');
+        var title = existing ? (changedWhen ? '📅 Inspection rescheduled' : '📝 Inspection details updated') : '🏠 Property inspection scheduled';
+        sent = await reiNotify(saved, title, 'There will be an inspection of the property on '+reiWhenText(saved)+'. Open your dashboard for the details and how to prepare.');
         saved = await realEstateInspectionService.markNotified(saved.id);
         realEstateInspections = realEstateInspections.filter(function(x){ return x.id!==saved.id; }).concat([saved]);
       }
@@ -9082,7 +9094,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var saved = await realEstateInspectionService.setStatus(i.id, 'cancelled');
       Object.assign(i, saved);
       try { await realEstateInspectionService.cancelReminders(i.id); } catch(_e){}
-      if (i.notifiedAt) await reiNotify(i, '❌ Inspection cancelled', 'The real estate inspection planned for '+reiWhenText(i)+' has been cancelled.');
+      if (i.notifiedAt) await reiNotify(i, '❌ Inspection cancelled', 'The property inspection planned for '+reiWhenText(i)+' has been cancelled.');
       await reiSyncPropertyDate(i.propertyId);
       closeReiModal();
       showToast('Inspection cancelled.', 'success');
@@ -9096,7 +9108,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!i) return;
     if (btn){ btn.disabled = true; btn.textContent = 'Notifying…'; }
     try {
-      var sent = await reiNotify(i, '🏢 Real estate inspection scheduled', 'The real estate agent will inspect the property on '+reiWhenText(i)+'. Open your dashboard for the details and how to prepare.');
+      var sent = await reiNotify(i, '🏠 Property inspection scheduled', 'There will be an inspection of the property on '+reiWhenText(i)+'. Open your dashboard for the details and how to prepare.');
       var saved = await realEstateInspectionService.markNotified(i.id);
       Object.assign(i, saved);
       await reiScheduleReminder(i);
