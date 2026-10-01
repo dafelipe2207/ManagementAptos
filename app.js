@@ -10557,7 +10557,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (typeof confirmModalAction === 'function'){
       var btn = document.getElementById('confirm-modal-confirm-btn');
       var originalLabel = btn ? btn.textContent : '';
-      if (btn){ btn.disabled = true; btn.textContent = 'Deleting…'; }
+      if (btn){ btn.disabled = true; btn.textContent = 'Please wait…'; }
       try {
         var result = await confirmModalAction();
         if (result && result.blocked){
@@ -13085,4 +13085,41 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /* ============ App lock (PHASE 14): shown after loading the data if a PIN is saved (see enterApp()) ============ */
   var lockPinInput = document.getElementById('lock-pin-input');
   lockPinInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') attemptUnlock(); });
+
+  /* ============ Confirm before anything is deleted or undone ============
+   * Every button that deletes or undoes saved information asks first. The internal functions stay
+   * as they are (other code calls them directly, e.g. after saving an import); only the versions
+   * the buttons call (window.*) go through this confirmation. Deletes that already had their own
+   * confirmation (property, room, tenant, bill, user, maintenance, trash day, inspection, rule
+   * topic) are unchanged. */
+  function requireConfirm(name, title, body, label){
+    var original = window[name];
+    if (typeof original !== 'function') return;
+    window[name] = function(){
+      var args = arguments, self = this;
+      var b = typeof body === 'function' ? body.apply(null, args) : body;
+      if (b === null) return original.apply(self, args); // nothing worth confirming (e.g. an empty row)
+      openConfirmModal(title, b, function(){ return original.apply(self, args); }, { confirmLabel: label || 'Delete', danger: true });
+    };
+  }
+  requireConfirm('removePaymentAndRefresh', 'Delete this payment?', function(id){
+    var p = paymentRecords.find(function(x){ return x.id===id; });
+    var t = p && tenantOf(p.tenantId);
+    return (p ? money(p.amount) + ' paid on ' + shortDate(p.date) + (t ? ' by ' + t.fullName : '') + ' will be deleted and the rent periods recalculated.' : 'This payment will be deleted.') + ' This can\'t be undone.';
+  });
+  requireConfirm('removeMoveOutDeduction', 'Remove this deduction?', 'The deduction will be removed from the move-out settlement.', 'Remove');
+  requireConfirm('removeImportQueueItem', 'Remove this file?', 'The uploaded bill will be removed from the import list (nothing saved yet is affected).', 'Remove');
+  requireConfirm('discardReviewItem', 'Discard this bill?', 'The bill you were reviewing will be discarded and not saved.', 'Discard');
+  requireConfirm('deleteRecurringBillModal', 'Delete this recurring bill?', 'No more bills will be created from it. Bills already created stay. This can\'t be undone.');
+  requireConfirm('unmarkAllocationPaid', 'Mark as unpaid?', function(billId, tenantId){
+    var t = tenantOf(tenantId); return (t ? t.fullName + '\'s' : 'This') + ' payment for this bill will be removed and it will show as unpaid again.';
+  }, 'Mark as unpaid');
+  requireConfirm('removeReceipt', 'Delete this receipt?', 'The attached receipt file will be deleted. This can\'t be undone.');
+  requireConfirm('unmarkBillAdminPaid', 'Mark as unpaid to provider?', 'The payment to the provider will be removed and the bill will show as not paid.', 'Mark as unpaid');
+  requireConfirm('removeTenantDocument', 'Delete this document?', 'The document will be deleted. This can\'t be undone.');
+  requireConfirm('removeAppPin', 'Remove the app PIN?', 'The app will no longer ask for a PIN on this device.', 'Remove PIN');
+  requireConfirm('rulesDeleteRule', 'Delete this rule?', function(pid, si, ri){
+    var r = rulesDraftFor(pid).sections[si].rules[ri];
+    return (r && (r.text||'').trim()) ? '"' + r.text.trim().slice(0, 120) + '" will be removed when you publish.' : null;
+  });
 })();
