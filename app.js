@@ -13574,9 +13574,52 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.showToast = showToast;
 
-  function startRouter(){
-    window.addEventListener('hashchange', render);
+  /* ============ Back button ============
+   * The app is often installed as its own window (no browser Back button), so the top bar has
+   * one: it returns to the previous screen of the app AND to where you were on it (scroll
+   * position), e.g. Payments → a tenant → Back lands on the same spot of the Payments list.
+   * Filters live in memory, so they're still as you left them. */
+  var navStack = [];            // [{hash, scroll}] screens you came from, most recent last
+  var scrollByHash = {};        // last scroll position seen on each screen
+  var currentHash = null;
+  window.addEventListener('scroll', function(){ if (currentHash) scrollByHash[currentHash] = window.scrollY; }, { passive:true });
+  function updateBackButton(){
+    var b = document.getElementById('back-btn');
+    if (b) b.hidden = navStack.length === 0;
+  }
+  function onHashChange(){
+    var newHash = location.hash || '#/';
+    var top = navStack[navStack.length - 1];
+    var restore = null;
+    if (top && top.hash === newHash){ navStack.pop(); restore = top.scroll; } // going back (button, browser or Alt+←)
+    else if (currentHash && currentHash !== newHash){
+      navStack.push({ hash: currentHash, scroll: scrollByHash[currentHash] || 0 });
+      if (navStack.length > 50) navStack.shift();
+    }
+    currentHash = newHash;
     render();
+    if (restore != null){
+      // wait a frame so the page has its full height before scrolling back to where you were
+      requestAnimationFrame(function(){ window.scrollTo(0, restore); scrollByHash[newHash] = restore; });
+    }
+    updateBackButton();
+  }
+  function goBack(){
+    var top = navStack[navStack.length - 1];
+    if (!top) return;
+    if (anyModalOpen()){ showToast('Close the open window first.', 'info'); return; }
+    location.hash = top.hash; // onHashChange sees it matches the top of the stack and restores the scroll
+  }
+  window.goBack = goBack;
+  document.addEventListener('keydown', function(e){
+    if (e.altKey && e.key === 'ArrowLeft' && navStack.length && !anyModalOpen()){ e.preventDefault(); goBack(); }
+  });
+
+  function startRouter(){
+    currentHash = location.hash || '#/';
+    window.addEventListener('hashchange', onHashChange);
+    render();
+    updateBackButton();
   }
 
   /** True if any form modal is open — we don't want a background automatic data
@@ -13958,6 +14001,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   if (signoutBtn) signoutBtn.innerHTML = svg('logout');
   var refreshBtn = document.getElementById('refresh-btn');
   if (refreshBtn) refreshBtn.innerHTML = svg('refresh');
+  var backBtn = document.getElementById('back-btn');
+  if (backBtn) backBtn.innerHTML = svg('chevron','style="transform:rotate(180deg)"');
 
   /* ============ Theme toggle (independent of the host's theme) ============ */
   var root = document.documentElement;

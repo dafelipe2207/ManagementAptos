@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="styles.css?v=44">
+<link rel="stylesheet" href="styles.css?v=45">
 </head>
 <body>
 <div id="app">
@@ -100,6 +100,7 @@
 
     <div class="main">
       <header class="topbar">
+        <button class="icon-btn" id="back-btn" aria-label="Back to the previous screen" title="Back (Alt+←)" type="button" onclick="goBack()" hidden></button>
         <button class="search" id="search-trigger" type="button" onclick="openSearchModal()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <span>Search properties, tenants…</span>
@@ -1265,6 +1266,6 @@
 <input id="admin-pay-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleAdminPayReceiptFile(event)" />
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
-<script type="module" src="app.js?v=172"></script>
+<script type="module" src="app.js?v=173"></script>
 </body>
 </html>
