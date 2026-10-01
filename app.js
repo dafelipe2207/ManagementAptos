@@ -9,7 +9,7 @@ import { supabase as realtimeClient } from './lib/supabaseClient.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
 import * as tenantService from './services/tenantService.js?v=7';
-import * as bondService from './services/bondService.js';
+import * as bondService from './services/bondService.js?v=2';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
 import * as billService from './services/billService.js?v=4';
@@ -1895,7 +1895,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         : (bond.deduction > 0 ? [{ label:'Deduction', amount:bond.deduction }] : []);
       var totalDeduction = round2(effectiveDiscounts.reduce(function(s,d){ return s+(d.amount||0); }, 0));
       var toReturn = round2(bond.amountPaid - totalDeduction);
-      return '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
+      return '<div class="field-row"><span class="k">Held by</span><span class="v">'+(bond.heldBy ? esc(bond.heldBy) : '<span style="color:var(--status-due);">Not set</span>')+'</span></div>'+
+      '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
       '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
       (effectiveDiscounts.length
         ? effectiveDiscounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(bondDiscountDisplayLabel(d.label))+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('') +
@@ -11430,6 +11431,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('bond-paid').value = b ? b.amountPaid : 0;
     document.getElementById('bond-returned').value = b ? b.amountReturned : 0;
     document.getElementById('bond-status').value = b ? b.status : 'pending';
+    document.getElementById('bond-held-by').value = b ? (b.heldBy || '') : '';
     document.getElementById('bond-discount-rows').innerHTML = '';
     var existingDiscounts = (b && b.discounts && b.discounts.length) ? b.discounts
       : (b && b.deduction > 0 ? [{ label:'Deduction', amount:b.deduction }] : []); // migrate an old single-number deduction into the list, the first time it's opened
@@ -11457,7 +11459,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       errorEl.hidden = false;
       return;
     }
-    var draft = { tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid, amountReturned:returned, deduction:deduction, discounts:discounts, status:status };
+    var heldBy = document.getElementById('bond-held-by').value || '';
+    var draft = { tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid, amountReturned:returned, deduction:deduction, discounts:discounts, status:status, heldBy:heldBy };
     var saveBtn = document.querySelector('#bond-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }

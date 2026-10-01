@@ -14,7 +14,8 @@ function fromRow(row) {
     // each { label, amount }. `deduction` above is kept in sync as their sum (for anything
     // that only reads the single total) but discounts is the source of truth.
     discounts: Array.isArray(row.discounts) ? row.discounts : [],
-    status: row.status
+    status: row.status,
+    heldBy: row.held_by || ''
   };
 }
 
@@ -34,21 +35,25 @@ export async function create(b) {
     amount_returned: b.amountReturned,
     deduction: b.deduction,
     discounts: b.discounts || [],
-    status: b.status
+    status: b.status,
+    held_by: b.heldBy || null
   }).select().single();
   if (error) throw error;
   return fromRow(data);
 }
 
 export async function update(id, b) {
-  const { data, error } = await supabase.from('bonds').update({
+  const patch = {
     amount_required: b.amountRequired,
     amount_paid: b.amountPaid,
     amount_returned: b.amountReturned,
     deduction: b.deduction,
     discounts: b.discounts || [],
     status: b.status
-  }).eq('id', id).select().single();
+  };
+  // Only touch "held by" when the caller passes it (the move-out settlement updates amounts only).
+  if (b.heldBy !== undefined) patch.held_by = b.heldBy || null;
+  const { data, error } = await supabase.from('bonds').update(patch).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }

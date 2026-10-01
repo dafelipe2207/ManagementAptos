@@ -1110,6 +1110,13 @@
         <div id="bond-discount-rows"></div>
         <p id="bond-discount-empty" style="font-size:11.5px;color:var(--text-faint);margin:4px 0 0;">No discounts added — the bond is returned in full.</p>
       </div>
+      <div class="form-row"><label for="bond-held-by">Held by</label>
+        <select id="bond-held-by">
+          <option value="">— Select —</option>
+          <option value="Daniel">Daniel</option>
+          <option value="Geraldine">Geraldine</option>
+        </select>
+      </div>
       <div class="form-row"><label for="bond-status">Status</label>
         <select id="bond-status">
           <option value="pending">Pending</option>
@@ -1232,6 +1239,6 @@
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
 <input id="admin-pay-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleAdminPayReceiptFile(event)" />
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
-<script type="module" src="app.js?v=153"></script>
+<script type="module" src="app.js?v=154"></script>
 </body>
 </html>
