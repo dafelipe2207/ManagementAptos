@@ -7869,7 +7869,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.saveChangePassword = saveChangePassword;
 
   function renderMore(){
-    var items = NAV.filter(function(i){ return !i.primary; });
+    var items = NAV.filter(function(i){ return !i.primary && !i.header && i.hash; }); // section headers aren't links
     var rows = items.map(function(item){
       return '<a href="'+item.hash+'">'+svg(item.icon)+'<span>'+item.label+'</span>'+svg('chevron','class="chev"')+'</a>';
     }).join('');
