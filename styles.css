@@ -1320,3 +1320,16 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 .rcpt-btn.rm svg{width:15px;height:15px;}
 .rcpt-btn.rm:hover{background:var(--status-overdue-bg);}
 @media (pointer:coarse), (max-width:1024px){ .rcpt-btn{width:44px;height:44px;} .rcpt-btn.rm{width:40px;height:40px;} }
+
+/* Close (×) pinned at the top-right of every pop-up window: a slim sticky bar, so rows scroll
+   under it instead of being covered by the button */
+.modal-x-bar{position:sticky;top:-17px;z-index:3;display:flex;justify-content:flex-end;
+  margin:-17px -17px 0;padding:8px 8px 4px;background:var(--bg-elevated);border-radius:14px 14px 0 0;}
+.modal-x{width:36px;height:36px;border-radius:999px;border:1px solid var(--border);background:var(--bg-elevated);
+  color:var(--text-dim);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
+.modal-x svg{width:18px;height:18px;}
+.modal-x:hover{background:var(--border);color:var(--text);}
+.modal-x:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+@media (pointer:coarse), (max-width:1024px){ .modal-x{width:44px;height:44px;} }
+@media (max-width:640px){ .modal-x-bar{top:-15px;margin:-15px -15px 0;} }
+.history-row .del svg{display:block;}

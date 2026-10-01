@@ -382,10 +382,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var status = document.getElementById(adminPayReceiptStatusId);
     var chargeId = chargePaidModalChargeId || partialModalChargeId;
     var charge = rentCharges.find(function(c){ return c.id===chargeId; });
-    var ref = charge ? tenantPaymentRef(tenantOf(charge.tenantId)) : '';
+    var payTenantId = charge ? charge.tenantId : (allocPaidModalTarget ? allocPaidModalTarget.tenantId : null);
+    var ref = payTenantId ? tenantPaymentRef(tenantOf(payTenantId)) : '';
+    var kind = charge ? 'rent' : 'bill';
     if (status) status.textContent = 'Uploading…';
     try {
-      adminPayReceiptPath = await storageService.uploadReceipt((ref ? ref + '-' : '') + 'rent', file);
+      adminPayReceiptPath = await storageService.uploadReceipt((ref ? ref + '-' : '') + kind, file);
       if (status) status.textContent = '✓ ' + (file.name || 'Receipt attached');
     } catch(err){
       adminPayReceiptPath = null;
@@ -497,8 +499,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<span style="display:flex;align-items:center;gap:6px;font-weight:600;">'+money(p.amount)+
       paymentReceiptIconsHtml(p)+
       '<button class="del" title="Correct this payment" style="color:var(--text-dim);" onclick="startEditPayment(\''+p.id+'\')">✎</button>'+
-      '<button class="del" title="Remove payment" onclick="removePaymentAndRefresh(\''+p.id+'\')">✕</button></span></div>';
+      '<button class="del" title="Delete payment" aria-label="Delete payment" onclick="removePaymentAndRefresh(\''+p.id+'\')">'+TRASH_ICON+'</button></span></div>';
   }
+  var TRASH_ICON = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
   /** Receipt icons on a payment-history row: upload one, or view / remove the attached one. */
   function paymentReceiptIconsHtml(p){
     if (p.receiptPath){
@@ -4766,6 +4769,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('alloc-paid-modal-sub').textContent = (t?t.fullName:'') + ' • ' + money(alloc.amount);
     var dateInput = document.getElementById('alloc-paid-modal-date');
     dateInput.value = TODAY; // editable: the tenant may have paid on an earlier day than today
+    resetAdminPayReceipt('alloc-paid-receipt-status');
     document.getElementById('alloc-paid-modal').hidden = false;
     render(); // reflect the freshly created allocations elsewhere on the page (e.g. the Allocation card)
   }
@@ -4777,9 +4781,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var target = allocPaidModalTarget;
     var dateInput = document.getElementById('alloc-paid-modal-date');
     var date = dateInput.value || TODAY;
+    var receipt = adminPayReceiptPath; adminPayReceiptPath = null;
     closeAllocPaidModal();
     if (!target) return;
     await markAllocationPaid(target.billId, target.tenantId, date);
+    if (receipt){
+      var bill = billOf(target.billId);
+      var alloc = bill && bill.allocations && bill.allocations.find(function(a){ return a.tenantId===target.tenantId; });
+      if (alloc){
+        try { await billAllocationService.setReceipt(alloc.id, receipt); alloc.receiptPath = receipt; render(); }
+        catch(err){ showToast('Paid, but the receipt could not be saved. ' + friendlyErrorMessage(err), 'error'); }
+      }
+    }
   }
   window.openAllocPaidModal = openAllocPaidModal;
   window.closeAllocPaidModal = closeAllocPaidModal;
@@ -13188,6 +13201,33 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /* ============ App lock (PHASE 14): shown after loading the data if a PIN is saved (see enterApp()) ============ */
   var lockPinInput = document.getElementById('lock-pin-input');
   lockPinInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') attemptUnlock(); });
+
+  /* ============ A close (×) button at the top of every pop-up window ============
+   * Long windows (payment history, forms) used to need scrolling to the bottom to close. The ×
+   * stays pinned at the top while scrolling and does exactly what that window's own Cancel /
+   * Close button does (so any clean-up it runs still happens). */
+  (function addModalCloseButtons(){
+    document.querySelectorAll('.modal-overlay > .modal-card').forEach(function(card){
+      if (card.querySelector(':scope > .modal-x-bar')) return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'modal-x';
+      btn.setAttribute('aria-label', 'Close');
+      btn.title = 'Close';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+      btn.addEventListener('click', function(){
+        var own = Array.prototype.find.call(card.querySelectorAll('.modal-actions button, button'), function(b){
+          return b !== btn && /^(cancel|close|not now|done)$/i.test((b.textContent || '').trim());
+        });
+        if (own) own.click();
+        else card.parentElement.hidden = true;
+      });
+      var bar = document.createElement('div');
+      bar.className = 'modal-x-bar';
+      bar.appendChild(btn);
+      card.insertBefore(bar, card.firstChild);
+    });
+  })();
 
   /* ============ Confirm before anything is deleted or undone ============
    * Every button that deletes or undoes saved information asks first. The internal functions stay
