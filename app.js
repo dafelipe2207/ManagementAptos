@@ -9356,7 +9356,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '</div></div>';
       }
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
-        '<h2 style="margin:0;font-size:14px;">'+esc((p.firstName+' '+p.lastName).trim() || p.email)+'</h2>'+
+        '<h2 style="margin:0;font-size:14px;">'+esc((p.firstName+' '+p.lastName).trim() || p.email)+
+          (p.role==='tenant' ? tenantRefChipHtml(tenants.find(function(t){ return t.authUserId && t.authUserId===p.authUserId; })) : '')+'</h2>'+
         badge(p.isActive ? 'paid' : 'overdue', p.isActive ? 'Active' : 'Deactivated')+
         '</div>'+
         '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+identityLine+'</p>'+
@@ -9613,7 +9614,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var select = document.getElementById('user-tenant-link');
       var unlinked = tenants.filter(function(t){ return !t.authUserId; });
       select.innerHTML = '<option value="">— Not linked yet —</option>' +
-        unlinked.map(function(t){ return '<option value="'+t.id+'">'+esc(t.fullName)+'</option>'; }).join('');
+        unlinked.map(function(t){ return '<option value="'+t.id+'">'+esc(t.fullName)+(tenantPaymentRef(t)?' · '+esc(tenantPaymentRef(t)):'')+'</option>'; }).join('');
+      updateUserTenantIdHint();
     }
   }
   window.onUserRoleChange = onUserRoleChange;
@@ -9629,8 +9631,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('user-first-name').value = nameParts[0] || '';
     document.getElementById('user-last-name').value = nameParts.slice(1).join(' ');
     if (t.phone) document.getElementById('user-phone').value = t.phone;
+    updateUserTenantIdHint();
   }
   window.onUserTenantLinkChange = onUserTenantLinkChange;
+  function updateUserTenantIdHint(){
+    var el = document.getElementById('user-tenant-id-hint');
+    if (!el) return;
+    var t = tenantOf(document.getElementById('user-tenant-link').value);
+    el.innerHTML = t && tenantPaymentRef(t)
+      ? 'Tenant ID: <b>'+esc(tenantPaymentRef(t))+'</b> — assigned automatically; they can log in with it or with their phone.'
+      : 'Link the tenant so their tenant ID (assigned automatically) works for login and payments.';
+  }
 
   /** 8 characters, without 0/O/1/l/I (they're easy to confuse when copied by hand or over WhatsApp/email). */
   function generatePassword(len){
@@ -9712,7 +9723,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         showToast('User created. Opening email to send their login…', 'success');
         offerNewUserEmailShare(email, (firstName + ' ' + lastName).trim(), password);
       } else if (isTenant){
-        showToast('Tenant login created, deactivated — activate it in Users when you\'re ready for them to get notifications.', 'success');
+        var linked = tenantId ? tenantOf(tenantId) : null;
+        var ref = tenantPaymentRef(linked);
+        var digitsForWa = phoneDigitsForWhatsApp(phone);
+        var loginMsg = 'Hi ' + firstName + ', your Manager login is ready.\n' +
+          (ref ? 'Tenant ID: ' + ref + '\n' : 'Phone: ' + phone + '\n') + 'Password: ' + password +
+          (ref ? '\n\nUse your Tenant ID ' + ref + ' to log in, and also as the reference on every rent and bill transfer.' : '') +
+          '\n\nKeep this somewhere safe.';
+        showToast('Tenant login created' + (ref ? ' — ID ' + ref : '') + '. Activate it in Users when ready.', 'success',
+          digitsForWa ? { label: 'Send by WhatsApp', onClick: function(){ openWhatsApp('https://wa.me/' + digitsForWa + '?text=' + encodeURIComponent(loginMsg)); } } : null);
       } else {
         showToast('User created. Share the login and password with them directly.', 'success');
       }
@@ -11106,6 +11125,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     errorEl.hidden = true;
     try {
       var tenantObj;
+      var isNewTenant = !tenantModalEditId;
       if (tenantModalEditId){
         tenantObj = tenantOf(tenantModalEditId);
         var saved = await tenantService.update(tenantModalEditId, draft);
@@ -11155,7 +11175,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       // Move-out settlement is never automatic — see startMoveOutProcess / the "Move-Out
       // Settlement" card on the tenant page. Saving the tenant form (even with an actual
       // move-out date) never touches bills or the bond.
-      showToast('Tenant saved successfully.', 'success');
+      showToast(isNewTenant && tenantObj && tenantPaymentRef(tenantObj)
+        ? 'Tenant saved — tenant ID ' + tenantPaymentRef(tenantObj) + ' assigned.' : 'Tenant saved successfully.', 'success');
       render();
     } catch(err){
       errorEl.textContent = 'Could not save this tenant. ' + friendlyErrorMessage(err);
