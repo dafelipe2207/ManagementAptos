@@ -1293,3 +1293,15 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 .ref-card-label{font-size:12px;font-weight:600;color:var(--text-dim);}
 .ref-card-code{font-size:26px;font-weight:700;letter-spacing:.08em;color:var(--accent);margin:2px 0 4px;}
 .ref-card-help{font-size:12.5px;color:var(--text-faint);max-width:520px;}
+
+/* WhatsApp send buttons: just the icon, in WhatsApp green */
+.wa-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;flex-shrink:0;
+  border-radius:999px;border:none;background:#25D366;color:#fff;cursor:pointer;padding:0;
+  transition:transform .1s ease,filter .15s ease;vertical-align:middle;}
+.wa-btn:hover{filter:brightness(.93);}
+.wa-btn:active{transform:scale(.94);}
+.wa-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.wa-btn .wa-icon{width:22px;height:22px;}
+.wa-btn-sm{width:34px;height:34px;}
+.wa-btn-sm .wa-icon{width:19px;height:19px;}
+@media (pointer:coarse), (max-width:1024px){ .wa-btn, .wa-btn-sm{width:44px;height:44px;} .wa-btn .wa-icon{width:24px;height:24px;} }

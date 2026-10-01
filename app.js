@@ -1485,7 +1485,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
       '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div>'+
       '<div class="actions-row">'+
-      (p.whatsappGroupLink ? '<button class="mini-btn" onclick="openWhatsApp(\''+esc(p.whatsappGroupLink)+'\')">Open WhatsApp group</button>' : '')+
+      (p.whatsappGroupLink ? waButton('openWhatsApp(\''+esc(p.whatsappGroupLink)+'\')', 'Open the WhatsApp group') : '')+
       '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
       '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">🏢 Schedule inspection</button>'+
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
@@ -5870,6 +5870,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (g) return 'whatsapp-smb://chat?code=' + g[1];
     return null;
   }
+  /** WhatsApp glyph used as the whole label of every "send by WhatsApp" button — the icon alone
+   *  says what it does. title/aria-label keep it clear for screen readers and on hover. */
+  var WA_ICON = '<svg class="wa-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.9 9.9 0 0 0 4.74 1.21h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2zm0 18.15h-.01a8.23 8.23 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.21 8.21 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.25-8.24 2.2 0 4.27.86 5.83 2.42a8.18 8.18 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.24 8.23zm4.52-6.16c-.25-.12-1.47-.72-1.7-.81-.23-.08-.39-.12-.56.13-.16.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.13-.15.17-.25.25-.42.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.43.06-.66.31-.23.25-.87.85-.87 2.07 0 1.22.89 2.4 1.01 2.56.12.17 1.75 2.67 4.23 3.74.59.26 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.67-1.18.21-.58.21-1.07.14-1.18-.06-.11-.22-.17-.47-.29z"/></svg>';
+  function waButton(onclick, title, extraClass){
+    return '<button type="button" class="wa-btn'+(extraClass?' '+extraClass:'')+'" title="'+title+'" aria-label="'+title+'" onclick="'+onclick+'">'+WA_ICON+'</button>';
+  }
+
   function openWhatsApp(httpsUrl){
     if (!httpsUrl) return;
     if (isAppleMobile()){
@@ -5929,7 +5936,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     prefetchBillInvoiceLink(bill);
     var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
     if (!link) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
-    return '<button class="text-link" style="font-size:11.5px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',[\''+bill.id+'\'])">Send WhatsApp'+(bill.receiptPath?' + bill':'')+'</button>';
+    return waButton('sendBillsWhatsAppToTenant(\''+tenant.id+'\',[\''+bill.id+'\'])', 'Send to '+esc(tenant.fullName)+' by WhatsApp', 'wa-btn-sm');
   }
 
   /** Builds the general message for the property's WhatsApp group once a bill has been split
@@ -5980,7 +5987,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var withFiles = items.some(function(it){ return !isTenantHiddenProvider(it.bill.provider) && it.bill.receiptPath; });
     if (digits) items.forEach(function(it){ if (!isTenantHiddenProvider(it.bill.provider)) prefetchBillInvoiceLink(it.bill); });
     var linkOrNote = digits
-      ? '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="sendBillsWhatsAppToTenant(\''+tenant.id+'\',['+ids+'])">Send WhatsApp'+(withFiles?' + bills':'')+'</button>'
+      ? waButton('sendBillsWhatsAppToTenant(\''+tenant.id+'\',['+ids+'])', 'Send pending bills to '+esc(tenant.fullName)+' by WhatsApp')
       : '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return '<div class="alloc-summary-row" style="align-items:center;padding-left:10px;justify-content:flex-end;">'+linkOrNote+'</div>';
   }
@@ -6308,7 +6315,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<h2 style="margin:0;">Allocation</h2>'+
         '<div style="display:flex;gap:8px;">'+
         (isTenantHiddenProvider(b.provider) ? '' : (prefetchBillReceiptFile(b), prefetchBillInvoiceLink(b), '')+
-          '<button class="mini-btn" onclick="sendBillToWhatsAppGroup(\''+b.id+'\')">Send to WhatsApp group</button>'+
+          waButton('sendBillToWhatsAppGroup(\''+b.id+'\')', 'Send to the WhatsApp group')+
           (b.receiptPath ? '<button class="mini-btn" title="Pick a chat from the share menu and send the bill file itself" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share bill file…</button>' : ''))+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
         '</div></div>'+
@@ -8990,7 +8997,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           (i.agency && !forTenant ? '<div class="rei-agency">'+esc(i.agency)+'</div>' : '')+
           (forTenant ? '<div class="rei-notes">'+esc(notes).replace(/\n/g,'<br>')+'</div>'
             : '<div class="rei-actions">'+notified+
-              (p && p.whatsappGroupLink ? '<button type="button" class="mini-btn" onclick="sendInspectionToWhatsAppGroup(\''+i.id+'\')">💬 Send to WhatsApp group</button>' : '')+
+              (p && p.whatsappGroupLink ? waButton('sendInspectionToWhatsAppGroup(\''+i.id+'\')', 'Send to the WhatsApp group') : '')+
               '<button type="button" class="mini-btn" onclick="openReiModal(\''+i.id+'\')">Edit</button></div>')+
         '</div></div>';
     }).join('');
