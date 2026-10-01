@@ -2595,7 +2595,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var tenantView = isTenantRole();
     // Rows sit in fixed columns (amount · status · action) so amounts and badges line up
     // across both lists instead of shifting with each badge's width.
-    var hasActionCol = pending.length > 0;
+    /** Receipt for a payment made on `date`: one attached to the payment, else the receipt the
+     *  tenant sent with a confirmed "I paid" report for that date. */
+    function receiptForPaidDate(date){
+      if (!date) return null;
+      var pmt = paymentRecords.find(function(x){ return x.tenantId===tenantId && x.date===date && x.receiptPath; });
+      if (pmt) return pmt.receiptPath;
+      var rep = rentPaymentReports.find(function(r){ return r.tenantId===tenantId && r.status==='confirmed' && r.paymentDate===date && r.proofPath; });
+      return rep ? rep.proofPath : null;
+    }
+    function receiptIconHtml(path){
+      return path ? '<button type="button" class="rcpt-btn has" style="width:34px;height:34px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+path+'\')">'+RECEIPT_VIEW_ICON+'</button>' : '';
+    }
+    var hasActionCol = pending.length > 0 || paid.some(function(c){ return receiptForPaidDate(c.paidDate); });
     function row(c){
       var label = shortDate(c.periodStart)+' – '+shortDate(c.periodEnd);
       if (c.status === 'paid' && c.paidDate) label += ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>';
@@ -2604,6 +2616,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var pendingRep = rentPaymentReports.find(function(r){ return r.tenantId===tenantId && r.status==='pending' && r.periodLabel===c.periodStart; });
         if (pendingRep) action = badge('upcoming', 'Under review');
         else if (tenantView) action = '<button class="mini-btn primary" style="padding:3px 10px;font-size:12px;" onclick="openRentReportModal(\''+c.id+'\')">I paid</button>';
+      } else {
+        action = receiptIconHtml(receiptForPaidDate(c.paidDate));
       }
       return '<div class="field-row" style="align-items:center;"><span class="k">'+label+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">'+
@@ -2630,7 +2644,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<span class="v" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">'+
           '<span class="rh-amt">'+money(total)+'</span>'+
           '<span class="rh-badge">'+badge('paid','Paid')+'</span>'+
-          (hasActionCol ? '<span class="rh-act"></span>' : '')+
+          (hasActionCol ? '<span class="rh-act">'+receiptIconHtml(receiptForPaidDate(g.paidDate))+'</span>' : '')+
         '</span></div>';
     }
     var PAID_CAP = 12;
@@ -2676,11 +2690,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** The tenant's own recent rent payment reports (pending first), so they can see that the
    *  admin still has to confirm, or why one was rejected. Shown above Rent history. */
   function tenantRentReportsHtml(tenantId){
-    var mine = rentPaymentReports.filter(function(r){ return r.tenantId===tenantId; });
+    // Only reports that still need something: pending (waiting for review) or rejected (so the
+    // tenant sees why). A CONFIRMED report is already a payment in Rent history below — showing it
+    // here too made the same payment appear twice, in a separate box.
+    var mine = rentPaymentReports.filter(function(r){ return r.tenantId===tenantId && r.status!=='confirmed'; });
     if (!mine.length) return '';
     function byNewest(a,b){ return String(b.paymentDate||'').localeCompare(String(a.paymentDate||'')); }
     var pending = mine.filter(function(r){ return r.status==='pending'; }).sort(byNewest);
-    var recent = mine.filter(function(r){ return r.status!=='pending'; }).sort(byNewest).slice(0, 5);
+    var recent = mine.filter(function(r){ return r.status==='rejected'; }).sort(byNewest).slice(0, 3);
     var rows = pending.concat(recent).map(function(r){
       var b = RENT_REPORT_BADGE[r.status] || ['neutral', r.status];
       return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+money(r.amount)+' · paid '+shortDate(r.paymentDate)+
@@ -2690,8 +2707,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (r.proofPath ? '<button class="text-link" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">Receipt</button>' : '')+
         badge(b[0], b[1])+'</span></div>';
     }).join('');
-    return '<div class="card"><h2>My rent payment reports</h2>'+
-      (pending.length ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 6px;">⏳ Waiting for your administrator to confirm '+pending.length+' payment'+(pending.length>1?'s':'')+'.</p>' : '')+
+    var forTenant = isTenantRole();
+    return '<div class="card"><h2>'+(forTenant ? 'My rent payment reports' : 'Rent payments reported by the tenant')+'</h2>'+
+      (pending.length ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 6px;">⏳ '+(forTenant ? 'Waiting for your administrator to confirm ' : 'Waiting for your confirmation: ')+pending.length+' payment'+(pending.length>1?'s':'')+'.</p>' : '')+
       '<div class="field-list">'+rows+'</div></div>';
   }
 
