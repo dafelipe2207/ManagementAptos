@@ -6313,6 +6313,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var RECEIPT_VIEW_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg>';
   var RECEIPT_REMOVE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>';
   function receiptLinkHtml(path, billId, tenantId){
+    if (!path && tenantId){ // fall back to the receipt the tenant attached when reporting the payment
+      var b0 = billOf(billId);
+      var a0 = b0 && b0.allocations && b0.allocations.find(function(a){ return a.tenantId===tenantId; });
+      var r0 = a0 && paymentReportsForAllocation(a0.id).find(function(r){ return r.proofPath && r.status !== 'rejected'; });
+      if (r0) return '<span class="rcpt-group"><button type="button" class="rcpt-btn has" title="View tenant\'s receipt" aria-label="View tenant\'s receipt" onclick="viewReceipt(\'receipts\',\''+r0.proofPath+'\')">'+RECEIPT_VIEW_ICON+'</button></span>';
+    }
     var tenantArg = tenantId ? ('\''+tenantId+'\'') : 'null';
     if (path){
       return '<span class="rcpt-group">'+
@@ -6470,6 +6476,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // has no 'tenant_reported' value) — a tenant-reported-and-admin-confirmed payment is real
     // money paid by the tenant, i.e. semantically 'cash', same as any other manual confirmation.
     await markAllocationPaid(billId, tenantId, paymentDate, 'cash');
+    // The receipt the tenant attached becomes this share's receipt, so the admin sees it on the
+    // bill like any other (it used to stay hidden inside the report once confirmed).
+    var bill = billOf(billId);
+    var alloc = bill && bill.allocations && bill.allocations.find(function(a){ return a.tenantId===tenantId; });
+    var rep = alloc && paymentReportsForAllocation(alloc.id).find(function(r){ return r.proofPath; });
+    if (alloc && rep && !alloc.receiptPath){
+      try { await billAllocationService.setReceipt(alloc.id, rep.proofPath); alloc.receiptPath = rep.proofPath; render(); }
+      catch(err){ console.error('could not link tenant receipt', err); }
+    }
   }
   window.confirmPaymentReport = confirmPaymentReport;
 
