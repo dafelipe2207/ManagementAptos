@@ -10279,6 +10279,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               money(b.amount)+' ÷ '+a.totalOccupancyFactor.toFixed(1)+' × '+a.occupancyFactor.toFixed(1)+' = '+money(a.amount)+
               '</p>' : '')+
             (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>' : '')+
+            (function(){ // their own transfer receipt for this share, if one is on file
+              var proof = a.receiptPath || ((paymentReportsForAllocation(a.id).find(function(r){ return r.proofPath && r.status !== 'rejected'; }) || {}).proofPath);
+              return proof ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewReceipt(\'receipts\',\''+proof+'\')">📎 My transfer</button>' : '';
+            })()+
             reportActionHtml+
             '</div>';
         }).join('');
