@@ -6218,13 +6218,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** The little "Upload receipt" / "View receipt" link shown under a tenant's allocation row or
    *  the admin's provider-payment row. `path` is the file's storage path, or null/undefined if
    *  nothing's been attached yet. */
+  /* Receipt actions are icons only (like the WhatsApp button): upload = page with an up arrow,
+   * view = page with a tick (attached), remove = small ×. title/aria-label say what each does. */
+  var RECEIPT_UPLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 18v-6"/><path d="M9.5 14.5 12 12l2.5 2.5"/></svg>';
+  var RECEIPT_VIEW_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg>';
+  var RECEIPT_REMOVE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>';
   function receiptLinkHtml(path, billId, tenantId){
     var tenantArg = tenantId ? ('\''+tenantId+'\'') : 'null';
     if (path){
-      return '<button class="text-link" style="font-size:11.5px;" onclick="viewReceipt(\'receipts\',\''+path+'\')">View receipt</button>'+
-        '<button class="text-link" style="font-size:11.5px;color:var(--status-overdue);" onclick="removeReceipt(\''+billId+'\','+tenantArg+')">Remove</button>';
+      return '<span class="rcpt-group">'+
+        '<button type="button" class="rcpt-btn has" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+path+'\')">'+RECEIPT_VIEW_ICON+'</button>'+
+        '<button type="button" class="rcpt-btn rm" title="Remove receipt" aria-label="Remove receipt" onclick="removeReceipt(\''+billId+'\','+tenantArg+')">'+RECEIPT_REMOVE_ICON+'</button></span>';
     }
-    return '<button class="text-link" style="font-size:11.5px;" onclick="triggerReceiptUpload(\''+billId+'\','+tenantArg+')">Upload receipt</button>';
+    return '<button type="button" class="rcpt-btn" title="Upload receipt" aria-label="Upload receipt" onclick="triggerReceiptUpload(\''+billId+'\','+tenantArg+')">'+RECEIPT_UPLOAD_ICON+'</button>';
   }
 
   var PAYMENT_METHOD_LABEL = { bank_transfer: 'Bank transfer', cash: 'Cash', card: 'Card', other: 'Other' };

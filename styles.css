@@ -1305,3 +1305,18 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 .wa-btn-sm{width:34px;height:34px;}
 .wa-btn-sm .wa-icon{width:19px;height:19px;}
 @media (pointer:coarse), (max-width:1024px){ .wa-btn, .wa-btn-sm{width:44px;height:44px;} .wa-btn .wa-icon{width:24px;height:24px;} }
+
+/* Receipt icon buttons (upload / view / remove) */
+.rcpt-group{display:inline-flex;align-items:center;gap:6px;vertical-align:middle;}
+.rcpt-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;flex-shrink:0;padding:0;
+  border-radius:999px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--accent);cursor:pointer;
+  vertical-align:middle;transition:background-color .15s ease,transform .1s ease;}
+.rcpt-btn svg{width:20px;height:20px;}
+.rcpt-btn:hover{background:var(--accent-bg);}
+.rcpt-btn:active{transform:scale(.94);}
+.rcpt-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.rcpt-btn.has{background:var(--status-paid-bg);color:var(--status-paid);border-color:transparent;}
+.rcpt-btn.rm{width:30px;height:30px;color:var(--status-overdue);border-color:transparent;background:transparent;}
+.rcpt-btn.rm svg{width:15px;height:15px;}
+.rcpt-btn.rm:hover{background:var(--status-overdue-bg);}
+@media (pointer:coarse), (max-width:1024px){ .rcpt-btn{width:44px;height:44px;} .rcpt-btn.rm{width:40px;height:40px;} }
