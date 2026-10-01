@@ -502,6 +502,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button class="del" title="Delete payment" aria-label="Delete payment" onclick="removePaymentAndRefresh(\''+p.id+'\')">'+TRASH_ICON+'</button></span></div>';
   }
   var TRASH_ICON = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
+  /** Receipt icon on a paid rent period (Payments page): view the transfer receipt if there is one
+   *  (attached to the payment, or sent by the tenant with a confirmed report), otherwise upload it
+   *  onto the payment made that day. */
+  function paidChargeReceiptHtml(c){
+    if (!c.paidDate) return '';
+    var pmt = paymentRecords.find(function(x){ return x.tenantId===c.tenantId && x.date===c.paidDate && x.receiptPath; }) ||
+              paymentRecords.find(function(x){ return x.tenantId===c.tenantId && x.date===c.paidDate && x.method!=='bond_deduction'; });
+    var path = pmt && pmt.receiptPath;
+    if (!path){
+      var rep = rentPaymentReports.find(function(r){ return r.tenantId===c.tenantId && r.status==='confirmed' && r.paymentDate===c.paidDate && r.proofPath; });
+      path = rep && rep.proofPath;
+    }
+    if (path) return '<button type="button" class="rcpt-btn has" style="width:34px;height:34px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+path+'\')">'+RECEIPT_VIEW_ICON+'</button>';
+    if (!pmt) return '';
+    return '<button type="button" class="rcpt-btn" style="width:34px;height:34px;" title="Upload receipt" aria-label="Upload receipt" onclick="pickPaymentReceipt(\''+pmt.id+'\')">'+RECEIPT_UPLOAD_ICON+'</button>';
+  }
   /** Receipt icons on a payment-history row: upload one, or view / remove the attached one. */
   function paymentReceiptIconsHtml(p){
     if (p.receiptPath){
@@ -526,7 +542,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var saved = await paymentService.setReceipt(p.id, path);
       p.receiptPath = saved.receiptPath;
       showToast('Receipt attached.', 'success');
-      renderHistoryModalBody();
+      if (historyModalTenantId) renderHistoryModalBody();
+      renderPreservingScroll();
     } catch(err){ showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error'); }
   }
   async function removePaymentReceipt(paymentId){
@@ -535,7 +552,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     try {
       await paymentService.setReceipt(p.id, null);
       p.receiptPath = null;
-      renderHistoryModalBody();
+      if (historyModalTenantId) renderHistoryModalBody();
+      renderPreservingScroll();
     } catch(err){ showToast('Could not remove the receipt. ' + friendlyErrorMessage(err), 'error'); }
   }
   window.pickPaymentReceipt = pickPaymentReceipt;
@@ -3149,8 +3167,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     function paidRow(c){
       var paidNote = c.paidDate ? ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>' : '';
-      return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+'</span>'+
-        '<span class="v">'+money(c.amountDue)+'</span></div>';
+      return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+'</span>'+
+        '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(c.amountDue)+paidChargeReceiptHtml(c)+'</span></div>';
     }
     function billOwedRow(o){
       var b = o.bill, a = o.alloc;
