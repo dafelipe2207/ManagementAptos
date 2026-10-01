@@ -10151,6 +10151,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Tenant-facing "My Bond" — same underlying data as moveOutSettlementCardHtml, worded for the
    *  tenant and never showing a total as final until status is completed (spec section 11: "Do
    *  not show the settlement as final until the administrator approves it"). */
+  /** "Included in your rent" on the tenant's dashboard: services they don't pay separately
+   *  (tenant.excludedBillTypes) plus any extras bundled with their room (room_included_bills). */
+  function tenantIncludedInRentRowHtml(t){
+    var names = (t.excludedBillTypes || []).map(billTypeLabel);
+    roomIncludedBills.filter(function(e){
+      return t.roomId && e.roomId === t.roomId && (!e.startDate || e.startDate <= TODAY) && (!e.endDate || e.endDate >= TODAY);
+    }).forEach(function(e){ if (e.label && names.indexOf(e.label) < 0) names.push(e.label); });
+    if (!names.length) return '';
+    return '<div class="field-row"><span class="k">Included in your rent</span><span class="v">'+esc(names.join(', '))+'</span></div>';
+  }
+  function tenantBondRowHtml(t){
+    var bond = bondOf(t.id);
+    if (!bond) return '';
+    var v = money(bond.amountPaid) + (bond.amountRequired > bond.amountPaid + 0.004 ? ' <span style="font-weight:400;color:var(--status-due);">of '+money(bond.amountRequired)+'</span>' : '');
+    var startMoveOut = moveOutSettlementOf(t.id) ? '' :
+      '<br><button class="text-link" style="display:inline;margin:4px 0 0;font-size:12px;" onclick="startMoveOutProcess(\''+t.id+'\')">Moving out? Start move-out</button>';
+    return '<div class="field-row"><span class="k">Bond</span><span class="v">'+v+startMoveOut+'</span></div>';
+  }
+
   function renderTenantMyBondHtml(t){
     var bond = bondOf(t.id);
     var settlement = moveOutSettlementOf(t.id);
@@ -10210,11 +10229,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k">Room</span><span class="v">'+(r?esc(r.name):'—')+'</span></div>'+
       (tenantPaymentRef(t) ? '<div class="field-row"><span class="k">Payment reference</span><span class="v">'+esc(tenantPaymentRef(t))+'</span></div>' : '')+
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+esc(t.rentFrequency)+'</span></div>'+
+      tenantIncludedInRentRowHtml(t)+
+      tenantBondRowHtml(t)+
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
       '</div>'+
       tenantRentHistoryHtml(t.id) +
-      renderTenantMyBondHtml(t);
+      // The bond now sits in the summary card above; its own card only shows during a move-out
+      // (deductions / refund), where there's more to say than the amount.
+      (moveOutSettlementOf(t.id) ? renderTenantMyBondHtml(t) : '');
   }
 
   /** Tenant dashboard alert when rent is overdue: how much, how many periods, and how many days
