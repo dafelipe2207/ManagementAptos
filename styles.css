@@ -1872,3 +1872,11 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
 }
 .seg.seg-wide + .filter-bar{margin-top:-6px;}
 .ps-tile small{font-size:10.5px;color:var(--text-faint);font-weight:500;line-height:1.25;}
+
+/* Dropdown lists must follow the APP theme, not the computer's: with the app in dark mode on a
+   light Windows, the native list opened white with light-grey text (unreadable). */
+:root[data-theme="dark"]{color-scheme:dark;}
+:root[data-theme="light"]{color-scheme:light;}
+select option,select optgroup{background-color:var(--bg-elevated);color:var(--text);}
+select option:checked{background-color:var(--accent,#0a84ff);color:#fff;}
+select option:disabled{color:var(--text-faint);}
