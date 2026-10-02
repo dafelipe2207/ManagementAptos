@@ -1,6 +1,8 @@
 :root{
     color-scheme: light dark;
-    --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    /* iOS typography: Apple's own San Francisco (SF Pro) on iPhone, iPad and Mac via the system
+       font; everywhere else Inter, the closest open font to SF Pro. */
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     /* One typeface for the whole app. Numbers/dates keep aligned digits via tabular-nums below,
        so the old monospace slot now points at the same family. */
     --font-mono: var(--font-sans);
@@ -1665,3 +1667,24 @@ input[type="checkbox"], input[type="radio"]{accent-color:var(--accent);width:18p
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --glass-strong:rgba(24,29,42,.92); } }
 :root[data-theme="dark"]{ --glass-strong:rgba(24,29,42,.92); }
 .modal-overlay{background:rgba(15,20,35,.28) !important;}
+
+/* ---------- iOS-style type scale ----------
+   Large bold titles with tight tracking, 15–17px body, grey footnote/caption text, section
+   headers in small caps-style grey — the same rhythm as Settings/Health/Wallet on iOS. */
+body{font-family:var(--font-sans);font-size:15px;letter-spacing:-0.01em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  font-feature-settings:"cv11","ss01","ss03";}
+h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;line-height:1.1;}
+@media (max-width:640px){ h1.page-title{font-size:30px !important;} }
+.page-sub{font-size:15px;color:var(--text-dim);letter-spacing:-0.01em;}
+.card h2, .card > h2{font-size:13px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--text-faint);border-bottom:0 !important;padding-bottom:2px;}
+.wifi-title, .prop-name{font-size:17px !important;font-weight:650;letter-spacing:-0.02em;}
+.wifi-kicker{font-size:11px;letter-spacing:.06em;}
+.stat .value, .ps-tile b{font-weight:700;letter-spacing:-0.02em;}
+.stat .value{font-size:24px;}
+.field-row, .row .who .name, .bill-owed-name{letter-spacing:-0.01em;}
+.row .who .meta, .bill-owed-meta, .prop-addr, .prop-meta, .field-row .k{color:var(--text-faint);}
+.mini-btn, .chip, .view-btn, .wifi-btn{font-weight:600;letter-spacing:-0.01em;font-size:14px;}
+.view-btn{text-transform:none !important;}
+.badge{font-weight:600;letter-spacing:0;}
+.nav a, .sidebar a, .bottomnav a{letter-spacing:-0.01em;}
+.bottomnav a span, .bottomnav .label{font-size:10.5px;font-weight:600;}

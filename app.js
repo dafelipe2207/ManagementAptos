@@ -1189,7 +1189,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
                 '<div style="display:flex;align-items:center;gap:10px;">'+
                 '<div class="amount">'+money(item.amountRemaining)+'<br/>'+billBadge+'</div>'+
                 '<div style="display:flex;flex-direction:column;gap:6px;">'+
-                '<button class="view-btn" onclick="openAllocPaidModal(\''+item.billId+'\',\''+item.tenantId+'\')">MARK AS PAID</button>'+
+                '<button class="view-btn" onclick="openAllocPaidModal(\''+item.billId+'\',\''+item.tenantId+'\')">Mark as paid</button>'+
                 '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/bills/'+item.billId+'\'">View</button>'+
                 '</div></div></div>';
             }
@@ -1201,7 +1201,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               '<div style="display:flex;align-items:center;gap:10px;">'+
               '<div class="amount">'+money(item.amountRemaining)+'<br/>'+b+'</div>'+
               '<div style="display:flex;flex-direction:column;gap:6px;">'+
-              '<button class="view-btn" onclick="openChargePaidModal(\''+item.chargeId+'\')">MARK AS PAID</button>'+
+              '<button class="view-btn" onclick="openChargePaidModal(\''+item.chargeId+'\')">Mark as paid</button>'+
               '<button class="text-link" style="margin:0;text-align:center;" onclick="viewTenantPayments(\''+item.tenantId+'\')">View</button>'+
               '</div></div></div>';
           }).join('')
@@ -1768,7 +1768,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="meta">Due '+fullDate(start)+'</div></div>'+
         '<div style="display:flex;align-items:center;gap:8px;">'+
           '<div class="amount" style="text-align:right;">'+(p.leasePaymentAmount != null ? money(p.leasePaymentAmount) : '—')+'<br/>'+b+'</div>'+
-          '<button type="button" class="view-btn" onclick="openLeasePaymentModal(\''+p.id+'\',\''+start+'\')">MARK AS PAID</button>'+
+          '<button type="button" class="view-btn" onclick="openLeasePaymentModal(\''+p.id+'\',\''+start+'\')">Mark as paid</button>'+
         '</div></div>';
     }).join('');
     var overdueCount = periods.filter(function(x){ return x < TODAY; }).length;
