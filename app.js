@@ -5862,8 +5862,43 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<td>'+billStatusBadge(b)+(billHasPendingPaymentReport(b) ? ' ' + badge('upcoming','Payment reported') : '')+'</td>'+
         '</tr>';
     }).join('');
-    return '<div class="card"><div class="report-table-wrap"><table class="report-table bills-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
+    return '<div class="card bills-table-card"><div class="report-table-wrap"><table class="report-table bills-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>'+
+      billsCardListHtml(list, cols);
   }
+  /** Phones: the same bills as a readable list (the 8-column table was squashed into unreadable
+   *  slivers). Each bill: service icon, provider, property + due date, total and status, then a
+   *  line with how many tenants paid, the payment to the provider and WhatsApp. Tap → the bill. */
+  function billsCardListHtml(list, cols){
+    var sortSel = '<label class="bills-sort">Sort <select onchange="setBillsSortTo(this.value)">'+
+      cols.map(function(c){ return '<option value="'+c[0]+'"'+(billsSortColumn===c[0]?' selected':'')+'>'+c[1]+'</option>'; }).join('')+
+      '</select><button type="button" class="mini-btn" onclick="setBillsSort(billsSortColumnNow())" title="Reverse order">'+(billsSortDir==='asc'?'▲':'▼')+'</button></label>';
+    if (!list.length) return '<div class="card bills-cards"><p style="font-size:13px;color:var(--text-faint);margin:0;">No bills in this filter.</p></div>';
+    var items = list.map(function(b){
+      var p = propertyOf(b.propertyId);
+      var ic = BILL_TYPE_ICON[b.billType] || BILL_TYPE_ICON.other;
+      var tAllocs = (b.allocations || []).filter(function(a){ return !a.isAdmin; });
+      var paidN = tAllocs.filter(function(a){ return a.paid; }).length;
+      var tenantsChip = !tAllocs.length ? '<span class="bc-chip">Not allocated</span>'
+        : '<span class="bc-chip'+(paidN===tAllocs.length?' ok':'')+'">👥 '+paidN+'/'+tAllocs.length+' paid · '+money(billPaidAmount(b))+'</span>';
+      var provChip = b.adminPaid ? '<span class="bc-chip ok">🏦 Provider paid</span>'
+        : (billReadyForAdminPayment(b) ? '<span class="bc-chip warn">🏦 Ready to pay</span>' : '<span class="bc-chip">🏦 Waiting on tenants</span>');
+      var waChip = isTenantHiddenProvider(b.provider) || !tAllocs.length ? ''
+        : (b.whatsappGroupSharedAt ? '<span class="bc-chip ok">💬 Sent</span>' : '<span class="bc-chip">💬 Not sent</span>');
+      return '<a class="bill-card" href="#/bills/'+b.id+'">'+
+        '<span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span>'+
+        '<span class="bill-card-body">'+
+          '<span class="bill-card-top"><span class="bill-owed-name">'+esc(b.provider)+'</span><b>'+money(b.amount)+'</b></span>'+
+          '<span class="bill-card-mid"><span class="bill-owed-meta">'+esc(billTypeLabel(b.billType))+(p?' · '+esc(p.name):'')+(b.dueDate?' · due '+shortDate(b.dueDate):'')+'</span>'+
+            billStatusBadge(b)+'</span>'+
+          '<span class="bill-card-chips">'+tenantsChip+provChip+waChip+(billHasPendingPaymentReport(b) ? '<span class="bc-chip warn">Payment reported</span>' : '')+'</span>'+
+        '</span></a>';
+    }).join('');
+    return '<div class="card bills-cards">'+sortSel+items+'</div>';
+  }
+  function setBillsSortTo(col){ billsSortColumn = col; billsSortDir = BILLS_SORT_DEFAULT_DIR[col] || 'asc'; renderPreservingScroll(); }
+  function billsSortColumnNow(){ return billsSortColumn; }
+  window.setBillsSortTo = setBillsSortTo;
+  window.billsSortColumnNow = billsSortColumnNow;
 
   var billsViewTab = 'list'; // 'list' | 'missing' | 'recurring'
   function setBillsViewTab(tab){

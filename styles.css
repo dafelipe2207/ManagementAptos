@@ -1407,3 +1407,24 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
   .bill-sheet-overlay{align-items:flex-end;}
   .bill-sheet{border-radius:18px 18px 0 0;width:100%;max-width:none;margin:0;padding-bottom:max(16px, env(safe-area-inset-bottom));}
 }
+
+/* Bills list: table on wide screens, readable cards on phones */
+.bills-cards{display:none;}
+@media (max-width:640px){
+  .bills-table-card{display:none;}
+  .bills-cards{display:block;padding:6px 14px;}
+}
+.bills-sort{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-faint);padding:6px 0 8px;border-bottom:1px solid var(--border);}
+.bills-sort select{flex:1;min-width:0;font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-elevated);color:var(--text);}
+.bills-sort .mini-btn{min-height:34px;padding:4px 10px;}
+.bill-card{display:flex;gap:10px;padding:12px 0;border-top:1px solid var(--border);text-decoration:none;color:inherit;}
+.bills-sort + .bill-card{border-top:0;}
+.bill-card-body{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;}
+.bill-card-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline;}
+.bill-card-top b{font-size:15px;flex-shrink:0;}
+.bill-card-mid{display:flex;justify-content:space-between;gap:8px;align-items:center;}
+.bill-card-mid .bill-owed-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bill-card-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px;}
+.bc-chip{font-size:11px;font-weight:600;color:var(--text-dim);background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:2px 8px;white-space:nowrap;}
+.bc-chip.ok{color:var(--status-paid);background:var(--status-paid-bg);border-color:transparent;}
+.bc-chip.warn{color:var(--status-due);background:var(--status-due-bg);border-color:transparent;}
