@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="styles.css?v=50">
+<link rel="stylesheet" href="styles.css?v=51">
 </head>
 <body>
 <div id="app">
@@ -602,6 +602,11 @@
       </div>
       <div class="form-row"><label for="property-notes">Notes</label><textarea id="property-notes"></textarea></div>
       <div class="form-row"><label for="property-whatsapp-group">WhatsApp group link (optional)</label><input id="property-whatsapp-group" type="url" placeholder="https://chat.whatsapp.com/..." /></div>
+      <div class="form-row-2 form-row">
+        <div><label for="property-wifi-ssid">📶 Wi-Fi network (optional)</label><input id="property-wifi-ssid" type="text" autocomplete="off" placeholder="e.g. Belmont_Home" /></div>
+        <div><label for="property-wifi-password">Wi-Fi password</label><input id="property-wifi-password" type="text" autocomplete="off" placeholder="Shown to this property's tenants" /></div>
+      </div>
+      <div class="form-row"><label for="property-wifi-notes">Wi-Fi notes (optional)</label><input id="property-wifi-notes" type="text" maxlength="160" placeholder="e.g. Router is in the living room — restart it if it's slow" /></div>
 
       <div class="form-row" style="display:flex;align-items:center;gap:8px;">
         <input id="property-bin-duty-required" type="checkbox" style="width:auto;" checked />
@@ -1275,6 +1280,7 @@
 <input id="admin-pay-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleAdminPayReceiptFile(event)" />
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
-<script type="module" src="app.js?v=189"></script>
+<script src="lib/qr.js?v=1"></script>
+<script type="module" src="app.js?v=190"></script>
 </body>
 </html>

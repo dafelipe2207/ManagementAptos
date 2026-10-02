@@ -1428,3 +1428,37 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 .bc-chip{font-size:11px;font-weight:600;color:var(--text-dim);background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:2px 8px;white-space:nowrap;}
 .bc-chip.ok{color:var(--status-paid);background:var(--status-paid-bg);border-color:transparent;}
 .bc-chip.warn{color:var(--status-due);background:var(--status-due-bg);border-color:transparent;}
+
+/* Wi-Fi card */
+.wifi-card{position:relative;overflow:hidden;
+  background:linear-gradient(135deg, var(--accent-bg) 0%, var(--bg-elevated) 62%);}
+.wifi-card::after{content:"";position:absolute;right:-40px;top:-40px;width:150px;height:150px;border-radius:50%;
+  background:radial-gradient(circle, color-mix(in srgb, var(--accent) 18%, transparent) 0%, transparent 70%);pointer-events:none;}
+.wifi-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
+.wifi-kicker{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);}
+.wifi-title{display:block;font-size:16px;font-weight:750;color:var(--text);}
+.wifi-signal{position:relative;width:42px;height:42px;border-radius:12px;background:var(--bg-elevated);border:1px solid var(--border);flex-shrink:0;}
+.wifi-signal i{position:absolute;left:50%;bottom:9px;border:2.5px solid var(--accent);border-color:var(--accent) transparent transparent transparent;
+  border-radius:50%;transform:translateX(-50%);animation:wifiPulse 2.4s ease-in-out infinite;}
+.wifi-signal i:nth-child(1){width:8px;height:8px;bottom:8px;border:0;background:var(--accent);animation-delay:0s;}
+.wifi-signal i:nth-child(2){width:20px;height:20px;bottom:5px;animation-delay:.25s;}
+.wifi-signal i:nth-child(3){width:32px;height:32px;bottom:-1px;animation-delay:.5s;}
+@keyframes wifiPulse{0%,100%{opacity:.35}40%{opacity:1}}
+@media (prefers-reduced-motion: reduce){.wifi-signal i{animation:none;opacity:1;}}
+.wifi-field{display:flex;align-items:center;gap:8px;padding:10px 12px;margin-top:8px;background:var(--bg-elevated);
+  border:1px solid var(--border);border-radius:12px;}
+.wifi-label{font-size:11.5px;color:var(--text-faint);width:66px;flex-shrink:0;}
+.wifi-value{flex:1;min-width:0;font-size:15px;font-weight:700;letter-spacing:.02em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;}
+.wifi-btn{border:0;background:var(--text);color:var(--bg);font:inherit;font-size:12.5px;font-weight:700;border-radius:9px;
+  padding:7px 12px;min-height:36px;cursor:pointer;flex-shrink:0;transition:transform .12s ease, background-color .2s ease;}
+.wifi-btn:active{transform:scale(.95);}
+.wifi-btn.ghost{background:transparent;color:var(--text-dim);border:1px solid var(--border);}
+.wifi-btn.done{background:var(--status-paid);color:#fff;}
+.wifi-notes{font-size:12.5px;color:var(--text-dim);margin:10px 2px 0;}
+.wifi-qr-toggle{margin-top:12px;background:none;border:1px dashed var(--border);color:var(--accent);font:inherit;font-size:13px;font-weight:700;
+  border-radius:10px;padding:9px 12px;width:100%;cursor:pointer;min-height:42px;}
+.wifi-qr{text-align:center;margin-top:10px;animation:wifiIn .25s ease;}
+.wifi-qr-img{display:inline-block;width:190px;max-width:70vw;padding:10px;background:#fff;border-radius:14px;border:1px solid var(--border);}
+.wifi-qr-img svg{display:block;width:100%;height:auto;}
+.wifi-qr p{font-size:12px;color:var(--text-faint);margin:8px 0 0;}
+@keyframes wifiIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}

@@ -40,6 +40,9 @@ function fromRow(row) {
     bankBsb: row.bank_bsb || '',
     bankAccountNumber: row.bank_account_number || '',
     whatsappGroupLink: row.whatsapp_group_link || '',
+    wifiSsid: row.wifi_ssid || '',
+    wifiPassword: row.wifi_password || '',
+    wifiNotes: row.wifi_notes || '',
     hasParking: !!row.has_parking,
     parkingCost: row.parking_cost != null ? Number(row.parking_cost) : null,
     parkingTenantId: row.parking_tenant_id || null,
@@ -67,6 +70,9 @@ function toRow(p) {
     bank_bsb: p.bankBsb || null,
     bank_account_number: p.bankAccountNumber || null,
     whatsapp_group_link: p.whatsappGroupLink || null,
+    wifi_ssid: p.wifiSsid ? String(p.wifiSsid).trim() : null,
+    wifi_password: p.wifiPassword || null,
+    wifi_notes: p.wifiNotes || null,
     has_parking: !!p.hasParking,
     parking_cost: p.hasParking && p.parkingCost != null && p.parkingCost !== '' ? p.parkingCost : null,
     parking_tenant_id: p.hasParking && p.parkingTenantId ? p.parkingTenantId : null,
@@ -76,7 +82,7 @@ function toRow(p) {
 
 // Columns safe to hand to a tenant session: never the landlord's own lease/bank/bpay details with
 // the real estate agent — a tenant should never see what's paid to the real estate, or how.
-const TENANT_SAFE_COLUMNS = 'id, name, address, bedrooms, bathrooms, notes, whatsapp_group_link, has_parking, parking_cost, parking_tenant_id, created_at';
+const TENANT_SAFE_COLUMNS = 'id, name, address, bedrooms, bathrooms, notes, whatsapp_group_link, wifi_ssid, wifi_password, wifi_notes, has_parking, parking_cost, parking_tenant_id, created_at';
 
 /** `restricted: true` (pass for a tenant session) fetches only tenant-safe columns from the
  *  server itself — not just hiding them in the UI — so the real-estate lease/bpay/bank fields

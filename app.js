@@ -1863,6 +1863,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
       '</div></div>'+
       realEstateInspectionBannerHtml(false, p.id)+
+      wifiCardHtml(p)+
       leasePaymentCardHtml(p)+
       propertyInspectionHistoryHtml(p)+
       '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Trash collection</h2>'+
@@ -10789,6 +10790,63 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!names.length) return '';
     return '<div class="field-row"><span class="k">Included in your rent</span><span class="v">'+esc(names.join(', '))+'</span></div>';
   }
+  /* ============ Wi-Fi card (tenant dashboard + property page) ============
+   * Network name + password with show/hide and one-tap copy, and a QR code another phone/laptop
+   * can scan with its camera to join without typing. Only shown when the property has a network. */
+  function wifiEscape(v){ return String(v || '').replace(/([\\;,:"])/g, '\\$1'); }
+  function wifiQrPayload(p){ return 'WIFI:T:' + (p.wifiPassword ? 'WPA' : 'nopass') + ';S:' + wifiEscape(p.wifiSsid) + ';' + (p.wifiPassword ? 'P:' + wifiEscape(p.wifiPassword) + ';' : '') + ';'; }
+  function wifiCardHtml(p){
+    if (!p || !p.wifiSsid) return '';
+    var hasPw = !!p.wifiPassword;
+    return '<div class="card wifi-card" data-prop="'+p.id+'">'+
+      '<div class="wifi-head">'+
+        '<span class="wifi-signal" aria-hidden="true"><i></i><i></i><i></i></span>'+
+        '<span><span class="wifi-kicker">Wi-Fi</span><span class="wifi-title">'+(isTenantRole() ? 'Get online at home' : 'Wi-Fi for tenants')+'</span></span>'+
+      '</div>'+
+      '<div class="wifi-field"><span class="wifi-label">Network</span>'+
+        '<span class="wifi-value">'+esc(p.wifiSsid)+'</span>'+
+        '<button type="button" class="wifi-btn" onclick="copyWifi(this,\'ssid\',\''+p.id+'\')">Copy</button></div>'+
+      (hasPw ? '<div class="wifi-field"><span class="wifi-label">Password</span>'+
+        '<span class="wifi-value wifi-pw" data-shown="0">'+'•'.repeat(Math.min(12, p.wifiPassword.length))+'</span>'+
+        '<button type="button" class="wifi-btn ghost" onclick="toggleWifiPw(this,\''+p.id+'\')">Show</button>'+
+        '<button type="button" class="wifi-btn" onclick="copyWifi(this,\'pw\',\''+p.id+'\')">Copy</button></div>'
+        : '<div class="wifi-field"><span class="wifi-label">Password</span><span class="wifi-value" style="font-weight:500;">No password needed</span></div>')+
+      (p.wifiNotes ? '<p class="wifi-notes">💡 '+esc(p.wifiNotes)+'</p>' : '')+
+      '<button type="button" class="wifi-qr-toggle" onclick="toggleWifiQr(this,\''+p.id+'\')">'+
+        '<span aria-hidden="true">▦</span> Show QR code to connect</button>'+
+      '<div class="wifi-qr" hidden><div class="wifi-qr-img"></div><p>Point another phone\'s camera at this code to join — no typing needed.</p></div>'+
+    '</div>';
+  }
+  function copyWifi(btn, what, propId){
+    var p = propertyOf(propId); if (!p) return;
+    copyTextReliably(what === 'pw' ? p.wifiPassword : p.wifiSsid).then(function(ok){
+      var old = btn.textContent;
+      btn.textContent = ok ? 'Copied ✓' : 'Copy failed';
+      btn.classList.toggle('done', !!ok);
+      setTimeout(function(){ btn.textContent = old; btn.classList.remove('done'); }, 1600);
+    });
+  }
+  function toggleWifiPw(btn, propId){
+    var p = propertyOf(propId); if (!p) return;
+    var v = btn.parentNode.querySelector('.wifi-pw');
+    var shown = v.getAttribute('data-shown') === '1';
+    v.textContent = shown ? '•'.repeat(Math.min(12, p.wifiPassword.length)) : p.wifiPassword;
+    v.setAttribute('data-shown', shown ? '0' : '1');
+    btn.textContent = shown ? 'Show' : 'Hide';
+  }
+  function toggleWifiQr(btn, propId){
+    var p = propertyOf(propId); if (!p) return;
+    var box = btn.parentNode.querySelector('.wifi-qr');
+    if (!box.hidden){ box.hidden = true; btn.innerHTML = '<span aria-hidden="true">▦</span> Show QR code to connect'; return; }
+    box.hidden = false; btn.innerHTML = '<span aria-hidden="true">▦</span> Hide QR code';
+    var img = box.querySelector('.wifi-qr-img');
+    try { img.innerHTML = window.makeQrSvg(wifiQrPayload(p)); } // lib/qr.js — built in, works offline
+    catch(_e){ img.innerHTML = '<span style="font-size:12px;color:var(--text-faint);">Couldn\'t make the QR code for this network.</span>'; }
+  }
+  window.copyWifi = copyWifi;
+  window.toggleWifiPw = toggleWifiPw;
+  window.toggleWifiQr = toggleWifiQr;
+
   /** Tenant dashboard: once a move-out date is set (by them or the admin), show it plainly. */
   function tenantMoveOutDateRowHtml(t){
     var date = t.actualMoveOutDate || t.expectedMoveOutDate;
@@ -10871,6 +10929,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
       '</div>'+
+      wifiCardHtml(p) +
       tenantRentHistoryHtml(t.id) +
       // The bond now sits in the summary card above; its own card only shows during a move-out
       // (deductions / refund), where there's more to say than the amount.
@@ -11682,6 +11741,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
     document.getElementById('property-notes').value = p ? (p.notes||'') : '';
     document.getElementById('property-whatsapp-group').value = p ? (p.whatsappGroupLink||'') : '';
+    document.getElementById('property-wifi-ssid').value = p ? (p.wifiSsid||'') : '';
+    document.getElementById('property-wifi-password').value = p ? (p.wifiPassword||'') : '';
+    document.getElementById('property-wifi-notes').value = p ? (p.wifiNotes||'') : '';
     document.getElementById('property-bin-duty-required').checked = p ? (p.binDutyRequired !== false) : true;
     var parkingTenantSelect = document.getElementById('property-parking-tenant');
     var propertyTenants = p ? roomsOf(p.id).map(function(r){ return currentTenantOf(r.id); }).filter(Boolean) : [];
@@ -11783,6 +11845,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var existingForEdit = propertyModalEditId ? propertyOf(propertyModalEditId) : null;
       var draft = { name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes,
         whatsappGroupLink:whatsappGroupLink, binDutyRequired:binDutyRequired,
+        wifiSsid: document.getElementById('property-wifi-ssid').value.trim(),
+        wifiPassword: document.getElementById('property-wifi-password').value,
+        wifiNotes: document.getElementById('property-wifi-notes').value.trim(),
         hasParking:hasParking, parkingCost:hasParking?parkingCost:null, parkingTenantId:hasParking?parkingTenantId:null,
         leasePaymentDay:leasePaymentDay, leasePaymentAmount:leasePaymentAmount, leaseEndDate:leaseEndDate,
         leasePaymentFrequency:leasePaymentFrequency,
