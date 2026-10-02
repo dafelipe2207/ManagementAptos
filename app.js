@@ -1274,7 +1274,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           (refund != null ? '<div class="meta" style="margin-top:4px;">'+(refund < 0 ? '<span style="color:var(--status-overdue);">Tenant owes '+money(-refund)+'</span>' : 'Est. refund '+money(refund))+'</div>' : '')+
         '</div></div>';
     }
-    return '<div class="card"><h2>Move-outs'+(items.length ? ' ('+items.length+')' : '')+'</h2>'+
+    return '<div class="card" id="dash-moveouts"><h2>Move-outs'+(items.length ? ' ('+items.length+')' : '')+'</h2>'+
       (items.length ? items.map(rowHtml).join('') : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No move-outs coming up.</p>')+
       '</div>';
   }
@@ -1491,30 +1491,59 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       .reduce(function(s,c){ return s + c.remaining; }, 0);
     var billsOwed = propTenantIds.reduce(function(s,id){ return s + unpaidBillAllocationsFor(id).reduce(function(x,o){ return x + o.alloc.amount; }, 0); }, 0);
     var owed = round2(rentOwed + billsOwed);
-    function tile(label, value, tone){ return '<div class="ps-tile'+(tone?' '+tone:'')+'"><span>'+label+'</span><b>'+value+'</b></div>'; }
-    var tiles = tile('Rent / week', money(income)) +
-      (lease ? tile('Lease / week', money(lease)) + tile('Margin / week', (margin<0?'-':'')+money(Math.abs(margin)), margin<0?'bad':'good') : '') +
-      tile('Owed now', money(owed), owed>0.004?'bad':'good');
+    function tile(label, value, tone, go){
+      return go ? '<button type="button" class="ps-tile'+(tone?' '+tone:'')+'" onclick="'+go+'"><span>'+label+'</span><b>'+value+'</b></button>'
+        : '<div class="ps-tile'+(tone?' '+tone:'')+'"><span>'+label+'</span><b>'+value+'</b></div>';
+    }
+    function chip(cls, text, go){ return '<button type="button" class="bc-chip'+(cls?' '+cls:'')+'" onclick="'+go+'">'+text+'</button>'; }
+    var pid = '\''+p.id+'\'';
+    var tiles = tile('Rent / week', money(income), '', 'goPropertyInfo('+pid+',\'payments\')') +
+      (lease ? tile('Lease / week', money(lease), '', 'goPropertyInfo('+pid+',\'lease\')') +
+        tile('Margin / week', (margin<0?'-':'')+money(Math.abs(margin)), margin<0?'bad':'good', 'goPropertyInfo('+pid+',\'profits\')') : '') +
+      tile('Owed now', money(owed), owed>0.004?'bad':'good', 'goPropertyInfo('+pid+',\'payments\')');
     var chips = [];
     var nextLease = nextLeaseDueDate(p, TODAY);
     if (nextLease){
       var d = daysBetween(TODAY, nextLease);
-      chips.push(d < 0 ? '<span class="bc-chip bad">💳 Real estate overdue '+(-d)+' d</span>'
-        : '<span class="bc-chip'+(d<=3?' warn':'')+'">💳 Real estate '+(d===0?'due today':'in '+d+' d')+'</span>');
+      chips.push(chip(d < 0 ? 'bad' : (d<=3 ? 'warn' : ''), d < 0 ? '💳 Real estate overdue '+(-d)+' d' : '💳 Real estate '+(d===0?'due today':'in '+d+' d'),
+        'goPropertyInfo('+pid+',\'lease\')'));
     }
     var insp = upcomingRealEstateInspections(p.id)[0];
-    if (insp) chips.push('<span class="bc-chip'+(daysBetween(TODAY, insp.date)<=7?' warn':'')+'">🏢 Inspection '+shortDate(insp.date)+'</span>');
+    if (insp) chips.push(chip(daysBetween(TODAY, insp.date)<=7 ? 'warn' : '', '🏢 Inspection '+shortDate(insp.date), 'openReiModal(\''+insp.id+'\')'));
     var leaving = tenants.filter(function(t){ return t.propertyId===p.id && !tenantHasMovedOut(t) && (t.actualMoveOutDate || t.expectedMoveOutDate); });
-    if (leaving.length) chips.push('<span class="bc-chip warn">🚪 '+leaving.length+' move-out'+(leaving.length>1?'s':'')+' coming</span>');
+    if (leaving.length) chips.push(chip('warn', '🚪 '+leaving.length+' move-out'+(leaving.length>1?'s':'')+' coming',
+      leaving.length === 1 ? 'location.hash=\'#/tenants/'+leaving[0].id+'\'' : 'goPropertyInfo('+pid+',\'moveouts\')'));
     var overdueBills = bills.filter(function(b){ return b.propertyId===p.id && billEffectiveStatus(b)==='overdue'; }).length;
-    if (overdueBills) chips.push('<span class="bc-chip bad">🧾 '+overdueBills+' bill'+(overdueBills>1?'s':'')+' overdue</span>');
+    if (overdueBills) chips.push(chip('bad', '🧾 '+overdueBills+' bill'+(overdueBills>1?'s':'')+' overdue', 'goPropertyInfo('+pid+',\'bills\')'));
     if (p.leaseEndDate){
       var endDays = daysBetween(TODAY, p.leaseEndDate);
-      if (endDays <= 90) chips.push('<span class="bc-chip warn">📄 Lease ends '+shortDate(p.leaseEndDate)+'</span>');
+      if (endDays <= 90) chips.push(chip('warn', '📄 Lease ends '+shortDate(p.leaseEndDate), 'goPropertyInfo('+pid+',\'lease\')'));
     }
-    chips.push(p.wifiSsid ? '<span class="bc-chip ok">📶 Wi-Fi set</span>' : '<span class="bc-chip">📶 No Wi-Fi saved</span>');
+    chips.push(p.wifiSsid ? chip('ok', '📶 Wi-Fi set', 'goPropertyInfo('+pid+',\'wifi\')') : chip('', '📶 No Wi-Fi saved — add it', 'openPropertyModal('+pid+')'));
     return '<div class="ps-tiles">'+tiles+'</div><div class="bill-card-chips ps-chips">'+chips.join('')+'</div>';
   }
+
+  /** Where each number/label on a Properties card leads: the matching section of the property
+   *  page (scrolled into view), or the Payments / Bills / Profits page already filtered to it. */
+  function goPropertyInfo(propertyId, what){
+    if (what === 'payments'){
+      paymentsFilter = 'all'; paymentsPropertyFilter = propertyId; paymentsTenantFilter = 'all'; paymentsMonthFilter = 'all';
+      location.hash = '#/payments'; render(); window.scrollTo(0, 0); return;
+    }
+    if (what === 'bills'){
+      billsViewTab = 'list'; billsFilter = 'overdue'; billsPropertyFilter = propertyId;
+      location.hash = '#/bills'; render(); window.scrollTo(0, 0); return;
+    }
+    if (what === 'profits'){ location.hash = '#/profits'; return; }
+    if (what === 'moveouts'){ location.hash = '#/'; setTimeout(function(){ var el = document.getElementById('dash-moveouts'); if (el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }, 80); return; }
+    var target = { lease:'pp-lease', wifi:'pp-wifi' }[what];
+    location.hash = '#/properties/' + propertyId;
+    setTimeout(function(){
+      var el = target && document.getElementById(target);
+      if (el){ el.scrollIntoView({ behavior:'smooth', block:'start' }); el.classList.add('pp-flash'); setTimeout(function(){ el.classList.remove('pp-flash'); }, 1600); }
+    }, 80);
+  }
+  window.goPropertyInfo = goPropertyInfo;
 
   function renderProperties(){
     if (properties.length === 0){
@@ -1854,7 +1883,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="field-row"><span class="k">BSB</span><span class="v">'+esc(p.bankBsb)+'</span></div>'+
         '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(p.bankAccountNumber)+'</span></div>';
     }
-    return '<div class="card">'+ppHead('payments','Real estate','Landlord\'s lease')+'<div class="field-list">'+rows+'</div>'+
+    return '<div class="card" id="pp-lease">'+ppHead('payments','Real estate','Landlord\'s lease')+'<div class="field-list">'+rows+'</div>'+
       leaseDueListHtml(p)+
       leasePaymentHistoryHtml(p)+
       '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="openLeasePaymentModal(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
@@ -10843,7 +10872,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function wifiCardHtml(p){
     if (!p || !p.wifiSsid) return '';
     var hasPw = !!p.wifiPassword;
-    return '<div class="card wifi-card" data-prop="'+p.id+'">'+
+    return '<div class="card wifi-card" id="pp-wifi" data-prop="'+p.id+'">'+
       '<div class="pp-head">'+
         '<span class="wifi-signal" aria-hidden="true"><i></i><i></i><i></i></span>'+
         '<span class="pp-titles"><span class="wifi-kicker">Wi-Fi</span><span class="wifi-title">'+(isTenantRole() ? 'Get online at home' : 'Wi-Fi for tenants')+'</span></span>'+

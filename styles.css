@@ -1495,3 +1495,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 .ps-tile.bad b{color:var(--status-overdue);}
 .ps-chips{margin:0 0 6px;}
 .bc-chip.bad{color:var(--status-overdue);background:var(--status-overdue-bg);border-color:transparent;}
+button.ps-tile{font:inherit;color:inherit;text-align:left;cursor:pointer;transition:border-color .15s ease, transform .1s ease;}
+button.ps-tile:hover{border-color:var(--accent);}
+button.ps-tile:active, button.bc-chip:active{transform:scale(.97);}
+button.bc-chip{font-family:inherit;cursor:pointer;}
+button.bc-chip:hover{filter:brightness(.96);text-decoration:underline;}
+.pp-flash{animation:ppFlash 1.6s ease;}
+@keyframes ppFlash{0%,60%{box-shadow:0 0 0 3px var(--accent);}100%{box-shadow:var(--shadow);}}
+#pp-lease, #pp-wifi, #dash-moveouts{scroll-margin-top:90px;}
