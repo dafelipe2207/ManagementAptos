@@ -12710,6 +12710,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!el || el.tagName !== 'INPUT' || el.disabled || el.readOnly) return;
     var type = (el.getAttribute('type') || '').toLowerCase();
     if (type !== 'date' && type !== 'datetime-local' && type !== 'month' && type !== 'time') return;
+    // Date fields on desktop use the app's own calendar (see "Date fields" below).
+    if (type === 'date' && window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches) return;
     if (typeof el.showPicker !== 'function') return;
     try { el.showPicker(); } catch (err) { /* picker already open or not allowed — ignore */ }
   });
@@ -14725,6 +14727,104 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.addEventListener('resize', function(){ closePillMenu(false); });
   window.addEventListener('scroll', function(e){ if (pillMenuEl && !pillMenuEl.contains(e.target)) closePillMenu(false); }, true);
   window.addEventListener('hashchange', function(){ closePillMenu(false); });
+
+
+  /* ---------- Date fields: app-styled calendar on desktop ----------
+   * Same idea as the pill menus: the browser's own date picker (Windows/Chrome) is a plain grey
+   * box that doesn't match the app. With a mouse/trackpad, clicking a date field opens our glass
+   * calendar instead; typing the date still works, and phones keep their native picker. The
+   * <input type="date"> stays the source of truth (value + normal input/change events). */
+  var datePopEl = null, datePopInput = null, datePopMonth = null;
+  function isoOf(y, m, d){ return y + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0'); }
+  function closeDatePop(){
+    if (!datePopEl) return;
+    datePopEl.remove(); datePopEl = null;
+    if (datePopInput) datePopInput.classList.remove('dp-open');
+    datePopInput = null;
+  }
+  function setDateValue(input, iso){
+    input.value = iso;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function renderDatePop(){
+    var input = datePopInput, el = datePopEl; if (!input || !el) return;
+    var y = datePopMonth.y, m = datePopMonth.m;
+    var val = input.value, min = input.min || '', max = input.max || '';
+    var first = new Date(Date.UTC(y, m, 1)).getUTCDay(); // 0 = Sunday
+    var lead = (first + 6) % 7; // weeks start on Monday, like the Calendar page
+    var days = new Date(Date.UTC(y, m+1, 0)).getUTCDate();
+    var cells = '';
+    for (var i=0;i<lead;i++) cells += '<span class="dp-cell empty"></span>';
+    for (var d=1; d<=days; d++){
+      var iso = isoOf(y, m, d);
+      var off = (min && iso < min) || (max && iso > max);
+      cells += '<button type="button" class="dp-cell'+(iso===val?' sel':'')+(iso===TODAY?' today':'')+'" data-d="'+iso+'"'+(off?' disabled':'')+
+        ' aria-label="'+d+' '+CALENDAR_MONTH_NAMES[m]+' '+y+'"'+(iso===val?' aria-pressed="true"':'')+'>'+d+'</button>';
+    }
+    el.innerHTML =
+      '<div class="dp-head"><button type="button" class="dp-nav" data-nav="-1" aria-label="Previous month">‹</button>'+
+      '<span class="dp-title">'+CALENDAR_MONTH_NAMES[m]+' '+y+'</span>'+
+      '<button type="button" class="dp-nav" data-nav="1" aria-label="Next month">›</button></div>'+
+      '<div class="dp-week">'+['Mo','Tu','We','Th','Fr','Sa','Su'].map(function(w){ return '<span>'+w+'</span>'; }).join('')+'</div>'+
+      '<div class="dp-grid">'+cells+'</div>'+
+      '<div class="dp-foot">'+
+        (input.required ? '<span></span>' : '<button type="button" class="dp-link" data-act="clear">Clear</button>')+
+        '<button type="button" class="dp-link strong" data-act="today"'+(((min && TODAY<min)||(max && TODAY>max))?' disabled':'')+'>Today</button></div>';
+  }
+  function placeDatePop(){
+    var r = datePopInput.getBoundingClientRect(), el = datePopEl;
+    var w = el.offsetWidth, h = el.offsetHeight;
+    el.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+    var below = window.innerHeight - r.bottom - 12;
+    el.style.top = (below >= h || below >= r.top ? r.bottom + 6 : Math.max(12, r.top - h - 6)) + 'px';
+  }
+  function openDatePop(input){
+    closeDatePop(); if (typeof closePillMenu === 'function') closePillMenu(false);
+    if (input.disabled || input.readOnly) return;
+    var base = /^\d{4}-\d{2}-\d{2}$/.test(input.value) ? input.value : (input.min && TODAY < input.min ? input.min : TODAY);
+    datePopMonth = { y: parseInt(base.slice(0,4),10), m: parseInt(base.slice(5,7),10)-1 };
+    var el = document.createElement('div');
+    el.className = 'date-pop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Choose a date');
+    document.body.appendChild(el);
+    datePopEl = el; datePopInput = input; input.classList.add('dp-open');
+    renderDatePop(); placeDatePop();
+    el.addEventListener('mousedown', function(e){ e.preventDefault(); }); // keep focus in the field
+    el.addEventListener('click', function(e){
+      var nav = e.target.closest('[data-nav]');
+      if (nav){ var mm = datePopMonth.m + parseInt(nav.getAttribute('data-nav'),10);
+        datePopMonth = { y: datePopMonth.y + Math.floor(mm/12), m: ((mm%12)+12)%12 }; renderDatePop(); return; }
+      var day = e.target.closest('.dp-cell[data-d]');
+      if (day && !day.disabled){ var inp = datePopInput; setDateValue(inp, day.getAttribute('data-d')); closeDatePop(); return; }
+      var act = e.target.closest('[data-act]');
+      if (act && !act.disabled){ var inp2 = datePopInput;
+        setDateValue(inp2, act.getAttribute('data-act')==='today' ? TODAY : ''); closeDatePop(); }
+    });
+  }
+  function dateFieldFine(t){ return t && t.matches && t.matches('input[type="date"]') && window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches; }
+  document.addEventListener('mousedown', function(e){
+    var t = e.target;
+    if (dateFieldFine(t)){
+      e.preventDefault(); // no native picker
+      t.focus({ preventScroll: true });
+      if (datePopInput === t) closeDatePop(); else openDatePop(t);
+      return;
+    }
+    if (datePopEl && !datePopEl.contains(t)) closeDatePop();
+  }, true);
+  window.addEventListener('keydown', function(e){
+    if (datePopEl && e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); closeDatePop(); return; }
+    if (datePopEl && e.key === 'Tab') closeDatePop();
+    if (dateFieldFine(e.target) && (e.key === ' ' || (e.altKey && e.key === 'ArrowDown'))){ e.preventDefault(); openDatePop(e.target); }
+  }, true);
+  document.addEventListener('input', function(e){ // typing in the field moves the open calendar along
+    if (datePopEl && e.target === datePopInput && /^\d{4}-\d{2}-\d{2}$/.test(datePopInput.value)){
+      datePopMonth = { y: parseInt(datePopInput.value.slice(0,4),10), m: parseInt(datePopInput.value.slice(5,7),10)-1 }; renderDatePop();
+    }
+  });
+  window.addEventListener('resize', closeDatePop);
+  window.addEventListener('scroll', function(e){ if (datePopEl && !datePopEl.contains(e.target)) closeDatePop(); }, true);
+  window.addEventListener('hashchange', closeDatePop);
 
   requireConfirm('rulesDeleteRule', 'Delete this rule?', function(pid, si, ri){
     var r = rulesDraftFor(pid).sections[si].rules[ri];
