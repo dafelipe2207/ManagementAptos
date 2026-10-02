@@ -1960,6 +1960,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.toggleTimelineAll = toggleTimelineAll;
 
   function tenantsTimelineHtml(list){
+    // Only tenants who are active (living there now, or moving in soon) — not the ones who left.
+    list = list.filter(function(t){ return t.isActive !== false && !tenantHasMovedOut(t); });
     if (!list.length) return '';
     var endOf = function(t){ return t.actualMoveOutDate || t.expectedMoveOutDate || TODAY; };
     var fullStart = list.reduce(function(min, t){ return t.moveInDate < min ? t.moveInDate : min; }, list[0].moveInDate);
@@ -2074,11 +2076,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<span style="font-size:11.5px;color:var(--text-faint);margin-left:auto;">'+rangeLabel+'</span></div>';
     return '<div class="card">'+
       '<h2 style="margin-bottom:2px;">Tenancy timeline</h2>'+
-      '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">One row per tenant, by property. Each bar is their stay, from move-in to move-out (or today, if still living there).</p>'+
+      '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">Active tenants only, one row each, by property. Each bar is their stay, from move-in to today (or their move-out date, if they gave one).</p>'+
       controls+
       (propRows || '<p style="font-size:12.5px;color:var(--text-faint);margin:6px 0;">No one was living there in these months.</p>')+
       '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
-      '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') + legendItem('var(--status-move)','Moved out') +
+      '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') +
         '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
         '<span style="width:4px;height:11px;border-radius:2px;background:#0b3d2c;display:inline-block;box-shadow:0 0 0 1px #ffffff, 0 0 0 2px var(--border);"></span>Rent paid until</span>'+
         '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
