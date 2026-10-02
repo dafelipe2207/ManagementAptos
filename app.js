@@ -369,8 +369,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /* Receipt the administrator attaches while recording a rent payment (Pay / Partial modals). */
   var adminPayReceiptPath = null, adminPayReceiptStatusId = null;
+  var adminPayReceiptUpload = null; // the upload in progress, if the photo was picked moments ago
+  /** The receipt picked in the open "Mark as paid" window. If it's still uploading when Confirm
+   *  is tapped (big photo, slow phone signal) this WAITS for it — before, the payment was saved
+   *  without the receipt and the upload finished into nowhere. */
+  async function takeAdminPayReceipt(){
+    if (adminPayReceiptUpload){ try { await adminPayReceiptUpload; } catch(_e){} }
+    var r = adminPayReceiptPath;
+    adminPayReceiptPath = null; adminPayReceiptUpload = null;
+    return r;
+  }
   function resetAdminPayReceipt(statusId){
-    adminPayReceiptPath = null; adminPayReceiptStatusId = statusId;
+    adminPayReceiptPath = null; adminPayReceiptUpload = null; adminPayReceiptStatusId = statusId;
     var el = document.getElementById(statusId); if (el) el.textContent = 'Photo or PDF of the transfer/receipt';
   }
   function pickAdminPayReceipt(statusId){
@@ -389,7 +399,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var kind = charge ? 'rent' : 'bill';
     if (status) status.textContent = 'Uploading…';
     try {
-      adminPayReceiptPath = await storageService.uploadReceipt((ref ? ref + '-' : '') + kind, file);
+      adminPayReceiptUpload = storageService.uploadReceipt((ref ? ref + '-' : '') + kind, file);
+      adminPayReceiptPath = await adminPayReceiptUpload;
       if (status) status.textContent = '✓ ' + (file.name || 'Receipt attached');
     } catch(err){
       adminPayReceiptPath = null;
@@ -424,7 +435,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var chargeId = chargePaidModalChargeId;
     var dateInput = document.getElementById('charge-paid-modal-date');
     var date = dateInput.value || TODAY;
-    var receipt = adminPayReceiptPath; adminPayReceiptPath = null;
+    var receipt = await takeAdminPayReceipt(); // waits for an upload still in progress
     closeChargePaidModal();
     if (!chargeId) return;
     await markChargeAsPaid(chargeId, date, receipt);
@@ -462,7 +473,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var amount = parseFloat(input.value);
     var dateInput = document.getElementById('partial-modal-date');
     var date = (dateInput && dateInput.value) ? dateInput.value : TODAY;
-    var receipt = adminPayReceiptPath; adminPayReceiptPath = null;
+    var receipt = await takeAdminPayReceipt(); // waits for an upload still in progress
     closePartialModal();
     if (!charge || !isFinite(amount) || amount <= 0) return;
     if (amount > charge.remaining) amount = charge.remaining; // overpayment is not allowed
@@ -5380,7 +5391,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var target = allocPaidModalTarget;
     var dateInput = document.getElementById('alloc-paid-modal-date');
     var date = dateInput.value || TODAY;
-    var receipt = adminPayReceiptPath; adminPayReceiptPath = null;
+    var receipt = await takeAdminPayReceipt(); // waits for an upload still in progress
     closeAllocPaidModal();
     if (!target) return;
     await markAllocationPaid(target.billId, target.tenantId, date);
