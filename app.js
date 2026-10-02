@@ -1161,6 +1161,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<details class="card collapsible-card"'+(open?' open':'')+' ontoggle="__setCC(\''+key+'\',this.open)">'+
       '<summary><span>'+title+'</span>'+(hint?'<span class="cc-hint">'+hint+'</span>':'')+'</summary>'+bodyHtml+'</details>';
   }
+  /** Switch + dropdowns on ONE line on wide screens (wraps naturally on phones). */
+  function filterBarHtml(seg, toolbar){ return (seg||toolbar) ? '<div class="filter-bar">'+(seg||'')+(toolbar||'')+'</div>' : ''; }
   function toolbarHtml(parts){ parts = parts.filter(Boolean); return parts.length ? '<div class="bills-toolbar page-toolbar">'+parts.join('')+'</div>' : ''; }
 
   /** Page title with a coloured icon badge — used by the Property Operations areas so each one
@@ -2003,10 +2005,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var all = tenants.filter(function(t){ return t.rentAmount>0; });
     var inactiveCount = all.filter(function(t){ return t.isActive===false; }).length;
     var paying = all.filter(function(t){ return tenantsShowInactive ? t.isActive===false : t.isActive!==false; });
-    var header = pageHeadAdd('Tenants', 'Everyone renting from you, and their lease details.', 'Add tenant', 'openTenantModal()')+
-      (inactiveCount>0 ? segHtml([['active','Active'],['inactive','Inactive ('+inactiveCount+')']], tenantsShowInactive?'inactive':'active', '__tenantsSeg') : '');
+    var header = pageHeadAdd('Tenants', 'Everyone renting from you, and their lease details.', 'Add tenant', 'openTenantModal()');
+    var tenantsSeg = inactiveCount>0 ? segHtml([['active','Active'],['inactive','Inactive <span class="seg-count">'+inactiveCount+'</span>']], tenantsShowInactive?'inactive':'active', '__tenantsSeg') : '';
     // One property dropdown (same as Bills) — filters the list and groups the cards by property.
-    var propertyTabsHtml = properties.length===0 ? '' : toolbarHtml([pillSelectHtml('🏠', 'Property', optionsHtml(propertyOptionList(), tenantsPropertyFilter), 'setTenantsPropertyFilter(this.value)')]);
+    var propertyTabsHtml = filterBarHtml(tenantsSeg, properties.length===0 ? '' : toolbarHtml([pillSelectHtml('🏠', 'Property', optionsHtml(propertyOptionList(), tenantsPropertyFilter), 'setTenantsPropertyFilter(this.value)')]));
     if (tenantsPropertyFilter !== 'all'){
       paying = paying.filter(function(t){ return t.propertyId === tenantsPropertyFilter; });
     }
@@ -3949,7 +3951,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       ? '<div class="moved-out-owing">💸 '+movedOutOwing.length+' moved-out tenant'+(movedOutOwing.length>1?'s still owe':' still owes')+' money ('+movedOutOwing.map(function(t){ return esc(t.fullName); }).join(', ')+'). '+
         '<button type="button" class="text-link" onclick="setPaymentsTenantStatusFilter(\'moved_out\')">View moved-out tenants</button></div>'
       : '';
-    return chipsHtml + tenantFilterHtml + staffRentReportsHtml() + statHtml + owingNote + rows;
+    // Payments has 4 dropdowns + sort: switch on its own line, dropdowns on the next (sort pinned right).
+    return chipsHtml + filterBarHtml('', tenantFilterHtml) + staffRentReportsHtml() + statHtml + owingNote + rows;
   }
 
   function renderPayments(){
@@ -10348,7 +10351,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '</div>'+assignHtml+'</div>';
     }).join('');
     return pageHeadAdd('Users', 'Every account and its role. Only a Super Admin sees this page.', 'Create user', 'openUserModal()') +
-      tabsHtml + usersPropertyFilterHtml +
+      filterBarHtml(tabsHtml, usersPropertyFilterHtml) +
       (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No '+ (USERS_TABS.find(function(tb){return tb[0]===usersViewTab;})||['','users'])[1].toLowerCase() +' yet.</p></div>');
   }
 
@@ -10873,7 +10876,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<span class="audit-main"><span class="audit-who">'+esc(w.name)+' '+badge(rb[0], rb[1])+'</span>'+
         '<span class="audit-what">'+esc(auditDescribe(r))+'</span></span></div>';
     }).join('');
-    return header + chips + selects + '<div class="card">'+
+    return header + filterBarHtml(chips, selects) + '<div class="card">'+
       (list ? '<div class="audit-list">'+list+'</div>' : '<p style="font-size:13px;color:var(--text-faint);margin:6px 0 0;">Nothing matches these filters.</p>')+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:10px 0 0;">Showing the latest '+auditLogRows.length+' entries.</p></div>';
   }

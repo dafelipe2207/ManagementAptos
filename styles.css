@@ -1842,3 +1842,32 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
 .bills-back{margin:0 0 14px;}
 .bills-back{align-self:flex-start;width:auto;margin:0 0 8px;min-height:34px;padding:0 12px;font-size:13px;}
 .collapsible-card > p{margin-left:18px !important;margin-right:18px !important;}
+
+/* ===== Filters v2: compact pills that fit their text; switch + pills share one line on wide screens ===== */
+.page-toolbar .pill-select,.bills-toolbar .pill-select{flex:0 0 auto;}
+.pill-select select{width:auto !important;max-width:260px;}
+.filter-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 18px;}
+.filter-bar > .seg.seg-wide{margin:0;width:auto;max-width:none;flex:0 0 auto;}
+.filter-bar > .seg.seg-wide .seg-btn{flex:0 0 auto;padding:7px 16px;}
+.filter-bar > .page-toolbar{display:contents;}
+.filter-bar .pill-btn:last-child{margin-left:auto;}
+.page-toolbar,.bills-toolbar{gap:10px;}
+.section-label{margin-top:8px;}
+.section-label + .stat-grid{margin-top:0;}
+@media (max-width:640px){
+  .filter-bar{gap:8px;}
+  .filter-bar > .seg.seg-wide{flex:1 1 100%;}
+  .filter-bar > .seg.seg-wide .seg-btn{flex:1;padding:7px 8px;}
+  .page-toolbar .pill-select,.bills-toolbar .pill-select{flex:1 1 150px;min-width:0;}
+  .pill-select select{width:0 !important;flex:1;max-width:none;}
+  .filter-bar .pill-btn:last-child{margin-left:0;}
+}
+/* Pills size to their CURRENT text (not the longest option) where supported; long names ellipsize */
+.pill-select select{field-sizing:content;max-width:220px;text-overflow:ellipsis;}
+/* Section labels sit close to the tiles they title (the page column uses a 22px gap) */
+.content-inner > .section-label{margin:4px 2px -12px;}
+@media (max-width:640px){
+  .pill-select select{field-sizing:fixed;}
+  .filter-bar .pill-btn,.page-toolbar .pill-btn{flex:1 1 150px;justify-content:center;}
+}
+.seg.seg-wide + .filter-bar{margin-top:-6px;}
