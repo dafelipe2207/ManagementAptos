@@ -1376,7 +1376,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.viewTenantPayments = viewTenantPayments;
 
   function roomsOf(propertyId){ return rooms.filter(function(r){ return r.propertyId===propertyId; }); }
-  function currentTenantOf(roomId){ return tenants.find(function(t){ return t.roomId===roomId; }); }
+  /** Who is in this room: the tenant living there today; else the next one moving in; else the
+   *  most recent one. (It used to return the FIRST tenant ever recorded for the room — after a
+   *  turnover that showed the old, moved-out tenant, e.g. Ezzi instead of Alvise in Belmont Room 3.) */
+  function currentTenantOf(roomId){
+    var list = tenants.filter(function(t){ return t.roomId===roomId; });
+    if (!list.length) return undefined;
+    var now = list.filter(function(t){ return !tenantHasMovedOut(t) && (t.moveInDate||'') <= TODAY; });
+    if (now.length) return now.sort(function(a,b){ return (b.moveInDate||'').localeCompare(a.moveInDate||''); })[0];
+    var next = list.filter(function(t){ return !tenantHasMovedOut(t); });
+    if (next.length) return next.sort(function(a,b){ return (a.moveInDate||'').localeCompare(b.moveInDate||''); })[0];
+    return list.sort(function(a,b){ return (b.moveInDate||'').localeCompare(a.moveInDate||''); })[0];
+  }
   /** A room counts as occupied while ANY tenant assigned to it hasn't moved out — checks every
    *  tenant row for the room, not just the first one ever recorded (a room that turned over has
    *  the old, moved-out tenant listed first). */
@@ -1533,22 +1544,34 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var current = tenants.filter(function(t){ return t.propertyId===p.id && t.rentAmount>0 && !tenantHasMovedOut(t) && t.moveInDate <= TODAY; });
     var income = round2(current.reduce(function(s,t){ return s + normalizeToWeekly(t.rentAmount, t.rentFrequency); }, 0));
     var lease = round2(propertyWeeklyLeaseCost(p));
-    var margin = round2(income - lease);
+    // Same profit as the Profits page: rent − bills you pay that are included in rent − lease.
+    var pb = propertyProfitBreakdown(p);
+    var includedWeekly = round2(pb.weeklyIncludedBillsTotal || 0);
+    var margin = round2(income - includedWeekly - lease);
     var propTenantIds = tenants.filter(function(t){ return t.propertyId===p.id; }).map(function(t){ return t.id; });
     var rentOwed = rentCharges.filter(function(c){ return propTenantIds.indexOf(c.tenantId) > -1 && c.status!=='paid' && c.periodStart <= TODAY; })
       .reduce(function(s,c){ return s + c.remaining; }, 0);
-    var billsOwed = propTenantIds.reduce(function(s,id){ return s + unpaidBillAllocationsFor(id).reduce(function(x,o){ return x + o.alloc.amount; }, 0); }, 0);
+    // "Owed now" = only what is already due (due date today or earlier); bill shares that aren't
+    // due yet are shown separately underneath instead of being added in.
+    var billsOwed = 0, billsLater = 0;
+    propTenantIds.forEach(function(id){ unpaidBillAllocationsFor(id).forEach(function(o){
+      if (!o.bill.dueDate || o.bill.dueDate <= TODAY) billsOwed += o.alloc.amount; else billsLater += o.alloc.amount;
+    }); });
     var owed = round2(rentOwed + billsOwed);
-    function tile(label, value, tone, go){
-      return go ? '<button type="button" class="ps-tile'+(tone?' '+tone:'')+'" onclick="'+go+'"><span>'+label+'</span><b>'+value+'</b></button>'
-        : '<div class="ps-tile'+(tone?' '+tone:'')+'"><span>'+label+'</span><b>'+value+'</b></div>';
+    billsLater = round2(billsLater);
+    function tile(label, value, tone, go, note){
+      var inner = '<span>'+label+'</span><b>'+value+'</b>'+(note?'<small>'+note+'</small>':'');
+      return go ? '<button type="button" class="ps-tile'+(tone?' '+tone:'')+'" onclick="'+go+'">'+inner+'</button>'
+        : '<div class="ps-tile'+(tone?' '+tone:'')+'">'+inner+'</div>';
     }
     function chip(cls, text, go){ return '<button type="button" class="bc-chip'+(cls?' '+cls:'')+'" onclick="'+go+'">'+text+'</button>'; }
     var pid = '\''+p.id+'\'';
     var tiles = tile('Rent / week', money(income), '', 'goPropertyInfo('+pid+',\'payments\')') +
       (lease ? tile('Lease / week', money(lease), '', 'goPropertyInfo('+pid+',\'lease\')') +
-        tile('Margin / week', (margin<0?'-':'')+money(Math.abs(margin)), margin<0?'bad':'good', 'goPropertyInfo('+pid+',\'profits\')') : '') +
-      tile('Owed now', money(owed), owed>0.004?'bad':'good', 'goPropertyInfo('+pid+',\'payments\')');
+        tile('Profit / week', (margin<0?'-':'')+money(Math.abs(margin)), margin<0?'bad':'good', 'goPropertyInfo('+pid+',\'profits\')',
+          includedWeekly>0 ? 'after '+money(includedWeekly)+' included bills' : '') : '') +
+      tile('Owed now', money(owed), owed>0.004?'bad':'good', 'goPropertyInfo('+pid+',\'payments\')',
+        billsLater>0 ? '+'+money(billsLater)+' not due yet' : '');
     var chips = [];
     var nextLease = nextLeaseDueDate(p, TODAY);
     if (nextLease){
@@ -1556,6 +1579,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       chips.push(chip(d < 0 ? 'bad' : (d<=3 ? 'warn' : ''), d < 0 ? '💳 Real estate overdue '+(-d)+' d' : '💳 Real estate '+(d===0?'due today':'in '+d+' d'),
         'goPropertyInfo('+pid+',\'lease\')'));
     }
+    if (!lease) chips.push(chip('warn', '💳 Lease amount missing — add it', 'goPropertyInfo('+pid+',\'lease\')'));
     var insp = upcomingRealEstateInspections(p.id)[0];
     if (insp) chips.push(chip(daysBetween(TODAY, insp.date)<=7 ? 'warn' : '', '🏢 Inspection '+shortDate(insp.date), 'openReiModal(\''+insp.id+'\')'));
     var leaving = tenants.filter(function(t){ return t.propertyId===p.id && !tenantHasMovedOut(t) && (t.actualMoveOutDate || t.expectedMoveOutDate); });

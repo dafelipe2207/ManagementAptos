@@ -1871,3 +1871,4 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
   .filter-bar .pill-btn,.page-toolbar .pill-btn{flex:1 1 150px;justify-content:center;}
 }
 .seg.seg-wide + .filter-bar{margin-top:-6px;}
+.ps-tile small{font-size:10.5px;color:var(--text-faint);font-weight:500;line-height:1.25;}
