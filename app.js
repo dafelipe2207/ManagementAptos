@@ -1385,7 +1385,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   function propertyActivityTimelineCardHtml(propertyId){
-    return '<div class="card"><h2>Activity</h2>'+activityTimelineHtml({ propertyId: propertyId })+'</div>';
+    return '<div class="pp"><div class="card">'+ppHead('overview','History','Activity')+activityTimelineHtml({ propertyId: propertyId })+'</div></div>';
   }
 
   function tenantActivityTimelineCardHtml(tenantId){
@@ -1815,7 +1815,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="field-row"><span class="k">BSB</span><span class="v">'+esc(p.bankBsb)+'</span></div>'+
         '<div class="field-row"><span class="k">Account number</span><span class="v">'+esc(p.bankAccountNumber)+'</span></div>';
     }
-    return '<div class="card"><h2>Landlord\'s lease (payment to the real estate)</h2><div class="field-list">'+rows+'</div>'+
+    return '<div class="card">'+ppHead('payments','Real estate','Landlord\'s lease')+'<div class="field-list">'+rows+'</div>'+
       leaseDueListHtml(p)+
       leasePaymentHistoryHtml(p)+
       '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="openLeasePaymentModal(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
@@ -1845,7 +1845,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No rooms yet — add the first one to get started.</p>'
       : propRooms.map(function(r){ return roomLine(r, p.id); }).join('');
 
-    return backLink('#/properties', 'Properties') +
+    return '<div class="pp">' + backLink('#/properties', 'Properties') +
       '<div class="detail-head"><div><h1 class="page-title">'+esc(p.name)+'</h1>'+
       '<p class="page-sub">'+esc(p.address)+'</p></div>'+
       '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
@@ -1856,7 +1856,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">🏢 Schedule inspection</button>'+
       (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
       '</div>'+
-      '<div class="card"><div class="field-list">'+
+      '<div class="card">'+ppHead('building','Property','Details')+'<div class="field-list">'+
       '<div class="field-row"><span class="k">Bedrooms</span><span class="v">'+p.bedrooms+'</span></div>'+
       '<div class="field-row"><span class="k">Bathrooms</span><span class="v">'+p.bathrooms+'</span></div>'+
       '<div class="field-row"><span class="k">Parking</span><span class="v" style="font-weight:400;">'+parkingSummary(p)+'</span></div>'+
@@ -1866,16 +1866,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       wifiCardHtml(p)+
       leasePaymentCardHtml(p)+
       propertyInspectionHistoryHtml(p)+
-      '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Trash collection</h2>'+
-      '<button class="mini-btn primary" onclick="openTrashModal(\''+p.id+'\')">+ Add</button></div>'+
+      '<div class="card">'+ppHead('trash','Bins','Trash collection','<button class="mini-btn primary" onclick="openTrashModal(\''+p.id+'\')">+ Add</button>')+
       trashScheduleListHtml(p.id, true)+'</div>'+
-      '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Rooms</h2>'+
-      '<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">+ Add room</button></div>'+roomsHtml+'</div>'+
-      '<div class="card"><h2>Bills</h2>'+
+      '<div class="card">'+ppHead('tenants','Rooms','Rooms ('+propRooms.length+')','<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">+ Add room</button>')+roomsHtml+'</div>'+
+      '<div class="card">'+ppHead('receipt','Bills','Bills ('+propBills.length+')')+
       (propBills.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No bills recorded for this property yet.</p>'
         : propBills.map(billCard).join(''))+
-      '</div>';
+      '</div></div>';
   }
 
   var tenantsShowInactive = false; // toggle: only active tenants are shown by default
@@ -10040,8 +10038,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           (!isUpcoming && !i.outcome && i.status!=='cancelled' ? '<div class="rei-hist-sub">Add how it went →</div>' : '')+
         '</div></div>';
     }
-    return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">Real estate inspections</h2>'+
-      '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">+ Schedule</button></div>'+
+    return '<div class="card">'+ppHead('inspect','Inspections','Real estate inspections',
+      '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">+ Schedule</button>')+
       (upcoming.length ? '' : '<p style="font-size:13px;color:var(--text-dim);margin:0;">No upcoming inspections. Schedule the next one.</p>')+
       (upcoming.length ? '<div class="rei-hist-group">Upcoming</div>'+upcoming.map(function(i){ return item(i, true); }).join('') : '')+
       (past.length ? '<div class="rei-hist-group">History</div>'+past.map(function(i){ return item(i, false); }).join('') : '')+
@@ -10790,6 +10788,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!names.length) return '';
     return '<div class="field-row"><span class="k">Included in your rent</span><span class="v">'+esc(names.join(', '))+'</span></div>';
   }
+  /** Card header used across the property page (same look as the Wi-Fi card): an icon tile, a
+   *  small coloured kicker, a bold title and optional buttons on the right. */
+  function ppHead(icon, kicker, title, actionsHtml){
+    return '<div class="pp-head"><span class="pp-ic" aria-hidden="true">'+svg(icon)+'</span>'+
+      '<span class="pp-titles"><span class="wifi-kicker">'+kicker+'</span><span class="wifi-title">'+title+'</span></span>'+
+      (actionsHtml ? '<span class="pp-actions">'+actionsHtml+'</span>' : '')+'</div>';
+  }
+
   /* ============ Wi-Fi card (tenant dashboard + property page) ============
    * Network name + password with show/hide and one-tap copy, and a QR code another phone/laptop
    * can scan with its camera to join without typing. Only shown when the property has a network. */
@@ -10799,9 +10805,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!p || !p.wifiSsid) return '';
     var hasPw = !!p.wifiPassword;
     return '<div class="card wifi-card" data-prop="'+p.id+'">'+
-      '<div class="wifi-head">'+
+      '<div class="pp-head">'+
         '<span class="wifi-signal" aria-hidden="true"><i></i><i></i><i></i></span>'+
-        '<span><span class="wifi-kicker">Wi-Fi</span><span class="wifi-title">'+(isTenantRole() ? 'Get online at home' : 'Wi-Fi for tenants')+'</span></span>'+
+        '<span class="pp-titles"><span class="wifi-kicker">Wi-Fi</span><span class="wifi-title">'+(isTenantRole() ? 'Get online at home' : 'Wi-Fi for tenants')+'</span></span>'+
       '</div>'+
       '<div class="wifi-field"><span class="wifi-label">Network</span>'+
         '<span class="wifi-value">'+esc(p.wifiSsid)+'</span>'+
