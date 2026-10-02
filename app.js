@@ -2008,8 +2008,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var left = pct(stepDateIso(until, 1));
       var behind = until < TODAY;
       return '<div title="'+esc(t.fullName)+': rent paid until '+shortDate(until)+(behind ? ' (behind)' : '')+'" '+
-        'style="position:absolute;top:0;bottom:0;left:calc('+left+'% - 2px);width:4px;border-radius:2px;background:#4ade80;'+
-        'box-shadow:0 0 0 1.5px var(--bg-elevated);z-index:2;pointer-events:none;"></div>';
+        'style="position:absolute;top:0;bottom:0;left:calc('+left+'% - 2px);width:4px;border-radius:2px;background:#0b3d2c;'+
+        'box-shadow:0 0 0 1.5px #ffffff;z-index:2;pointer-events:none;"></div>';
     }
     function barHtml(t){
       var end = endOf(t);
@@ -2079,7 +2079,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
       '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') + legendItem('var(--status-move)','Moved out') +
         '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
-        '<span style="width:4px;height:11px;border-radius:2px;background:#4ade80;display:inline-block;box-shadow:0 0 0 1px var(--border);"></span>Rent paid until</span>'+
+        '<span style="width:4px;height:11px;border-radius:2px;background:#0b3d2c;display:inline-block;box-shadow:0 0 0 1px #ffffff, 0 0 0 2px var(--border);"></span>Rent paid until</span>'+
         '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
         '<span style="width:2px;height:11px;background:var(--text);opacity:.55;display:inline-block;"></span>Today</span></div>'+
       '</div>';
