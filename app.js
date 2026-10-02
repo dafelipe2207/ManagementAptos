@@ -14642,6 +14642,90 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   requireConfirm('unmarkBillAdminPaid', 'Mark as unpaid to provider?', 'The payment to the provider will be removed and the bill will show as not paid.', 'Mark as unpaid');
   requireConfirm('removeTenantDocument', 'Delete this document?', 'The document will be deleted. This can\'t be undone.');
   requireConfirm('removeAppPin', 'Remove the app PIN?', 'The app will no longer ask for a PIN on this device.', 'Remove PIN');
+
+  /* ---------- Pill dropdowns: app-styled menu on desktop (mouse/trackpad) ----------
+   * The browser draws a native <select> list itself (plain white/grey box on Windows) — it can't be
+   * styled to match the app. On devices with a mouse we open our own glass menu instead; phones
+   * keep the native picker (the iOS wheel already looks right there). The <select> stays the source
+   * of truth: picking an item sets its value and fires its normal onchange. */
+  var pillMenuEl = null, pillMenuSel = null;
+  function pillMenuFine(){ return window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches; }
+  function closePillMenu(focusBack){
+    if (!pillMenuEl) return;
+    pillMenuEl.remove(); pillMenuEl = null;
+    var sel = pillMenuSel; pillMenuSel = null;
+    if (sel){ var lab = sel.closest('.pill-select'); if (lab) lab.classList.remove('open'); if (focusBack && document.body.contains(sel)) sel.focus(); }
+  }
+  function openPillMenu(sel){
+    closePillMenu();
+    if (sel.disabled) return;
+    var lab = sel.closest('.pill-select') || sel;
+    var r = lab.getBoundingClientRect();
+    var menu = document.createElement('div');
+    menu.className = 'pill-menu'; menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', sel.getAttribute('aria-label') || 'Options');
+    var opts = Array.prototype.slice.call(sel.options);
+    menu.innerHTML = (opts.length > 8 ? '<div class="pm-search"><input type="text" placeholder="Search…" aria-label="Search options"></div>' : '') +
+      '<div class="pm-list">' + opts.map(function(o, i){
+        var on = o.selected;
+        return '<button type="button" role="option" aria-selected="'+on+'" class="pm-item'+(on?' on':'')+(o.disabled?' dis':'')+'" data-i="'+i+'"'+(o.disabled?' disabled':'')+'>'+
+          '<span class="pm-check" aria-hidden="true">'+(on?'✓':'')+'</span><span class="pm-label">'+esc(o.textContent)+'</span></button>';
+      }).join('') + '</div>';
+    document.body.appendChild(menu);
+    var w = Math.max(r.width, 200);
+    var left = Math.min(r.left, window.innerWidth - w - 12);
+    menu.style.minWidth = w + 'px';
+    menu.style.left = Math.max(12, left) + 'px';
+    var below = window.innerHeight - r.bottom - 12, above = r.top - 12;
+    var h = Math.min(menu.offsetHeight, 360);
+    if (below >= h || below >= above){ menu.style.top = (r.bottom + 6) + 'px'; menu.style.maxHeight = Math.max(160, below - 6) + 'px'; }
+    else { menu.style.bottom = (window.innerHeight - r.top + 6) + 'px'; menu.style.maxHeight = Math.max(160, above - 6) + 'px'; }
+    lab.classList.add('open');
+    pillMenuEl = menu; pillMenuSel = sel;
+    function choose(i){
+      var changed = sel.selectedIndex !== i;
+      sel.selectedIndex = i;
+      closePillMenu(true);
+      if (changed) sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    menu.addEventListener('click', function(e){
+      var b = e.target.closest('.pm-item'); if (!b || b.disabled) return;
+      choose(parseInt(b.getAttribute('data-i'), 10));
+    });
+    var search = menu.querySelector('.pm-search input');
+    if (search) search.addEventListener('input', function(){
+      var q = search.value.trim().toLowerCase();
+      menu.querySelectorAll('.pm-item').forEach(function(b){ b.hidden = q && b.textContent.toLowerCase().indexOf(q) === -1; });
+    });
+    menu.addEventListener('keydown', function(e){
+      var items = Array.prototype.filter.call(menu.querySelectorAll('.pm-item'), function(b){ return !b.hidden && !b.disabled; });
+      var idx = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown'){ e.preventDefault(); (items[idx+1] || items[0]).focus(); }
+      else if (e.key === 'ArrowUp'){ e.preventDefault(); (items[idx-1] || items[items.length-1]).focus(); }
+      else if (e.key === 'Escape'){ e.preventDefault(); closePillMenu(true); }
+      else if (e.key === 'Tab'){ closePillMenu(false); }
+    });
+    var current = menu.querySelector('.pm-item.on') || menu.querySelector('.pm-item');
+    if (search) search.focus(); else if (current) current.focus();
+    if (current && current.scrollIntoView) current.scrollIntoView({ block: 'nearest' });
+  }
+  document.addEventListener('mousedown', function(e){
+    var sel = e.target.closest && e.target.closest('.pill-select select');
+    if (sel && pillMenuFine()){
+      e.preventDefault();
+      if (pillMenuSel === sel){ closePillMenu(true); return; }
+      openPillMenu(sel); return;
+    }
+    if (pillMenuEl && !pillMenuEl.contains(e.target)) closePillMenu(false);
+  }, true);
+  document.addEventListener('keydown', function(e){
+    var sel = e.target && e.target.matches && e.target.matches('.pill-select select') ? e.target : null;
+    if (sel && pillMenuFine() && (e.key === 'Enter' || e.key === ' ' || (e.altKey && e.key === 'ArrowDown'))){ e.preventDefault(); openPillMenu(sel); }
+  });
+  window.addEventListener('resize', function(){ closePillMenu(false); });
+  window.addEventListener('scroll', function(e){ if (pillMenuEl && !pillMenuEl.contains(e.target)) closePillMenu(false); }, true);
+  window.addEventListener('hashchange', function(){ closePillMenu(false); });
+
   requireConfirm('rulesDeleteRule', 'Delete this rule?', function(pid, si, ri){
     var r = rulesDraftFor(pid).sections[si].rules[ri];
     return (r && (r.text||'').trim()) ? '"' + r.text.trim().slice(0, 120) + '" will be removed when you publish.' : null;
