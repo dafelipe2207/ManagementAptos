@@ -1503,3 +1503,98 @@ button.bc-chip:hover{filter:brightness(.96);text-decoration:underline;}
 .pp-flash{animation:ppFlash 1.6s ease;}
 @keyframes ppFlash{0%,60%{box-shadow:0 0 0 3px var(--accent);}100%{box-shadow:var(--shadow);}}
 #pp-lease, #pp-wifi, #dash-moveouts{scroll-margin-top:90px;}
+
+/* =====================================================================================
+   "Liquid Glass" look (Apple's design language since iOS 26, continued in iOS 27):
+   a soft, slowly drifting colour wallpaper behind everything, and translucent frosted-glass
+   surfaces (cards, sidebar, top bar, bottom bar, windows) that let it glow through.
+   ===================================================================================== */
+:root{
+  --wall-base:#e9eef6;
+  --wall-1:rgba(96,165,250,.55);   /* sky blue */
+  --wall-2:rgba(167,139,250,.45);  /* lavender */
+  --wall-3:rgba(52,211,153,.35);   /* mint */
+  --wall-4:rgba(251,146,60,.28);   /* warm peach */
+  --glass:rgba(255,255,255,.58);
+  --glass-strong:rgba(255,255,255,.80);
+  --glass-border:rgba(255,255,255,.75);
+  --glass-edge:rgba(20,30,60,.08);
+  --glass-shadow:0 10px 30px rgba(30,45,90,.10), 0 1px 0 rgba(255,255,255,.9) inset;
+  --glass-blur:blur(24px) saturate(180%);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --wall-base:#070b16;
+    --wall-1:rgba(37,99,235,.45);
+    --wall-2:rgba(124,58,237,.40);
+    --wall-3:rgba(13,148,136,.32);
+    --wall-4:rgba(219,39,119,.22);
+    --glass:rgba(22,27,40,.55);
+    --glass-strong:rgba(22,27,40,.82);
+    --glass-border:rgba(255,255,255,.09);
+    --glass-edge:rgba(0,0,0,.35);
+    --glass-shadow:0 10px 30px rgba(0,0,0,.35), 0 1px 0 rgba(255,255,255,.07) inset;
+  }
+}
+:root[data-theme="dark"]{
+  --wall-base:#070b16;
+  --wall-1:rgba(37,99,235,.45);
+  --wall-2:rgba(124,58,237,.40);
+  --wall-3:rgba(13,148,136,.32);
+  --wall-4:rgba(219,39,119,.22);
+  --glass:rgba(22,27,40,.55);
+  --glass-strong:rgba(22,27,40,.82);
+  --glass-border:rgba(255,255,255,.09);
+  --glass-edge:rgba(0,0,0,.35);
+  --glass-shadow:0 10px 30px rgba(0,0,0,.35), 0 1px 0 rgba(255,255,255,.07) inset;
+}
+
+/* the wallpaper */
+html{background:var(--wall-base);}
+body{background:transparent !important;}
+.ios-wall{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:var(--wall-base);}
+.ios-wall i{position:absolute;border-radius:50%;filter:blur(70px);will-change:transform;}
+.ios-wall i:nth-child(1){width:62vmax;height:62vmax;left:-18vmax;top:-20vmax;background:var(--wall-1);animation:wallDrift1 28s ease-in-out infinite alternate;}
+.ios-wall i:nth-child(2){width:55vmax;height:55vmax;right:-20vmax;top:-8vmax;background:var(--wall-2);animation:wallDrift2 34s ease-in-out infinite alternate;}
+.ios-wall i:nth-child(3){width:58vmax;height:58vmax;left:10vmax;bottom:-30vmax;background:var(--wall-3);animation:wallDrift3 30s ease-in-out infinite alternate;}
+.ios-wall i:nth-child(4){width:40vmax;height:40vmax;right:-6vmax;bottom:-12vmax;background:var(--wall-4);animation:wallDrift2 38s ease-in-out infinite alternate-reverse;}
+@keyframes wallDrift1{to{transform:translate(12vmax, 8vmax) scale(1.08);}}
+@keyframes wallDrift2{to{transform:translate(-10vmax, 10vmax) scale(1.12);}}
+@keyframes wallDrift3{to{transform:translate(8vmax, -10vmax) scale(.94);}}
+@media (prefers-reduced-motion: reduce){ .ios-wall i{animation:none;} }
+
+/* glass surfaces */
+.card, .stat, .pp .card, .wifi-card, .rei-banner{
+  background:var(--glass) !important;
+  -webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-border) !important;
+  box-shadow:var(--glass-shadow) !important;
+}
+.card{border-radius:22px;}
+.stat{border-radius:18px;}
+.pp .card::after, .wifi-card::after{opacity:.6;}
+.sidebar{background:var(--glass) !important;-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border-right:1px solid var(--glass-border) !important;}
+.topbar{background:transparent !important;border-bottom:0 !important;-webkit-backdrop-filter:none;backdrop-filter:none;}
+.topbar .search, .topbar .icon-btn{background:var(--glass) !important;-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-border) !important;box-shadow:var(--glass-shadow);}
+.topbar .search{border-radius:999px;}
+.bottomnav{background:var(--glass) !important;-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border-top:1px solid var(--glass-border) !important;}
+@media (max-width:640px){
+  /* floating capsule tab bar, like iOS */
+  .bottomnav{left:12px;right:12px;bottom:max(10px, env(safe-area-inset-bottom));border-radius:28px;border:1px solid var(--glass-border) !important;
+    box-shadow:0 12px 34px rgba(20,30,60,.18), 0 1px 0 rgba(255,255,255,.6) inset;padding-bottom:0;}
+}
+.modal-overlay{-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);}
+.modal-card{background:var(--glass-strong) !important;-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-border) !important;border-radius:24px !important;}
+.mini-btn, .chip, .view-btn{border-radius:999px;}
+/* inner tiles sit on the glass as lighter/darker frosted pills */
+.field-row, .pp .field-row, .ps-tile, .wifi-field, .bill-card, .pp .room-row, .pp .card .row{border-color:var(--glass-edge);}
+.pp .field-row, .ps-tile, .wifi-field, .pp .room-row, .pp .card .row, .pp-ic, .wifi-signal{background:color-mix(in srgb, var(--bg-elevated) 70%, transparent) !important;}
+/* anyone who asked the system for less transparency gets solid surfaces */
+@media (prefers-reduced-transparency: reduce){
+  .card, .stat, .sidebar, .bottomnav, .modal-card, .topbar .search, .topbar .icon-btn{background:var(--bg-elevated) !important;-webkit-backdrop-filter:none;backdrop-filter:none;}
+}
+#auth-screen{background:transparent !important;}
