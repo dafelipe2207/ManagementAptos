@@ -1510,11 +1510,11 @@ button.bc-chip:hover{filter:brightness(.96);text-decoration:underline;}
    surfaces (cards, sidebar, top bar, bottom bar, windows) that let it glow through.
    ===================================================================================== */
 :root{
-  --wall-base:#e9eef6;
-  --wall-1:rgba(96,165,250,.55);   /* sky blue */
-  --wall-2:rgba(167,139,250,.45);  /* lavender */
-  --wall-3:rgba(52,211,153,.35);   /* mint */
-  --wall-4:rgba(251,146,60,.28);   /* warm peach */
+  --wall-base:#f2f4f7;
+  --wall-1:rgba(147,197,253,.28);  /* soft sky blue */
+  --wall-2:rgba(196,181,253,.22);  /* soft lavender */
+  --wall-3:rgba(167,243,208,.20);  /* soft mint */
+  --wall-4:rgba(254,215,170,.18);  /* soft peach */
   --glass:rgba(255,255,255,.58);
   --glass-strong:rgba(255,255,255,.80);
   --glass-border:rgba(255,255,255,.75);
@@ -1524,11 +1524,11 @@ button.bc-chip:hover{filter:brightness(.96);text-decoration:underline;}
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --wall-base:#070b16;
-    --wall-1:rgba(37,99,235,.45);
-    --wall-2:rgba(124,58,237,.40);
-    --wall-3:rgba(13,148,136,.32);
-    --wall-4:rgba(219,39,119,.22);
+    --wall-base:#0d1118;
+    --wall-1:rgba(59,130,246,.16);
+    --wall-2:rgba(139,92,246,.13);
+    --wall-3:rgba(20,184,166,.11);
+    --wall-4:rgba(236,72,153,.07);
     --glass:rgba(22,27,40,.55);
     --glass-strong:rgba(22,27,40,.82);
     --glass-border:rgba(255,255,255,.09);
@@ -1537,11 +1537,11 @@ button.bc-chip:hover{filter:brightness(.96);text-decoration:underline;}
   }
 }
 :root[data-theme="dark"]{
-  --wall-base:#070b16;
-  --wall-1:rgba(37,99,235,.45);
-  --wall-2:rgba(124,58,237,.40);
-  --wall-3:rgba(13,148,136,.32);
-  --wall-4:rgba(219,39,119,.22);
+  --wall-base:#0d1118;
+  --wall-1:rgba(59,130,246,.16);
+  --wall-2:rgba(139,92,246,.13);
+  --wall-3:rgba(20,184,166,.11);
+  --wall-4:rgba(236,72,153,.07);
   --glass:rgba(22,27,40,.55);
   --glass-strong:rgba(22,27,40,.82);
   --glass-border:rgba(255,255,255,.09);
@@ -1553,7 +1553,7 @@ button.bc-chip:hover{filter:brightness(.96);text-decoration:underline;}
 html{background:var(--wall-base);}
 body{background:transparent !important;}
 .ios-wall{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:var(--wall-base);}
-.ios-wall i{position:absolute;border-radius:50%;filter:blur(70px);will-change:transform;}
+.ios-wall i{position:absolute;border-radius:50%;filter:blur(90px);will-change:transform;}
 .ios-wall i:nth-child(1){width:62vmax;height:62vmax;left:-18vmax;top:-20vmax;background:var(--wall-1);animation:wallDrift1 28s ease-in-out infinite alternate;}
 .ios-wall i:nth-child(2){width:55vmax;height:55vmax;right:-20vmax;top:-8vmax;background:var(--wall-2);animation:wallDrift2 34s ease-in-out infinite alternate;}
 .ios-wall i:nth-child(3){width:58vmax;height:58vmax;left:10vmax;bottom:-30vmax;background:var(--wall-3);animation:wallDrift3 30s ease-in-out infinite alternate;}
