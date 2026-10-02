@@ -1478,6 +1478,44 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return header + sections;
   }
 
+  /** The key numbers for a property at a glance (Properties list): weekly rent coming in, what
+   *  the lease costs, the margin, what tenants owe right now, plus status chips — next payment to
+   *  the real estate, next inspection, move-outs coming, Wi-Fi. */
+  function propertySummaryHtml(p){
+    var current = tenants.filter(function(t){ return t.propertyId===p.id && t.rentAmount>0 && !tenantHasMovedOut(t) && t.moveInDate <= TODAY; });
+    var income = round2(current.reduce(function(s,t){ return s + normalizeToWeekly(t.rentAmount, t.rentFrequency); }, 0));
+    var lease = round2(propertyWeeklyLeaseCost(p));
+    var margin = round2(income - lease);
+    var propTenantIds = tenants.filter(function(t){ return t.propertyId===p.id; }).map(function(t){ return t.id; });
+    var rentOwed = rentCharges.filter(function(c){ return propTenantIds.indexOf(c.tenantId) > -1 && c.status!=='paid' && c.periodStart <= TODAY; })
+      .reduce(function(s,c){ return s + c.remaining; }, 0);
+    var billsOwed = propTenantIds.reduce(function(s,id){ return s + unpaidBillAllocationsFor(id).reduce(function(x,o){ return x + o.alloc.amount; }, 0); }, 0);
+    var owed = round2(rentOwed + billsOwed);
+    function tile(label, value, tone){ return '<div class="ps-tile'+(tone?' '+tone:'')+'"><span>'+label+'</span><b>'+value+'</b></div>'; }
+    var tiles = tile('Rent / week', money(income)) +
+      (lease ? tile('Lease / week', money(lease)) + tile('Margin / week', (margin<0?'-':'')+money(Math.abs(margin)), margin<0?'bad':'good') : '') +
+      tile('Owed now', money(owed), owed>0.004?'bad':'good');
+    var chips = [];
+    var nextLease = nextLeaseDueDate(p, TODAY);
+    if (nextLease){
+      var d = daysBetween(TODAY, nextLease);
+      chips.push(d < 0 ? '<span class="bc-chip bad">💳 Real estate overdue '+(-d)+' d</span>'
+        : '<span class="bc-chip'+(d<=3?' warn':'')+'">💳 Real estate '+(d===0?'due today':'in '+d+' d')+'</span>');
+    }
+    var insp = upcomingRealEstateInspections(p.id)[0];
+    if (insp) chips.push('<span class="bc-chip'+(daysBetween(TODAY, insp.date)<=7?' warn':'')+'">🏢 Inspection '+shortDate(insp.date)+'</span>');
+    var leaving = tenants.filter(function(t){ return t.propertyId===p.id && !tenantHasMovedOut(t) && (t.actualMoveOutDate || t.expectedMoveOutDate); });
+    if (leaving.length) chips.push('<span class="bc-chip warn">🚪 '+leaving.length+' move-out'+(leaving.length>1?'s':'')+' coming</span>');
+    var overdueBills = bills.filter(function(b){ return b.propertyId===p.id && billEffectiveStatus(b)==='overdue'; }).length;
+    if (overdueBills) chips.push('<span class="bc-chip bad">🧾 '+overdueBills+' bill'+(overdueBills>1?'s':'')+' overdue</span>');
+    if (p.leaseEndDate){
+      var endDays = daysBetween(TODAY, p.leaseEndDate);
+      if (endDays <= 90) chips.push('<span class="bc-chip warn">📄 Lease ends '+shortDate(p.leaseEndDate)+'</span>');
+    }
+    chips.push(p.wifiSsid ? '<span class="bc-chip ok">📶 Wi-Fi set</span>' : '<span class="bc-chip">📶 No Wi-Fi saved</span>');
+    return '<div class="ps-tiles">'+tiles+'</div><div class="bill-card-chips ps-chips">'+chips.join('')+'</div>';
+  }
+
   function renderProperties(){
     if (properties.length === 0){
       return '<div class="detail-head" style="align-items:center;">'+
@@ -1506,6 +1544,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="prop-meta">'+p.bedrooms+' bedrooms • '+p.bathrooms+' bathrooms</div></div>'+
         '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
         '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div></a>'+
+        propertySummaryHtml(p)+
         roomsHtml+'</div>';
     }).join('');
     return '<div class="detail-head" style="align-items:center;">'+

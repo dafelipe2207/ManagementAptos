@@ -1485,3 +1485,13 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 @media (max-width:640px){ .pp-head{flex-wrap:wrap;} .pp-actions{margin-left:54px;} }
 .pp{display:flex;flex-direction:column;gap:22px;}
 .pp .room-row{background:var(--bg-elevated);border:1px solid var(--border) !important;border-radius:12px;padding:10px 12px;margin-top:8px !important;}
+
+/* Properties list: key numbers + status chips per property */
+.ps-tiles{display:grid;grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));gap:8px;margin:12px 0 8px;}
+.ps-tile{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:9px 12px;display:flex;flex-direction:column;gap:2px;}
+.ps-tile span{font-size:11px;color:var(--text-faint);font-weight:600;}
+.ps-tile b{font-size:16px;font-variant-numeric:tabular-nums;}
+.ps-tile.good b{color:var(--status-paid);}
+.ps-tile.bad b{color:var(--status-overdue);}
+.ps-chips{margin:0 0 6px;}
+.bc-chip.bad{color:var(--status-overdue);background:var(--status-overdue-bg);border-color:transparent;}
