@@ -1265,8 +1265,10 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 
   /* Button groups wrap and share the width instead of overflowing. */
   .modal-actions, .detail-head > div{flex-wrap:wrap;}
-  .filter-chips{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
-  .filter-chips .chip{flex-shrink:0;}
+  /* Filter chips wrap onto extra lines so every option is visible (no hidden sideways scroll). */
+  .filter-chips{flex-wrap:wrap;overflow:visible;gap:6px;}
+  .filter-chips .chip{flex-shrink:0;min-height:40px;padding:6px 13px;font-size:13px;}
+  .rules-jump{flex-wrap:wrap;overflow:visible;}
 }
 
 /* ---------- Tablets ---------- */
