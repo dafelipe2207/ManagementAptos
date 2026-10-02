@@ -3490,7 +3490,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function billStatusBadge(b){
     var map = { paid:['paid','Paid'], pending:['due','Pending'], overdue:['overdue','Overdue'], allocated:['upcoming','Allocated'],
       partially_allocated:['due','Partially Allocated'], partially_paid:['due','Partially Paid'] };
-    var m = map[billEffectiveStatus(b)] || ['neutral', b.status];
+    var st = billEffectiveStatus(b);
+    if (st === 'overdue' && billIsPartiallyPaid(b)) return badge('overdue', 'Overdue · part paid');
+    var m = map[st] || ['neutral', b.status];
     return badge(m[0], m[1]);
   }
   /** The "current" charge is the one that contains today; if there is none, the next future one; otherwise, the last past one. */
@@ -3859,9 +3861,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['partially_paid','Partially Paid'], ['paid','Paid']];
   function setBillsFilter(f){ billsFilter = f; renderPreservingScroll(); }
   function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; renderPreservingScroll(); }
+  /** A bill some tenants have paid and others haven't (whatever its due date). */
+  function billIsPartiallyPaid(b){
+    if (b.status === 'paid') return false;
+    var tAllocs = (b.allocations || []).filter(function(a){ return !a.isAdmin; });
+    var paidN = tAllocs.filter(function(a){ return a.paid; }).length;
+    return b.status === 'partially_paid' || (paidN > 0 && paidN < tAllocs.length);
+  }
+  /** Filter chips. "Overdue" used to swallow every past-due bill, so a part-paid bill that was
+   *  also past due never showed under "Partially Paid" (and "Pending" matched a status no bill
+   *  has). Now: Pending = anything not fully paid (matches the Pending total above and the Dashboard tile); Overdue = unpaid and past due; Partially Paid =
+   *  some tenants paid, others not (due or not); Paid = fully paid. */
   function billMatchesFilter(b, filter){
     if (filter==='all') return true;
-    return billEffectiveStatus(b) === filter;
+    var st = billEffectiveStatus(b);
+    if (filter==='paid') return st === 'paid';
+    if (filter==='overdue') return st === 'overdue';
+    if (filter==='pending') return st !== 'paid'; // everything still owed (incl. overdue) — same as the Pending total and the Dashboard tile
+    if (filter==='partially_paid') return billIsPartiallyPaid(b);
+    return st === filter;
   }
 
   /* ---------- Import bill (PHASE 7: capture UI only; OCR comes later) ---------- */
