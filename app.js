@@ -10727,6 +10727,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var people = {};
     auditLogRows.forEach(function(r){ if (r.user_id) people[r.user_id] = auditWho(r).name; });
     var rows = auditLogRows.filter(function(r){
+      if (r.action==='LOGIN' && auditWho(r).role==='super_admin') return false; // the Super Admin's own sign-ins aren't listed
       if (auditFilterType==='logins' && r.action!=='LOGIN') return false;
       if (auditFilterType==='changes' && r.action==='LOGIN') return false;
       var w = auditWho(r);
