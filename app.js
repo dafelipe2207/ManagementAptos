@@ -3707,14 +3707,27 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     function billOwedRow(o){
       var b = o.bill, a = o.alloc;
-      var overdue = b.dueDate && b.dueDate < TODAY;
-      return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
-        '<div class="who"><div>'+esc(billTypeLabel(b.billType))+' — '+esc(b.provider)+'</div><div class="meta">'+(b.dueDate?('Due '+shortDate(b.dueDate)):'No due date')+'</div></div>'+
-        '<div style="display:flex;align-items:center;gap:10px;">'+
-        (overdue ? badge('overdue','Overdue') : badge('due','Unpaid'))+
-        '<b>'+money(a.amount)+'</b>'+
-        '<button class="mini-btn primary" onclick="openAllocPaidModal(\''+b.id+'\',\''+o.tenant.id+'\')">Mark as paid</button>'+
-        '</div></div>';
+      var ic = BILL_TYPE_ICON[b.billType] || BILL_TYPE_ICON.other;
+      var st;
+      if (!b.dueDate) st = badge('due', 'Unpaid');
+      else {
+        var d = daysBetween(b.dueDate, TODAY);
+        st = d > 0 ? badge('overdue', d + ' d overdue') : d === 0 ? badge('due', 'Due today') : badge('upcoming', 'in ' + (-d) + ' day' + (d===-1?'':'s'));
+      }
+      var open = 'openBillActions(\''+b.id+'\',\''+o.tenant.id+'\')';
+      return '<div class="bill-owed-row" role="button" tabindex="0" onclick="'+open+'" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();'+open+';}">'+
+        '<span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span>'+
+        '<span class="bill-owed-main"><span class="bill-owed-name">'+esc(billTypeLabel(b.billType))+' · '+esc(b.provider)+'</span>'+
+          '<span class="bill-owed-meta">'+(b.dueDate ? 'Due '+shortDate(b.dueDate) : 'No due date')+'</span></span>'+
+        '<span class="bill-owed-right"><b>'+money(a.amount)+'</b>'+st+'</span>'+
+        '<span class="bill-owed-chev" aria-hidden="true">›</span></div>';
+    }
+    /** "2 overdue · $61.70" strip above a tenant's bills (only when something is overdue). */
+    function billsOverdueSummaryHtml(owedBills){
+      var od = owedBills.filter(function(o){ return o.bill.dueDate && o.bill.dueDate < TODAY; });
+      if (!od.length) return '';
+      var total = od.reduce(function(s,o){ return s + o.alloc.amount; }, 0);
+      return '<div class="bill-overdue-sum"><span>'+od.length+' overdue</span><span>'+money(total)+'</span></div>';
     }
     /** Everything still PENDING (owed/due) is shown in full, never truncated —
      *  something the tenant still owes is never sent off to "history". */
@@ -3821,6 +3834,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             (!showPaid ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
             limitedSection(groupPaidByPayment(paid), paidGroupRow, 'No payments recorded yet.', 'Paid', t.id))+
             (!showBills ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
+            billsOverdueSummaryHtml(owedBills)+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
             '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
             '</div>';
@@ -4113,6 +4127,28 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var BILL_TYPES = ['electricity','water','hot_water','gas','internet','other'];
   var BILL_TYPE_LABELS = { electricity:'Electricity', water:'Water', hot_water:'Hot water', gas:'Gas', internet:'Internet', other:'Other' };
   function billTypeLabel(t){ return BILL_TYPE_LABELS[t] || (t ? t.charAt(0).toUpperCase()+t.slice(1) : ''); }
+  /** Icon + soft background per service, for the bill rows in Payments. */
+  var BILL_TYPE_ICON = { internet:['📶','var(--status-upcoming-bg)'], gas:['🔥','var(--status-due-bg)'], electricity:['⚡','var(--status-paid-bg)'],
+    water:['💧','var(--accent-bg)'], hot_water:['♨️','var(--status-overdue-bg)'], other:['🧾','var(--border)'] };
+
+  /** Tapping a bill row in Payments opens this small menu: Mark as paid / View bill / WhatsApp reminder. */
+  function openBillActions(billId, tenantId){
+    var b = billOf(billId), t = tenantOf(tenantId);
+    if (!b || !t) return;
+    var a = (b.allocations || []).find(function(x){ return x.tenantId === tenantId; });
+    document.getElementById('bill-actions-title').textContent = billTypeLabel(b.billType) + ' · ' + b.provider + (a ? ' — ' + money(a.amount) : '');
+    document.getElementById('bill-actions-sub').textContent = t.fullName + (b.dueDate ? ' · due ' + fullDate(b.dueDate) : '') +
+      (b.billingPeriodStart && b.billingPeriodEnd ? ' · ' + shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) : '');
+    var hasPhone = !!phoneDigitsForWhatsApp(t.phone);
+    document.getElementById('bill-actions-list').innerHTML =
+      '<button type="button" class="bill-sheet-btn" onclick="closeBillActions();openAllocPaidModal(\''+b.id+'\',\''+t.id+'\')"><span>✓</span>Mark as paid</button>'+
+      '<button type="button" class="bill-sheet-btn" onclick="closeBillActions();location.hash=\'#/bills/'+b.id+'\'"><span>📄</span>View bill</button>'+
+      (hasPhone ? '<button type="button" class="bill-sheet-btn wa" onclick="closeBillActions();sendBillsWhatsAppToTenant(\''+t.id+'\',[\''+b.id+'\'])"><span>💬</span>Send reminder by WhatsApp</button>' : '');
+    document.getElementById('bill-actions-modal').hidden = false;
+  }
+  function closeBillActions(){ document.getElementById('bill-actions-modal').hidden = true; }
+  window.openBillActions = openBillActions;
+  window.closeBillActions = closeBillActions;
   /** Sends the photo/PDF to the AI (Gemini, via the analyze-bill Edge Function) to extract
    *  provider, service type, dates, amount and a suggested property. If the analysis
    *  fails (no network, no API key configured server-side, unclear photo, etc.) the

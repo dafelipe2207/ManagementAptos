@@ -1381,3 +1381,29 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 
 /* Disabled buttons look disabled (e.g. timeline "Today" when already on the current months). */
 .mini-btn:disabled{opacity:.4;cursor:not-allowed;}
+
+/* Payments → tenant → Bills: icon list + overdue summary + action sheet */
+.bill-overdue-sum{display:flex;justify-content:space-between;align-items:center;background:var(--status-overdue-bg);color:var(--status-overdue);
+  font-weight:700;font-size:13px;border-radius:10px;padding:8px 12px;margin:0 0 4px;}
+.bill-owed-row{display:flex;align-items:center;gap:10px;padding:10px 2px;border-top:1px solid var(--border);cursor:pointer;border-radius:8px;}
+.field-list > .bill-owed-row:first-child{border-top:0;}
+.bill-owed-row:hover{background:var(--bg);}
+.bill-owed-row:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.bill-ic{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;}
+.bill-owed-main{display:flex;flex-direction:column;min-width:0;flex:1;}
+.bill-owed-name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bill-owed-meta{font-size:12px;color:var(--text-faint);margin-top:1px;}
+.bill-owed-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;}
+.bill-owed-right b{font-size:14.5px;}
+.bill-owed-chev{color:var(--text-faint);font-size:20px;line-height:1;margin-left:2px;}
+.bill-sheet-list{display:flex;flex-direction:column;}
+.bill-sheet-btn{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--border);
+  padding:13px 4px;font:inherit;font-size:14.5px;font-weight:600;color:var(--text);cursor:pointer;min-height:48px;}
+.bill-sheet-btn:first-child{border-top:0;}
+.bill-sheet-btn span{width:22px;text-align:center;}
+.bill-sheet-btn.wa{color:var(--status-paid);}
+.bill-sheet-btn:hover{background:var(--bg);}
+@media (max-width:640px){
+  .bill-sheet-overlay{align-items:flex-end;}
+  .bill-sheet{border-radius:18px 18px 0 0;width:100%;max-width:none;margin:0;padding-bottom:max(16px, env(safe-area-inset-bottom));}
+}
