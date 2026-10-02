@@ -3564,7 +3564,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return out.sort(function(x,y){ return (x.bill.dueDate||'').localeCompare(y.bill.dueDate||''); });
   }
 
-  var PAYMENTS_ROW_LIMIT = Infinity; // every paid period is listed on the card (View history is still there for editing)
+  var PAYMENTS_ROW_LIMIT = 5; // Payments tab: only the last 5 paid periods per tenant (due/overdue and upcoming are always all shown); the rest is in View history
 
   /** Was the tenant living at the property at any point during month 'YYYY-MM'? Moved in on
    *  or before the month's last day, and not moved out before its first day. Used so picking a
@@ -3742,10 +3742,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
      *  pending items, which are always shown in full via fullSection). */
     function limitedSection(list, rowFn, emptyText, moreLabel, tenantId){
       if (!list.length) return '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">'+emptyText+'</p>';
-      var shown = list.slice(0, PAYMENTS_ROW_LIMIT);
+      // always the MOST RECENT ones, whichever way the list is sorted
+      var shown = paymentsDateSort === 'asc' ? list.slice(-PAYMENTS_ROW_LIMIT) : list.slice(0, PAYMENTS_ROW_LIMIT);
       var html = '<div class="field-list">'+shown.map(rowFn).join('')+'</div>';
       if (list.length > PAYMENTS_ROW_LIMIT){
-        html += '<button class="text-link" style="margin-top:4px;" onclick="openHistoryModal(\''+tenantId+'\')">'+moreLabel+' ('+(list.length-PAYMENTS_ROW_LIMIT)+' more) — view history</button>';
+        html += '<button class="text-link" style="margin-top:4px;" onclick="openHistoryModal(\''+tenantId+'\')">'+(list.length-PAYMENTS_ROW_LIMIT)+' older payment'+(list.length-PAYMENTS_ROW_LIMIT===1?'':'s')+' — view history</button>';
       }
       return html;
     }
