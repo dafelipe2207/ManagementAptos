@@ -22,7 +22,7 @@ import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as paymentReportService from './services/paymentReportService.js?v=2';
-import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=2';
+import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=3';
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
@@ -523,11 +523,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var pmt = paymentRecords.find(function(x){ return x.tenantId===c.tenantId && x.date===c.paidDate && x.receiptPath; }) ||
               paymentRecords.find(function(x){ return x.tenantId===c.tenantId && x.date===c.paidDate && x.method!=='bond_deduction'; });
     var path = pmt && pmt.receiptPath;
+    var removeCall = path ? 'removePaymentReceipt(\''+pmt.id+'\')' : '';
     if (!path){
       var rep = rentPaymentReports.find(function(r){ return r.tenantId===c.tenantId && r.status==='confirmed' && r.paymentDate===c.paidDate && r.proofPath; });
       path = rep && rep.proofPath;
+      if (path) removeCall = 'removeReportProof(\''+rep.id+'\')';
     }
-    if (path) return '<button type="button" class="rcpt-btn has" style="width:34px;height:34px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+path+'\')">'+RECEIPT_VIEW_ICON+'</button>';
+    // View + remove (with confirmation) — for when the wrong file was attached.
+    if (path) return '<span style="display:inline-flex;gap:4px;align-items:center;">'+
+      '<button type="button" class="rcpt-btn has" style="width:34px;height:34px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+path+'\')">'+RECEIPT_VIEW_ICON+'</button>'+
+      (removeCall && !isTenantRole() ? '<button type="button" class="rcpt-btn rm" style="width:34px;height:34px;" title="Delete this receipt" aria-label="Delete this receipt" onclick="'+removeCall+'">'+RECEIPT_REMOVE_ICON+'</button>' : '')+
+      '</span>';
     if (!pmt) return '';
     return '<button type="button" class="rcpt-btn" style="width:34px;height:34px;" title="Upload receipt" aria-label="Upload receipt" onclick="pickPaymentReceipt(\''+pmt.id+'\')">'+RECEIPT_UPLOAD_ICON+'</button>';
   }
@@ -569,6 +575,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       renderPreservingScroll();
     } catch(err){ showToast('Could not remove the receipt. ' + friendlyErrorMessage(err), 'error'); }
   }
+  async function removeReportProof(reportId){
+    var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
+    if (!r) return;
+    try {
+      await rentPaymentReportService.clearProof(reportId);
+      r.proofPath = null;
+      showToast('Receipt deleted.', 'success');
+      if (historyModalTenantId) renderHistoryModalBody();
+      renderPreservingScroll();
+    } catch(err){ showToast('Could not delete the receipt. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  window.removeReportProof = removeReportProof;
   window.pickPaymentReceipt = pickPaymentReceipt;
   window.handlePaymentReceiptFile = handlePaymentReceiptFile;
   window.removePaymentReceipt = removePaymentReceipt;
@@ -14286,7 +14304,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }, 'Mark as unpaid');
   requireConfirm('deleteLeasePayment', 'Delete this lease payment?', 'It will be removed from the payment history (with its attached invoice link). This can\'t be undone.');
   requireConfirm('removeLeaseReceipt', 'Remove this invoice?', 'The invoice will be detached from this payment. The payment itself stays.', 'Remove');
-  requireConfirm('removePaymentReceipt', 'Remove this receipt?', 'The receipt will be detached from this payment. The payment itself stays.', 'Remove');
+  requireConfirm('removePaymentReceipt', 'Delete this receipt?', 'The receipt will be removed from this payment so you can upload the right one. The payment itself stays recorded as paid.', 'Delete');
+  requireConfirm('removeReportProof', 'Delete this receipt?', 'The receipt the tenant sent will be removed from this payment so the right one can be uploaded. The payment itself stays recorded as paid.', 'Delete');
   requireConfirm('removeReceipt', 'Delete this receipt?', 'The attached receipt file will be deleted. This can\'t be undone.');
   requireConfirm('unmarkBillAdminPaid', 'Mark as unpaid to provider?', 'The payment to the provider will be removed and the bill will show as not paid.', 'Mark as unpaid');
   requireConfirm('removeTenantDocument', 'Delete this document?', 'The document will be deleted. This can\'t be undone.');
