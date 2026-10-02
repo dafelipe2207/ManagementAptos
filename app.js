@@ -12710,10 +12710,33 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     else if (billMatch) html = renderBillDetail(decodeURIComponent(billMatch[1]));
     else html = (ROUTES[hash] || ROUTES['#/'])();
     content.innerHTML = html;
+    compactAddButtons();
     setActiveNav(hash);
     updateNotifNavBadge();
     hydrateLazyThumbs();
     if (!preserveScroll) window.scrollTo(0,0);
+  }
+
+  /** "Add" buttons (+ Add property, + Add tenant, Add bill, + Schedule, + Add room…) in page and
+   *  card headers: on phones they shrink to a round "+" next to the title — like the "+" in an
+   *  iOS navigation bar — so they don't take a whole line; on wider screens they keep their text. */
+  function compactAddButtons(){
+    content.querySelectorAll('.detail-head button.mini-btn.primary, .pp-actions button.mini-btn.primary').forEach(function(btn){
+      if (btn.classList.contains('add-btn')) return;
+      var txt = (btn.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!/^(\+\s*\S|Add\s)/i.test(txt)) return;
+      var label = txt.replace(/^\+\s*/, '');
+      if (label.indexOf(' ') === -1){ // "+ Add" / "+ Schedule" in a card header — say what for
+        var t = btn.closest('.pp-head') && btn.closest('.pp-head').querySelector('.wifi-title');
+        if (t) label += ' — ' + t.textContent.trim();
+      }
+      btn.classList.add('add-btn');
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+      btn.innerHTML = '<span class="add-btn-plus" aria-hidden="true">+</span><span class="add-btn-text">'+esc(label)+'</span>';
+      var head = btn.closest('.detail-head');
+      if (head) head.classList.add('has-add-btn');
+    });
   }
 
   /** Signed URLs for a private Storage file are short-lived — cached in memory a little under

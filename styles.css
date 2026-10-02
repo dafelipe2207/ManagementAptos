@@ -1688,3 +1688,18 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
 .badge{font-weight:600;letter-spacing:0;}
 .nav a, .sidebar a, .bottomnav a{letter-spacing:-0.01em;}
 .bottomnav a span, .bottomnav .label{font-size:10.5px;font-weight:600;}
+
+/* "Add" buttons: pill with a "+" on wide screens, a round "+" next to the title on phones */
+.add-btn{display:inline-flex !important;align-items:center;gap:6px;white-space:nowrap;}
+.add-btn-plus{font-size:18px;line-height:1;font-weight:500;margin-top:-1px;}
+@media (max-width:640px){
+  .add-btn{width:44px;height:44px;min-height:44px !important;padding:0 !important;justify-content:center;border-radius:50% !important;flex-shrink:0;
+    box-shadow:0 6px 18px color-mix(in srgb, var(--text) 25%, transparent);}
+  .add-btn .add-btn-text{display:none;}
+  .add-btn .add-btn-plus{font-size:26px;font-weight:400;margin:-2px 0 0;}
+  .detail-head.has-add-btn{flex-direction:row !important;flex-wrap:nowrap !important;align-items:flex-start !important;justify-content:space-between;gap:12px;}
+  .detail-head.has-add-btn > div:first-child{min-width:0;flex:1;}
+  .detail-head.has-add-btn .add-btn{margin-top:4px;}
+  .pp-head .pp-actions{margin-left:auto !important;}
+  .pp-head{flex-wrap:nowrap !important;}
+}
