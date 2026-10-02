@@ -6215,7 +6215,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           return b.billType === bt && b.billingPeriodStart && b.billingPeriodEnd &&
             b.billingPeriodEnd >= rangeStart && b.billingPeriodStart <= rangeEnd;
         });
-        var split = splitByModalAmount(typeBills);
+        // Only gas gets the separate "rate change" line (its rate changes every 3 months); every
+        // other service — internet in particular — is the same service every month, so all its
+        // bills stay on one line even if one amount differs.
+        var split = bt === 'gas' ? splitByModalAmount(typeBills) : { regular: typeBills, adjustments: [] };
         var html = timelineTrackRowHtml(billTypeLabel(bt), false, split.regular);
         if (split.adjustments.length) html += timelineTrackRowHtml('↳ rate change', true, split.adjustments);
         return html;
@@ -6234,7 +6237,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     };
     return '<div class="card">'+
       '<h2 style="text-transform:none;letter-spacing:0;font-size:13.5px;margin:0 0 6px;">Invoice timeline</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">Each bar is a bill, drawn across its actual billing period, with a small gap so consecutive bills stay visually separate. A bill priced differently from the usual amount (e.g. a rate change) gets its own "rate change" line instead of blending into the regular one. Striped gaps are stretches with no bill loaded. Tap a bar to open that bill.</p>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">Each bar is a bill, drawn across its actual billing period, with a small gap so consecutive bills stay visually separate. For gas, a bill priced differently from the usual amount (its rate changes every 3 months) gets its own "rate change" line; every other service stays on one line. Striped gaps are stretches with no bill loaded. Tap a bar to open that bill.</p>'+
       '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+
       rows.join('')+
       '<div style="margin-top:8px;">'+
