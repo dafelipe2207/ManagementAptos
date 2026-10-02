@@ -1598,3 +1598,70 @@ body{background:transparent !important;}
   .card, .stat, .sidebar, .bottomnav, .modal-card, .topbar .search, .topbar .icon-btn{background:var(--bg-elevated) !important;-webkit-backdrop-filter:none;backdrop-filter:none;}
 }
 #auth-screen{background:transparent !important;}
+
+/* =====================================================================================
+   One field system for the whole app (same family as the glass cards and the Wi-Fi tiles):
+   every text box, number, date, dropdown and text area — in forms, windows, filters and
+   pages — is the same rounded frosted pill with the same height, border and focus glow.
+   Info rows (label → value) everywhere are the same rounded tiles used on the property page.
+   ===================================================================================== */
+:root{ --field-bg:rgba(255,255,255,.72); --field-bg-focus:rgba(255,255,255,.92); --field-border:rgba(20,30,60,.12); }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --field-bg:rgba(255,255,255,.06); --field-bg-focus:rgba(255,255,255,.10); --field-border:rgba(255,255,255,.12); } }
+:root[data-theme="dark"]{ --field-bg:rgba(255,255,255,.06); --field-bg-focus:rgba(255,255,255,.10); --field-border:rgba(255,255,255,.12); }
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
+select, textarea, .modal-input, .bills-sort select{
+  background:var(--field-bg) !important;
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border:1px solid var(--field-border) !important;
+  border-radius:14px !important;
+  color:var(--text);font-family:var(--font-sans) !important;font-size:14px;
+  padding:10px 14px;min-height:44px;box-sizing:border-box;
+  box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 1px 2px rgba(20,30,60,.04);
+  transition:border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+textarea{min-height:80px;line-height:1.45;}
+select{appearance:none;-webkit-appearance:none;padding-right:36px !important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a968e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat:no-repeat !important;background-position:right 14px center !important;cursor:pointer;}
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus,
+select:focus, textarea:focus, .modal-input:focus{
+  outline:none !important;background-color:var(--field-bg-focus) !important;
+  border-color:var(--accent) !important;
+  box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent), 0 1px 0 rgba(255,255,255,.5) inset !important;
+}
+input::placeholder, textarea::placeholder{color:var(--text-faint);opacity:1;}
+input[disabled], select[disabled], textarea[disabled]{opacity:.55;cursor:not-allowed;}
+.form-row label, label.field-label{font-size:12px;font-weight:650;color:var(--text-dim);margin:0 0 6px 4px;letter-spacing:.01em;}
+.form-row{margin:12px 0;}
+/* file pickers: a soft dashed drop zone instead of the browser's bare button */
+input[type="file"]:not([hidden]){width:100%;box-sizing:border-box;padding:10px;border:1px dashed var(--field-border);border-radius:14px;
+  background:var(--field-bg);font:inherit;font-size:13px;color:var(--text-dim);}
+input[type="file"]::file-selector-button{border:0;border-radius:999px;background:var(--text);color:var(--bg);font:inherit;font-size:12.5px;font-weight:700;
+  padding:7px 14px;margin-right:10px;cursor:pointer;}
+input[type="checkbox"], input[type="radio"]{accent-color:var(--accent);width:18px;height:18px;}
+/* search pill in the top bar keeps its own size */
+.topbar input{min-height:0 !important;}
+
+/* Info rows (label → value) everywhere: the same rounded tiles as the property page */
+.field-list{gap:8px;}
+.card .field-list > .field-row{background:color-mix(in srgb, var(--bg-elevated) 70%, transparent);border:1px solid var(--glass-edge) !important;
+  border-radius:12px;padding:11px 12px;align-items:center;}
+.card .field-list > .field-row .k{font-size:12px;}
+.card .field-list > .field-row .v{font-weight:700;}
+/* list rows inside cards: rounded hover instead of hard lines */
+.card .row{border-bottom-color:var(--glass-edge);}
+.card a.row:hover, .card .row[role="button"]:hover, .card .row[role="link"]:hover{background:color-mix(in srgb, var(--accent) 6%, transparent);border-radius:12px;}
+/* tables in cards: soft header, rounded corners */
+.report-table th{background:color-mix(in srgb, var(--bg-elevated) 60%, transparent);font-size:11.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--text-faint);}
+.report-table th:first-child{border-top-left-radius:12px;} .report-table th:last-child{border-top-right-radius:12px;}
+.report-table td{border-color:var(--glass-edge) !important;}
+/* buttons: same capsule family */
+.mini-btn{border-radius:999px !important;min-height:40px;padding-left:16px;padding-right:16px;}
+.mini-btn:not(.primary):not(.danger){background:var(--field-bg);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border:1px solid var(--field-border);}
+.chip:not(.active){background:var(--field-bg);border:1px solid var(--field-border);}
+.modal-x-bar{background:transparent !important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:0 !important;}
+:root{--glass-strong:rgba(255,255,255,.90);}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --glass-strong:rgba(24,29,42,.92); } }
+:root[data-theme="dark"]{ --glass-strong:rgba(24,29,42,.92); }
+.modal-overlay{background:rgba(15,20,35,.28) !important;}
