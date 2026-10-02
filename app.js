@@ -1015,12 +1015,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   // own data" rule).
   var STAFF_NAV = [
     { hash:'#/', label:'Dashboard', icon:'dashboard', primary:true },
+    { hash:'#/properties', label:'Properties', icon:'building', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
-    { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:true },
+    { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:false },
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
     { hash:'#/profits', label:'Profits', icon:'chart', primary:false },
-    { hash:'#/properties', label:'Properties', icon:'building', primary:false },
     { header:true, label:'Property Operations' },
     { hash:'#/property-operations', label:'Property Operations', icon:'building', primary:false },
     { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
