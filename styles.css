@@ -1378,3 +1378,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
     border-radius:12px;font-size:11.5px;line-height:1.15;white-space:normal;text-align:center;min-width:0;}
   .po-tab-icon{width:18px;height:18px;}
 }
+
+/* Disabled buttons look disabled (e.g. timeline "Today" when already on the current months). */
+.mini-btn:disabled{opacity:.4;cursor:not-allowed;}

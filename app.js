@@ -1949,11 +1949,30 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  their move-in date to their move-out date (actual, expected, or today if they still
    *  live there). Grouped by property. Dynamic range: from the earliest move-in in scope to
    *  the most recent move-out (or one month after today, whichever is later). */
+  /* Tenancy timeline window: 6 months by default (4 back, this month, 1 ahead). "‹ Earlier" /
+   * "Later ›" move it a month at a time, "Today" recentres it, "Show all" draws the full history. */
+  var TIMELINE_MONTHS = 6;
+  var timelineOffset = 0;      // months moved from the default window (negative = earlier)
+  var timelineShowAll = false;
+  function shiftTimeline(n){ timelineShowAll = false; timelineOffset = n === 0 ? 0 : timelineOffset + n; renderPreservingScroll(); }
+  function toggleTimelineAll(){ timelineShowAll = !timelineShowAll; if (!timelineShowAll) timelineOffset = 0; renderPreservingScroll(); }
+  window.shiftTimeline = shiftTimeline;
+  window.toggleTimelineAll = toggleTimelineAll;
+
   function tenantsTimelineHtml(list){
     if (!list.length) return '';
     var endOf = function(t){ return t.actualMoveOutDate || t.expectedMoveOutDate || TODAY; };
-    var rangeStart = list.reduce(function(min, t){ return t.moveInDate < min ? t.moveInDate : min; }, list[0].moveInDate);
-    var rangeEnd = list.reduce(function(max, t){ var e = endOf(t); return e > max ? e : max; }, addMonthsIso(TODAY, 1));
+    var fullStart = list.reduce(function(min, t){ return t.moveInDate < min ? t.moveInDate : min; }, list[0].moveInDate);
+    var fullEnd = list.reduce(function(max, t){ var e = endOf(t); return e > max ? e : max; }, addMonthsIso(TODAY, 1));
+    var rangeStart, rangeEnd;
+    if (timelineShowAll){ rangeStart = fullStart; rangeEnd = fullEnd; }
+    else {
+      rangeStart = addMonthsIso(TODAY.slice(0,7) + '-01', -4 + timelineOffset);
+      rangeEnd = stepDateIso(addMonthsIso(rangeStart, TIMELINE_MONTHS), -1);
+    }
+    var canEarlier = !timelineShowAll && rangeStart > fullStart;
+    var canLater = !timelineShowAll && rangeEnd < fullEnd;
+    list = list.filter(function(t){ return t.moveInDate <= rangeEnd && endOf(t) >= rangeStart; }); // only stays inside the window
     var totalDays = daysBetween(rangeStart, rangeEnd) + 1;
     if (totalDays <= 0) return '';
     function pct(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); }
@@ -1963,7 +1982,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     var months = [];
     var cursor = rangeStart.slice(0,7) + '-01';
-    while (cursor <= rangeEnd){ months.push(cursor); cursor = addMonthsIso(cursor, 1); }
+    while (cursor <= rangeEnd){ if (cursor >= rangeStart) months.push(cursor); cursor = addMonthsIso(cursor, 1); }
     var tickStep = Math.max(1, Math.ceil(months.length / 6));
 
     function tenantStatus(t){
@@ -1981,7 +2000,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+st.color+';"></div>';
     }
     var todayLeft = pct(TODAY);
-    var todayLineHtml = '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
+    var todayInWindow = TODAY >= rangeStart && TODAY <= rangeEnd;
+    var todayLineHtml = !todayInWindow ? '' : '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
     // One row per room — all stays that passed through that room are drawn
     // as bars within the SAME row (not a new row per tenant).
     function roomRowHtml(roomLabel, tenantsInRoom){
@@ -2009,18 +2029,32 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         roomRows + '</div>';
     }).join('');
 
-    var monthTicks = months.filter(function(ym, i){ return i % tickStep === 0; }).map(function(ym){
+    var monthTicks = months.filter(function(ym, i){ return i % tickStep === 0; }).map(function(ym, i){
       var left = pct(ym);
-      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);">'+monthLabel(ym)+'</span>';
+      // Short labels so they don't run into each other on a phone: the year only on the first tick and on January.
+      var label = (i === 0 || ym.slice(5,7) === '01') ? monthLabel(ym) : monthLabel(ym).split(' ')[0];
+      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);white-space:nowrap;">'+label+'</span>';
     }).join('');
     var legendItem = function(colorVar, label){
       return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
         '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
     };
+    var navBtn = function(label, onclick, enabled, title){
+      return '<button type="button" class="mini-btn" style="min-height:34px;padding:5px 11px;font-size:12px;" title="'+title+'" onclick="'+onclick+'"'+(enabled?'':' disabled')+'>'+label+'</button>';
+    };
+    var rangeLabel = monthLabel(rangeStart.slice(0,7)) + ' – ' + monthLabel(rangeEnd.slice(0,7));
+    var controls = '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 10px;">'+
+      (timelineShowAll ? '' :
+        navBtn('‹ Earlier', 'shiftTimeline(-1)', canEarlier, 'One month earlier')+
+        navBtn('Today', 'shiftTimeline(0)', timelineOffset !== 0, 'Back to the current 6 months')+
+        navBtn('Later ›', 'shiftTimeline(1)', canLater, 'One month later'))+
+      '<button type="button" class="chip'+(timelineShowAll?' active':'')+'" style="min-height:34px;padding:5px 12px;font-size:12px;" onclick="toggleTimelineAll()">'+(timelineShowAll?'Show 6 months':'Show all')+'</button>'+
+      '<span style="font-size:11.5px;color:var(--text-faint);margin-left:auto;">'+rangeLabel+'</span></div>';
     return '<div class="card">'+
       '<h2 style="margin-bottom:2px;">Tenancy timeline</h2>'+
       '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">Grouped by room. Each bar is one tenant\'s stay, from move-in to move-out (or today, if still living there).</p>'+
-      propRows+
+      controls+
+      (propRows || '<p style="font-size:12.5px;color:var(--text-faint);margin:6px 0;">No one was living there in these months.</p>')+
       '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
       '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') + legendItem('var(--status-move)','Moved out')+'</div>'+
       '</div>';
@@ -6100,7 +6134,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // bars, same rangeStart/rangeEnd) instead of a single overlay floating over the whole diagram,
     // so it stays perfectly aligned row by row without relying on measuring the layout with JS.
     var todayLeft = pct(TODAY);
-    var todayLineHtml = '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
+    var todayInWindow = TODAY >= rangeStart && TODAY <= rangeEnd;
+    var todayLineHtml = !todayInWindow ? '' : '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
     function timelineTrackRowHtml(label, faint, list){
       return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
         '<span style="font-size:'+(faint?'10px':'11.5px')+';color:'+(faint?'var(--text-faint)':'var(--text-dim)')+';width:72px;flex-shrink:0;'+(faint?'padding-left:8px;':'')+'">'+esc(label)+'</span>'+
