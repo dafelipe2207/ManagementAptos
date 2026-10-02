@@ -1949,7 +1949,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  their move-in date to their move-out date (actual, expected, or today if they still
    *  live there). Grouped by property. Dynamic range: from the earliest move-in in scope to
    *  the most recent move-out (or one month after today, whichever is later). */
-  /* Tenancy timeline window: 6 months by default (4 back, this month, 1 ahead). "‹ Earlier" /
+  /* Tenancy timeline window: 6 months by default (the 5 before and the current month, which is last). "‹ Earlier" /
    * "Later ›" move it a month at a time, "Today" recentres it, "Show all" draws the full history. */
   var TIMELINE_MONTHS = 6;
   var timelineOffset = 0;      // months moved from the default window (negative = earlier)
@@ -1967,7 +1967,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rangeStart, rangeEnd;
     if (timelineShowAll){ rangeStart = fullStart; rangeEnd = fullEnd; }
     else {
-      rangeStart = addMonthsIso(TODAY.slice(0,7) + '-01', -4 + timelineOffset);
+      rangeStart = addMonthsIso(TODAY.slice(0,7) + '-01', -(TIMELINE_MONTHS - 1) + timelineOffset); // ends with the current month
       rangeEnd = stepDateIso(addMonthsIso(rangeStart, TIMELINE_MONTHS), -1);
     }
     var canEarlier = !timelineShowAll && rangeStart > fullStart;
