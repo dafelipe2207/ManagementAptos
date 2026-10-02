@@ -14683,7 +14683,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (below >= h || below >= above){ menu.style.top = (r.bottom + 6) + 'px'; menu.style.maxHeight = Math.max(160, below - 6) + 'px'; }
     else { menu.style.bottom = (window.innerHeight - r.top + 6) + 'px'; menu.style.maxHeight = Math.max(160, above - 6) + 'px'; }
     lab.classList.add('open');
-    pillMenuEl = menu; pillMenuSel = sel;
+    pillMenuEl = menu; pillMenuSel = sel; pillMenuOpenedAt = Date.now();
     function choose(i){
       var changed = sel.selectedIndex !== i;
       sel.selectedIndex = i;
@@ -14708,8 +14708,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       else if (e.key === 'Tab'){ closePillMenu(false); }
     });
     var current = menu.querySelector('.pm-item.on') || menu.querySelector('.pm-item');
-    if (search) search.focus(); else if (current) current.focus();
-    if (current && current.scrollIntoView) current.scrollIntoView({ block: 'nearest' });
+    // Never scrollIntoView/focus with scrolling here: on a long list (e.g. Reports months) that
+    // scrolled the PAGE, and the page-scroll listener below then closed the menu at once.
+    if (search) search.focus({ preventScroll: true }); else if (current) current.focus({ preventScroll: true });
+    if (current) menu.scrollTop = Math.max(0, current.offsetTop - menu.clientHeight / 2);
   }
   document.addEventListener('mousedown', function(e){
     var sel = e.target.closest && e.target.closest('.pill-select select');
@@ -14725,7 +14727,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (sel && pillMenuFine() && (e.key === 'Enter' || e.key === ' ' || (e.altKey && e.key === 'ArrowDown'))){ e.preventDefault(); openPillMenu(sel); }
   });
   window.addEventListener('resize', function(){ closePillMenu(false); });
-  window.addEventListener('scroll', function(e){ if (pillMenuEl && !pillMenuEl.contains(e.target)) closePillMenu(false); }, true);
+  var pillMenuOpenedAt = 0;
+  window.addEventListener('scroll', function(e){
+    if (!pillMenuEl || pillMenuEl.contains(e.target)) return;
+    if (Date.now() - pillMenuOpenedAt < 300) return; // ignore scrolls caused by opening it
+    closePillMenu(false);
+  }, true);
   window.addEventListener('hashchange', function(){ closePillMenu(false); });
 
 
@@ -14734,7 +14741,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * box that doesn't match the app. With a mouse/trackpad, clicking a date field opens our glass
    * calendar instead; typing the date still works, and phones keep their native picker. The
    * <input type="date"> stays the source of truth (value + normal input/change events). */
-  var datePopEl = null, datePopInput = null, datePopMonth = null;
+  var datePopEl = null, datePopInput = null, datePopMonth = null, datePopOpenedAt = 0;
   function isoOf(y, m, d){ return y + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0'); }
   function closeDatePop(){
     if (!datePopEl) return;
@@ -14787,7 +14794,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var el = document.createElement('div');
     el.className = 'date-pop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Choose a date');
     document.body.appendChild(el);
-    datePopEl = el; datePopInput = input; input.classList.add('dp-open');
+    datePopEl = el; datePopInput = input; datePopOpenedAt = Date.now(); input.classList.add('dp-open');
     renderDatePop(); placeDatePop();
     el.addEventListener('mousedown', function(e){ e.preventDefault(); }); // keep focus in the field
     el.addEventListener('click', function(e){
@@ -14823,7 +14830,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   });
   window.addEventListener('resize', closeDatePop);
-  window.addEventListener('scroll', function(e){ if (datePopEl && !datePopEl.contains(e.target)) closeDatePop(); }, true);
+  window.addEventListener('scroll', function(e){ if (datePopEl && !datePopEl.contains(e.target) && Date.now() - datePopOpenedAt > 300) closeDatePop(); }, true);
   window.addEventListener('hashchange', closeDatePop);
 
   requireConfirm('rulesDeleteRule', 'Delete this rule?', function(pid, si, ri){
