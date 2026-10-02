@@ -1125,6 +1125,44 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function pageHeader(title, sub){
     return '<div><h1 class="page-title">'+title+'</h1><p class="page-sub">'+sub+'</p></div>';
   }
+  /** Shared "organised page" building blocks (same pattern as the Bills page):
+   *  title + round "+" → segmented switch → one toolbar of pill dropdowns → content. */
+  function pageHeadAdd(title, sub, addLabel, onclick){
+    return '<div class="detail-head">'+pageHeader(title, sub)+
+      (addLabel ? '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="mini-btn primary" onclick="'+onclick+'">+ '+esc(addLabel)+'</button></div>' : '')+
+      '</div>';
+  }
+  /** iOS segmented control. items: [[value,label],…]; fn: name of a window function taking the value. */
+  function segHtml(items, active, fn){
+    return '<div class="seg seg-wide" role="tablist">'+items.map(function(t){
+      var on = String(active)===String(t[0]);
+      return '<button type="button" role="tab" aria-selected="'+on+'" class="seg-btn'+(on?' active':'')+'" onclick="'+fn+'(\''+t[0]+'\')">'+t[1]+'</button>';
+    }).join('')+'</div>';
+  }
+  /** Pill dropdown. optionsHtml are ready <option>s; onchange is JS using this.value. */
+  function pillSelectHtml(icon, aria, optionsHtml, onchange, id){
+    return '<label class="pill-select">'+(icon?'<span aria-hidden="true">'+icon+'</span>':'')+
+      '<select'+(id?' id="'+id+'"':'')+' aria-label="'+esc(aria)+'" onchange="'+onchange+'">'+optionsHtml+'</select></label>';
+  }
+  function optionsHtml(list, selected){ // list: [[value,label],…]
+    return list.map(function(o){ return '<option value="'+esc(String(o[0]))+'"'+(String(selected)===String(o[0])?' selected':'')+'>'+esc(o[1])+'</option>'; }).join('');
+  }
+  function propertyOptionList(allLabel){
+    return [['all', allLabel||'All properties']].concat(properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(p){ return [p.id, p.name]; }));
+  }
+  /** Big stat numbers: drop the cents from 5+ digit amounts so 3 tiles fit side by side on a phone. */
+  function moneyStat(n){ var m = money(n); return Math.abs(n) >= 10000 ? m.replace(/\.\d\d$/, '') : m; }
+  /** Card that folds: open on wide screens, folded on phones (until the user toggles it; the choice is kept for the session). */
+  var ccOpenState = {};
+  window.__setCC = function(k, v){ ccOpenState[k] = v; };
+  function collapsibleCardHtml(key, title, hint, bodyHtml, foldOnDesktop){
+    var phone = window.matchMedia && window.matchMedia('(max-width:640px)').matches;
+    var open = (key in ccOpenState) ? ccOpenState[key] : !(phone || foldOnDesktop);
+    return '<details class="card collapsible-card"'+(open?' open':'')+' ontoggle="__setCC(\''+key+'\',this.open)">'+
+      '<summary><span>'+title+'</span>'+(hint?'<span class="cc-hint">'+hint+'</span>':'')+'</summary>'+bodyHtml+'</details>';
+  }
+  function toolbarHtml(parts){ parts = parts.filter(Boolean); return parts.length ? '<div class="bills-toolbar page-toolbar">'+parts.join('')+'</div>' : ''; }
+
   /** Page title with a coloured icon badge — used by the Property Operations areas so each one
    *  (Maintenance, Cleaning, Inspection, House Rules) is recognisable at a glance. */
   function pageHeaderIcon(title, sub, iconName, tone){
@@ -1147,32 +1185,39 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<a class="mini-btn primary" href="'+backHash+'" style="display:inline-block;">'+esc(backLabel)+'</a>');
   }
 
+  var dashNeedsShowAll = false;
+  window.__dashNeedsAll = function(){ dashNeedsShowAll = !dashNeedsShowAll; renderPreservingScroll(); };
   function renderDashboard(){
     var s = getDashboardSummary();
     var monthLabelShort = CALENDAR_MONTH_NAMES[parseInt(TODAY.slice(5,7),10)-1].slice(0,3);
     var needs = getNeedsAttention();
     var upcoming = getUpcomingEvents();
 
-    var stats = [
-      ['Properties', String(s.totalProperties), false, 'goToDashboardStat(\'properties\')'],
-      ['Occupied rooms', String(s.occupiedRooms), false, 'goToDashboardStat(\'properties\')'],
-      ['Vacant rooms', String(s.vacantRooms), false, 'goToDashboardStat(\'vacant\')'],
-      ['Overdue payments', String(s.overduePaymentsCount), s.overduePaymentsCount>0, 'goToDashboardStat(\'overdue\')'],
-      ['Rent expected · '+monthLabelShort, money(s.totalRentExpected), false, 'goToDashboardStat(\'rent-all\')'],
-      ['Rent received · '+monthLabelShort, money(s.totalRentReceived), false, 'goToDashboardStat(\'rent-paid\')'],
-      ['Outstanding · '+monthLabelShort, money(s.totalOutstanding), s.totalOutstanding>0, 'goToDashboardStat(\'rent-due\')'],
-      ['Bills pending', String(s.billsPendingCount), false, 'goToDashboardStat(\'bills-pending\')']
-    ];
-
-    var statHtml = '<div class="stat-grid">' + stats.map(function(st){
+    function tile(st){
       return '<div class="stat stat-clickable" role="button" tabindex="0" onclick="'+st[3]+'" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();'+st[3]+';}" style="cursor:pointer;">'+
         '<div class="label">'+st[0]+'</div><div class="value'+(st[2]?' warn':'')+'">'+st[1]+'</div></div>';
-    }).join('') + '</div>';
+    }
+    var countStats = [
+      ['Properties', String(s.totalProperties), false, 'goToDashboardStat(\'properties\')'],
+      ['Occupied', String(s.occupiedRooms), false, 'goToDashboardStat(\'properties\')'],
+      ['Vacant', String(s.vacantRooms), false, 'goToDashboardStat(\'vacant\')'],
+      ['Overdue', String(s.overduePaymentsCount), s.overduePaymentsCount>0, 'goToDashboardStat(\'overdue\')']
+    ];
+    var moneyStats = [
+      ['Expected', moneyStat(s.totalRentExpected), false, 'goToDashboardStat(\'rent-all\')'],
+      ['Received', moneyStat(s.totalRentReceived), false, 'goToDashboardStat(\'rent-paid\')'],
+      ['Outstanding', moneyStat(s.totalOutstanding), s.totalOutstanding>0, 'goToDashboardStat(\'rent-due\')']
+    ];
+    var statHtml = '<div class="stat-grid cols-4 bills-stats dash-counts">' + countStats.map(tile).join('') + '</div>'+
+      '<h3 class="section-label">Rent · '+monthLabelShort+'<button type="button" class="section-link" onclick="goToDashboardStat(\'bills-pending\')">'+s.billsPendingCount+' bills pending ›</button></h3>'+
+      '<div class="stat-grid cols-3 bills-stats">' + moneyStats.map(tile).join('') + '</div>';
 
-    var needsHtml = '<div class="card"><h2>Needs attention</h2>' +
+    var NEEDS_LIMIT = 5;
+    var needsShown = dashNeedsShowAll ? needs : needs.slice(0, NEEDS_LIMIT);
+    var needsHtml = '<div class="card needs-card"><h2>Needs attention'+(needs.length?' <span class="count-pill">'+needs.length+'</span>':'')+'</h2>' +
       (needs.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing needs attention right now.</p>'
-        : needs.map(function(item){
+        : needsShown.map(function(item){
             if (item.type === 'lease'){
               var leaseBadge = item.daysUntil === 0 ? badge('due', 'Due today') : badge('due', 'Due in '+item.daysUntil+' day'+(item.daysUntil===1?'':'s'));
               return '<div class="row"><div class="who"><div class="name">'+esc(item.propertyName)+'</div>'+
@@ -1204,7 +1249,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               '<button class="view-btn" onclick="openChargePaidModal(\''+item.chargeId+'\')">Mark as paid</button>'+
               '<button class="text-link" style="margin:0;text-align:center;" onclick="viewTenantPayments(\''+item.tenantId+'\')">View</button>'+
               '</div></div></div>';
-          }).join('')
+          }).join('') +
+          (needs.length > NEEDS_LIMIT ? '<button type="button" class="show-more-btn" onclick="__dashNeedsAll()">'+(dashNeedsShowAll ? 'Show less' : 'Show all '+needs.length)+'</button>' : '')
       ) + '</div>';
 
     var upcomingHtml = '<div class="card"><h2>Upcoming</h2>' +
@@ -1951,23 +1997,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var tenantsPropertyFilter = 'all';
   function setTenantsPropertyFilter(propertyId){ tenantsPropertyFilter = propertyId; renderPreservingScroll(); }
   window.setTenantsPropertyFilter = setTenantsPropertyFilter;
+  window.__tenantsSeg = function(v){ setTenantsShowInactive(v==='inactive'); };
 
   function renderTenants(){
     var all = tenants.filter(function(t){ return t.rentAmount>0; });
     var inactiveCount = all.filter(function(t){ return t.isActive===false; }).length;
     var paying = all.filter(function(t){ return tenantsShowInactive ? t.isActive===false : t.isActive!==false; });
-    var header = '<div class="detail-head" style="align-items:center;">'+
-      pageHeader('Tenants', 'Everyone renting from you, and their lease details.')+
-      '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openTenantModal()">+ Add tenant</button></div>'+
-      (inactiveCount>0 ? '<button class="mini-btn" style="margin-bottom:12px;" onclick="setTenantsShowInactive('+(!tenantsShowInactive)+')">'+
-        (tenantsShowInactive ? 'Back to active tenants' : 'Show inactive tenants ('+inactiveCount+')')+'</button>' : '');
-    // Property chips — same pattern as in Bills: filters the list and also groups/organizes
-    // the cards by property (sorted alphabetically) instead of by creation order.
-    var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
-      '<button class="chip'+(tenantsPropertyFilter==='all'?' active':'')+'" onclick="setTenantsPropertyFilter(\'all\')">All properties</button>'+
-      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
-        return '<button class="chip'+(tenantsPropertyFilter===p.id?' active':'')+'" onclick="setTenantsPropertyFilter(\''+p.id+'\')">'+esc(p.name)+'</button>';
-      }).join('') + '</div>';
+    var header = pageHeadAdd('Tenants', 'Everyone renting from you, and their lease details.', 'Add tenant', 'openTenantModal()')+
+      (inactiveCount>0 ? segHtml([['active','Active'],['inactive','Inactive ('+inactiveCount+')']], tenantsShowInactive?'inactive':'active', '__tenantsSeg') : '');
+    // One property dropdown (same as Bills) — filters the list and groups the cards by property.
+    var propertyTabsHtml = properties.length===0 ? '' : toolbarHtml([pillSelectHtml('🏠', 'Property', optionsHtml(propertyOptionList(), tenantsPropertyFilter), 'setTenantsPropertyFilter(this.value)')]);
     if (tenantsPropertyFilter !== 'all'){
       paying = paying.filter(function(t){ return t.propertyId === tenantsPropertyFilter; });
     }
@@ -2170,8 +2209,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         navBtn('Later ›', 'shiftTimeline(1)', canLater, 'One month later'))+
       '<button type="button" class="chip'+(timelineShowAll?' active':'')+'" style="min-height:34px;padding:5px 12px;font-size:12px;" onclick="toggleTimelineAll()">'+(timelineShowAll?'Show 6 months':'Show all')+'</button>'+
       '<span style="font-size:11.5px;color:var(--text-faint);margin-left:auto;">'+rangeLabel+'</span></div>';
-    return '<div class="card">'+
-      '<h2 style="margin-bottom:2px;">Tenancy timeline</h2>'+
+    return collapsibleCardHtml('tenants-timeline', 'Tenancy timeline', rangeLabel+' · rent paid until', '<div>'+
       '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">Active tenants only, one row each, by property. Each bar is their stay, from move-in to today (or their move-out date, if they gave one).</p>'+
       controls+
       (propRows || '<p style="font-size:12.5px;color:var(--text-faint);margin:6px 0;">No one was living there in these months.</p>')+
@@ -2181,7 +2219,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<span style="width:4px;height:11px;border-radius:2px;background:#0b3d2c;display:inline-block;box-shadow:0 0 0 1px #ffffff, 0 0 0 2px var(--border);"></span>Rent paid until</span>'+
         '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
         '<span style="width:2px;height:11px;background:var(--text);opacity:.55;display:inline-block;"></span>Today</span></div>'+
-      '</div>';
+      '</div>');
   }
 
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
@@ -3305,7 +3343,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           (hasActionCol ? '<span class="rh-act">'+receiptIconHtml(receiptForPaidDate(g.paidDate))+'</span>' : '')+
         '</span></div>';
     }
-    var PAID_CAP = Infinity; // every payment is shown (tenant and admin views) — no "earlier payments not shown"
+    // Last 5 payments first; every payment stays one tap away with "Show all" (never hidden for good).
+    var PAID_CAP = rentHistoryShowAll[tenantId] ? Infinity : 5;
     var pendingShown = pending; // pending items are always shown in full, never truncated
     var pendingExtra = 0;
     var paidShown = paidGroups.slice(0, PAID_CAP);
@@ -3316,9 +3355,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (pendingExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+pendingExtra+' more further out, not shown.</p>' : '')+
       '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
       (paidShown.length ? '<div class="field-list">'+paidShown.map(paidGroupRow).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet.</p>')+
-      (paidExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+paidExtra+' earlier payments not shown.</p>' : '')+
+      (paidGroups.length > 5 ? '<button type="button" class="show-more-btn" onclick="__rentHistoryAll(\''+tenantId+'\')">'+(rentHistoryShowAll[tenantId] ? 'Show fewer' : 'Show all '+paidGroups.length+' payments')+'</button>' : '')+
       '</div>';
   }
+  var rentHistoryShowAll = {};
+  window.__rentHistoryAll = function(id){ rentHistoryShowAll[id] = !rentHistoryShowAll[id]; renderPreservingScroll(); };
 
   /** The tenant's permanent payment reference (e.g. NOE105) — quoted in the bank transfer
    *  description for rent AND bills so every payment and receipt can be matched to them. */
@@ -3662,7 +3703,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return paymentsTenantStatusFilter==='moved_out' ? tenantHasMovedOut(t) : !tenantHasMovedOut(t);
       });
     if (paymentsTenantFilter !== 'all' && !tenantPool.some(function(t){ return t.id===paymentsTenantFilter; })) paymentsTenantFilter = 'all';
-    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>'+(monthChosen ? 'All tenants that month' : paymentsTenantStatusFilter==='moved_out'?'All moved-out tenants':'All active tenants')+'</option>'+
+    var tenantOptions = '<option value="all"'+(paymentsTenantFilter==='all'?' selected':'')+'>'+(monthChosen ? 'All tenants that month' : 'All tenants')+'</option>'+
       tenantPool.slice().sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
         return '<option value="'+t.id+'"'+(paymentsTenantFilter===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
       }).join('');
@@ -3673,30 +3714,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return '<option value="'+m+'"'+(paymentsMonthFilter===m?' selected':'')+'>'+label+'</option>';
       }).join('');
 
-    var tenantFilterHtml = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;align-items:flex-end;">'+
-      '<div style="flex:1;min-width:160px;">'+
-      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by property</label>'+
-      '<select class="modal-input" onchange="setPaymentsPropertyFilter(this.value)">'+propertyOptions+'</select>'+
-      '</div>'+
-      '<div style="flex:1;min-width:160px;">'+
-      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Tenant status</label>'+
-      (monthChosen
-        ? '<select class="modal-input" disabled title="A month is selected — showing everyone who lived there that month"><option>Living there that month</option></select>'
-        : '<select class="modal-input" onchange="setPaymentsTenantStatusFilter(this.value)">'+
-      '<option value="active"'+(paymentsTenantStatusFilter==='active'?' selected':'')+'>Active (living there)</option>'+
-      '<option value="moved_out"'+(paymentsTenantStatusFilter==='moved_out'?' selected':'')+'>Moved out</option>'+
-      '</select>')+
-      '</div>'+      '<div style="flex:1;min-width:160px;">'+
-      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by tenant</label>'+
-      '<select class="modal-input" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select>'+
-      '</div>'+
-      '<div style="flex:1;min-width:160px;">'+
-      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by month</label>'+
-      '<select class="modal-input" onchange="setPaymentsMonthFilter(this.value)">'+monthOptionsHtml+'</select>'+
-      '</div>'+
-
-      '<button type="button" class="mini-btn" style="flex:1;min-width:160px;" onclick="togglePaymentsDateSort()">Date: '+(paymentsDateSort==='desc'?'Newest first ▾':'Oldest first ▴')+'</button>'+
-      '</div>';
+    var tenantFilterHtml = toolbarHtml([
+      '<label class="pill-select"><span aria-hidden="true">🏠</span><select aria-label="Property" onchange="setPaymentsPropertyFilter(this.value)">'+propertyOptions+'</select></label>',
+      monthChosen
+        ? '<label class="pill-select is-disabled"><span aria-hidden="true">🟢</span><select aria-label="Tenant status" disabled title="A month is selected — showing everyone who lived there that month"><option>Living there that month</option></select></label>'
+        : pillSelectHtml(paymentsTenantStatusFilter==='moved_out'?'📦':'🟢', 'Tenant status', optionsHtml([['active','Active'],['moved_out','Moved out']], paymentsTenantStatusFilter), 'setPaymentsTenantStatusFilter(this.value)'),
+      '<label class="pill-select"><span aria-hidden="true">👤</span><select aria-label="Tenant" onchange="setPaymentsTenantFilter(this.value)">'+tenantOptions+'</select></label>',
+      '<label class="pill-select"><span aria-hidden="true">📅</span><select aria-label="Month" onchange="setPaymentsMonthFilter(this.value)">'+monthOptionsHtml+'</select></label>',
+      '<button type="button" class="pill-btn" onclick="togglePaymentsDateSort()" aria-label="Sort by date">'+(paymentsDateSort==='desc'?'↓ Newest first':'↑ Oldest first')+'</button>'
+    ]);
 
     // Property + tenant scope when filtering rent charges — the 3 stats above (Expected/
     // Received/Outstanding) are computed AFTER this filter, so "All properties" still
@@ -3717,15 +3743,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var expected = charges.reduce(function(s,c){ return s+c.amountDue; },0);
     var received = charges.reduce(function(s,c){ return s+c.amountPaid; },0);
     var outstanding = charges.reduce(function(s,c){ return s+c.remaining; },0);
-    var statHtml = '<div class="stat-grid cols-3">'+
-      '<div class="stat"><div class="label">Expected</div><div class="value">'+money(expected)+'</div></div>'+
-      '<div class="stat"><div class="label">Received</div><div class="value">'+money(received)+'</div></div>'+
-      '<div class="stat"><div class="label">Outstanding</div><div class="value'+(outstanding>0?' warn':'')+'">'+money(outstanding)+'</div></div>'+
+    var statHtml = '<div class="stat-grid cols-3 bills-stats">'+
+      '<div class="stat"><div class="label">Expected</div><div class="value">'+moneyStat(expected)+'</div></div>'+
+      '<div class="stat"><div class="label">Received</div><div class="value">'+moneyStat(received)+'</div></div>'+
+      '<div class="stat"><div class="label">Outstanding</div><div class="value'+(outstanding>0?' warn':'')+'">'+moneyStat(outstanding)+'</div></div>'+
       '</div>';
 
-    var chipsHtml = '<div class="filter-chips">' + PAYMENTS_FILTERS.map(function(f){
-      return '<button class="chip'+(paymentsFilter===f[0]?' active':'')+'" onclick="setPaymentsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
-    }).join('') + '</div>';
+    var chipsHtml = segHtml(PAYMENTS_FILTERS, paymentsFilter, 'setPaymentsFilter');
 
     var filtered = charges.filter(function(c){ return chargeMatchesFilter(c, paymentsFilter); });
 
@@ -3893,9 +3917,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               (upcomingCharges.length ? '<div class="field-list">'+upcomingCharges.map(upcomingRow).join('')+'</div>'
                 : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No upcoming period (the tenancy ends before the next one).</p>');
           var newestFirst = paymentsDateSort === 'desc';
-          return '<div class="card">'+
-            '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+tenantRefChipHtml(t)+
-            (prop?' <span style="font-weight:400;color:var(--text-faint);font-size:11.5px;">· '+esc(prop.name)+'</span>':'')+'</h2></div>'+
+          // Each tenant folds to one summary line (who, where, what's owed) — open on wide screens,
+          // folded on phones unless only one tenant is listed; tapping opens the full detail.
+          var ccKey = 'pay-'+t.id;
+          var phone = window.matchMedia && window.matchMedia('(max-width:640px)').matches;
+          var openCard = (ccKey in ccOpenState) ? ccOpenState[ccKey] : (!phone || groupTenants.length === 1);
+          var sumBadges = (pending.length ? badge('overdue', pending.length+' due · '+money(pendingTotal)) : badge('paid', 'Up to date'))+
+            (billsTotal > 0 ? ' '+badge('due', 'Bills '+money(billsTotal)) : '');
+          return '<details class="card pay-card"'+(openCard?' open':'')+' ontoggle="__setCC(\''+ccKey+'\',this.open)">'+
+            '<summary class="pay-sum"><span class="pay-who"><span class="pay-name">'+esc(t.fullName)+tenantRefChipHtml(t)+'</span>'+
+            (prop?'<span class="pay-prop">'+esc(prop.name)+'</span>':'')+'</span>'+
+            '<span class="pay-badges">'+sumBadges+'</span></summary>'+
             (newestFirst ? upcomingHtml : '')+
             (!showDue ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
             (pending.length ? '<div class="field-list">'+pending.map(pendingRow).join('')+'</div>'
@@ -3907,7 +3939,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             billsOverdueSummaryHtml(owedBills)+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
             '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
-            '</div>';
+            '</details>';
         }).join('');
 
     var movedOutOwing = paymentsTenantStatusFilter==='active'
@@ -3917,11 +3949,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       ? '<div class="moved-out-owing">💸 '+movedOutOwing.length+' moved-out tenant'+(movedOutOwing.length>1?'s still owe':' still owes')+' money ('+movedOutOwing.map(function(t){ return esc(t.fullName); }).join(', ')+'). '+
         '<button type="button" class="text-link" onclick="setPaymentsTenantStatusFilter(\'moved_out\')">View moved-out tenants</button></div>'
       : '';
-    return statHtml + chipsHtml + tenantFilterHtml + owingNote + rows;
+    return chipsHtml + tenantFilterHtml + staffRentReportsHtml() + statHtml + owingNote + rows;
   }
 
   function renderPayments(){
-    return pageHeader('Payments', "What tenants owe on rent and shared bills, what they've paid, and what's outstanding.") + staffRentReportsHtml() + renderPaymentsRentTab();
+    return pageHeader('Payments', "What tenants owe on rent and shared bills, what they've paid, and what's outstanding.") + renderPaymentsRentTab();
   }
 
   var billsFilter = 'all';
@@ -6101,9 +6133,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var paidTotal = propertyScoped.reduce(function(s,b){ return s+billPaidAmount(b); },0);
 
     var statHtml = '<div class="stat-grid cols-3 bills-stats">'+
-      '<div class="stat"><div class="label">Pending</div><div class="value'+(pendingTotal>0?' warn':'')+'">'+money(pendingTotal)+'</div></div>'+
+      '<div class="stat"><div class="label">Pending</div><div class="value'+(pendingTotal>0?' warn':'')+'">'+moneyStat(pendingTotal)+'</div></div>'+
       '<div class="stat"><div class="label">Overdue</div><div class="value'+(overdueCount>0?' warn':'')+'">'+overdueCount+'</div></div>'+
-      '<div class="stat"><div class="label">Paid</div><div class="value">'+money(paidTotal)+'</div></div>'+
+      '<div class="stat"><div class="label">Paid</div><div class="value">'+moneyStat(paidTotal)+'</div></div>'+
       '</div>';
 
     var chipsHtml = '<div class="filter-chips">' + BILLS_FILTERS.map(function(f){
@@ -7410,22 +7442,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var label = CALENDAR_MONTH_NAMES[parseInt(m.slice(5,7),10)-1] + ' ' + m.slice(0,4);
         return '<option value="'+m+'"'+(reportsMonthFilter===m?' selected':'')+'>'+label+'</option>';
       }).join('');
-    var monthFilterHtml = '<div style="margin-bottom:10px;">'+
-      '<label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by month</label>'+
-      '<select class="modal-input" onchange="setReportsMonthFilter(this.value)">'+monthOptionsHtml+'</select>'+
-      '</div>';
+    var monthFilterHtml = toolbarHtml(['<label class="pill-select"><span aria-hidden="true">📅</span><select aria-label="Month" onchange="setReportsMonthFilter(this.value)">'+monthOptionsHtml+'</select></label>']);
 
-    var statHtml = '<div class="stat-grid">'+
-      ['Rent expected|'+money(scopedRentExpected)+'|0',
-       'Rent received|'+money(scopedRentReceived)+'|0',
-       'Outstanding|'+money(scopedOutstanding)+'|'+(scopedOutstanding>0?1:0),
-       'Bills paid|'+money(billsPaidTotal)+'|0',
-       'Bills outstanding|'+money(billsOutstandingTotal)+'|'+(billsOutstandingTotal>0?1:0),
-       'Net cashflow|'+money(netCashflow)+'|'+(netCashflow<0?1:0)
-      ].map(function(s2){
+    var statHtml = '<h3 class="section-label">Rent</h3><div class="stat-grid cols-3 bills-stats">'+
+      ['Expected|'+moneyStat(scopedRentExpected)+'|0',
+       'Received|'+moneyStat(scopedRentReceived)+'|0',
+       'Outstanding|'+moneyStat(scopedOutstanding)+'|'+(scopedOutstanding>0?1:0)].map(statTile).join('')+'</div>'+
+      '<h3 class="section-label">Bills & cashflow</h3><div class="stat-grid cols-3 bills-stats">'+
+      ['Bills paid|'+moneyStat(billsPaidTotal)+'|0',
+       'Bills owed|'+moneyStat(billsOutstandingTotal)+'|'+(billsOutstandingTotal>0?1:0),
+       'Net cashflow|'+moneyStat(netCashflow)+'|'+(netCashflow<0?1:0)
+      ].map(statTile).join('')+'</div>';
+    function statTile(s2){
         var parts = s2.split('|');
         return '<div class="stat"><div class="label">'+parts[0]+'</div><div class="value'+(parts[2]==='1'?' warn':'')+'">'+parts[1]+'</div></div>';
-      }).join('')+'</div>';
+    }
 
     var occupancyHtml = '<div class="card"><h2>Occupancy</h2>'+
       '<div class="bar-row"><div class="bar-label"><span>'+s.occupiedRooms+' of '+(s.occupiedRooms+s.vacantRooms)+' rooms occupied</span><span>'+occupancyRate+'%</span></div>'+
@@ -7450,13 +7481,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var tenantRows = Object.keys(byTenant).map(function(tenantId){
       var t = tenantOf(tenantId);
       var row = byTenant[tenantId];
-      return '<tr><td>'+esc(t?t.fullName:tenantId)+'</td><td>'+money(row.expected)+'</td><td>'+money(row.received)+'</td>'+
-        '<td'+(row.outstanding>0?' class="warn"':'')+'>'+money(row.outstanding)+'</td></tr>';
+      return '<div class="rt-row"><div class="rt-main"><div class="rt-name">'+esc(t?t.fullName:tenantId)+'</div>'+
+        '<div class="rt-sub">Expected '+money(row.expected)+' · Received '+money(row.received)+'</div></div>'+
+        '<div class="rt-amt'+(row.outstanding>0?' warn':'')+'">'+money(row.outstanding)+'<small>'+(row.outstanding>0?'outstanding':'all paid')+'</small></div></div>';
     }).join('');
     var tenantTableHtml = '<div class="card"><h2>By tenant</h2>'+
       (tenantRows
-        ? '<div class="report-table-wrap"><table class="report-table"><thead><tr><th>Tenant</th><th>Expected</th><th>Received</th><th>Outstanding</th></tr></thead>'+
-          '<tbody>'+tenantRows+'</tbody></table></div>'+
+        ? '<div class="rt-list">'+tenantRows+'</div>'+
           '<p style="font-size:11.5px;color:var(--text-faint);margin:8px 0 0;">'+
             (reportsMonthFilter === 'all'
               ? 'Covers every rent period since move-in, not just the current one.'
@@ -7466,7 +7497,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>';
 
     return pageHeader('Reports', 'Expected vs received rent, outstanding balances, bills and occupancy at a glance.') +
-      monthFilterHtml + statHtml + occupancyHtml + billsBreakdownHtml + tenantTableHtml;
+      monthFilterHtml + statHtml + tenantTableHtml + occupancyHtml + billsBreakdownHtml;
   }
 
   /** "Profits" by property: a current run-rate snapshot (not a historical
@@ -7541,6 +7572,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         emptyState('chart', 'Nothing to show yet', 'Once you add properties and tenants, profits will show up here.',
           '<a class="mini-btn primary" href="#/properties" style="display:inline-block;">Go to properties</a>');
     }
+    var totals = { week:0, month:0, income:0 };
     var cardsHtml = properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
       var b = propertyProfitBreakdown(p);
       var roomRowsHtml = b.rooms.map(function(l){
@@ -7567,31 +7599,33 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               '<button type="button" class="icon-mini-btn danger" title="Delete" onclick="deleteIncludedBillConfirm(\''+l.entry.id+'\')">✕</button></span></div>';
           }).join('')
         : '';
-      return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
-        '<h2 style="margin:0;"><a href="#/properties/'+p.id+'" style="color:inherit;text-decoration:none;">'+esc(p.name)+'</a></h2>'+
-        '<div style="font-weight:700;font-size:15px;color:'+(b.weeklyProfit<0?'var(--status-overdue)':'var(--status-paid)')+';">'+money(b.weeklyProfit)+'/week</div>'+
-        '</div>'+
-        '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Rooms</h3>'+
-        '<div class="field-list">'+roomRowsHtml+'</div>'+
-        '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Included bills (paid by you, subtracted)</h3>'+
-        includedBillRowsHtml+
-        inactiveRowsHtml+
-        '<div class="field-list" style="margin-top:10px;">'+
+      totals.week += b.weeklyProfit; totals.month += b.monthlyProfit; totals.income += b.weeklyIncome;
+      var detailsBody = '<h3 class="pf-h">Rooms</h3><div class="field-list">'+roomRowsHtml+'</div>'+
+        '<h3 class="pf-h">Included bills (paid by you, subtracted)</h3>'+includedBillRowsHtml+inactiveRowsHtml;
+      return '<div class="card profit-card">'+
+        '<div class="pf-head"><a href="#/properties/'+p.id+'" class="pf-name">'+esc(p.name)+'</a>'+
+        '<span class="pf-big'+(b.weeklyProfit<0?' neg':'')+'">'+money(b.weeklyProfit)+'<small>/week</small></span></div>'+
+        '<div class="field-list">'+
         '<div class="field-row"><span class="k">Weekly income</span><span class="v">'+money(b.weeklyIncome)+'</span></div>'+
         '<div class="field-row"><span class="k">Included bills</span><span class="v">−'+money(b.weeklyIncludedBillsTotal)+'</span></div>'+
         '<div class="field-row"><span class="k">Paid to real estate</span><span class="v">'+(b.hasLeaseCost ? '−'+money(b.weeklyCost) : '—')+'</span></div>'+
-        '</div>'+
-        '<div class="field-list" style="margin-top:6px;">'+
-        '<div class="field-row"><span class="k">Profit / week</span><span class="v" style="font-weight:700;">'+money(b.weeklyProfit)+'</span></div>'+
+        '<div class="field-row pf-total"><span class="k">Profit / week</span><span class="v">'+money(b.weeklyProfit)+'</span></div>'+
         (b.isFortnightlyLease ? '<div class="field-row"><span class="k">Profit / 2 weeks</span><span class="v">'+money(b.fortnightlyProfit)+'</span></div>' : '')+
         '<div class="field-row"><span class="k">Profit / month</span><span class="v">'+money(b.monthlyProfit)+'</span></div>'+
         '</div>'+
         (b.hasLeaseCost ? '' : '<p style="font-size:11px;color:var(--text-faint);margin:8px 0 0;">No lease amount set for this property, so cost is not subtracted here.</p>')+
+        '<details class="pf-more"'+(ccOpenState['pf-'+p.id]?' open':'')+' ontoggle="__setCC(\'pf-'+p.id+'\',this.open)"><summary>Rooms ('+b.rooms.length+') · included bills ('+b.includedBills.length+')</summary>'+detailsBody+'</details>'+
         '</div>';
     }).join('');
 
+    var summaryHtml = '<div class="stat-grid cols-3 bills-stats">'+
+      '<div class="stat"><div class="label">Profit / week</div><div class="value'+(totals.week<0?' warn':'')+'">'+moneyStat(totals.week)+'</div></div>'+
+      '<div class="stat"><div class="label">Profit / month</div><div class="value'+(totals.month<0?' warn':'')+'">'+moneyStat(totals.month)+'</div></div>'+
+      '<div class="stat"><div class="label">Rent / week</div><div class="value">'+moneyStat(totals.income)+'</div></div>'+
+      '</div>';
+
     return pageHeader('Profits', "What each property earns after admin-paid costs bundled into rent, and what you pay the real estate.") +
-      cardsHtml;
+      summaryHtml + cardsHtml;
   }
 
   /* ---------- PHASE 13: Notifications ---------- */
@@ -7681,48 +7715,39 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   function renderNotificationsStaff(){
-    var filterOptionsTenants = '<option value="all">All residents</option>' + tenants.filter(function(t){ return t.rentAmount>0; }).sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){
-      return '<option value="'+t.id+'"'+(notifFilterTenantId===t.id?' selected':'')+'>'+esc(t.fullName)+'</option>';
-    }).join('');
-    var filterOptionsProperties = '<option value="all">All properties</option>' + properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(p){
-      return '<option value="'+p.id+'"'+(notifFilterPropertyId===p.id?' selected':'')+'>'+esc(p.name)+'</option>';
-    }).join('');
-    var filterOptionsCategories = '<option value="all">All categories</option>' + Object.keys(NOTIFICATION_CATEGORY_META).map(function(cat){
-      var meta = NOTIFICATION_CATEGORY_META[cat];
-      return '<option value="'+cat+'"'+(notifFilterCategory===cat?' selected':'')+'>'+meta.emoji+' '+meta.label+'</option>';
-    }).join('');
+    var tenantOpts = [['all','All residents']].concat(tenants.filter(function(t){ return t.rentAmount>0; }).sort(function(a,b){ return a.fullName.localeCompare(b.fullName); }).map(function(t){ return [t.id, t.fullName]; }));
+    var catOpts = [['all','All categories']].concat(Object.keys(NOTIFICATION_CATEGORY_META).map(function(cat){ var m = NOTIFICATION_CATEGORY_META[cat]; return [cat, m.emoji+' '+m.label]; }));
 
     var rows = notificationsFiltered();
     var listHtml = rows.length===0
       ? emptyState('bell', 'No notifications match these filters', 'Try widening your filters, or send a new one.', '')
-      : '<div class="card">' + rows.map(function(n){
+      : '<div class="card nt-list">' + rows.map(function(n){
           var meta = NOTIFICATION_CATEGORY_META[n.category] || NOTIFICATION_CATEGORY_META.general_announcement;
           var recipient = n.tenantId ? (tenantOf(n.tenantId) ? tenantOf(n.tenantId).fullName : '—') : (n.propertyId ? (propertyOf(n.propertyId) ? propertyOf(n.propertyId).name + ' (all residents)' : '—') : '—');
           var canCancel = n.scheduledFor && !n.canceledAt && !n.archivedAt && n.scheduledFor > new Date().toISOString();
           var canArchive = !n.archivedAt;
           // A row addressed to the signed-in admin themselves (e.g. a "missing bill" system
-          // alert) needs its own mark-read affordance here — this list is the only place staff
-          // sees their own notifications now that the route no longer falls back to renderNotifications().
+          // alert) needs its own mark-read affordance here.
           var isMine = currentProfile && n.authUserId === currentProfile.authUserId;
-          return '<div class="notif-row" style="align-items:flex-start;padding:10px 0;">'+
-            '<span style="min-width:0;flex:1;"><div style="font-weight:600;font-size:13.5px;">'+meta.emoji+' '+esc(n.title)+'</div>'+
-            '<div class="meta" style="font-size:11.5px;color:var(--text-faint);">'+esc(recipient)+' · '+meta.label+' · created '+shortDate((n.createdAt||'').slice(0,10))+(n.scheduledFor?' · sends '+shortDate(n.scheduledFor.slice(0,10)):'')+'</div>'+
-            (n.body ? '<div class="meta" style="font-size:12px;color:var(--text-dim);">'+esc(n.body)+'</div>' : '')+
-            '</span>'+notifStatusLabel(n)+
-            '<span style="display:flex;gap:6px;">'+
-            (isMine && !n.isRead ? '<button class="mini-btn" onclick="markDbNotifRead(\''+n.id+'\')">Mark read</button>' : '')+
+          var actions = (isMine && !n.isRead ? '<button class="mini-btn" onclick="markDbNotifRead(\''+n.id+'\')">Mark read</button>' : '')+
             (canCancel ? '<button class="mini-btn" onclick="cancelScheduledNotification(\''+n.id+'\')">Cancel</button>' : '')+
-            (canArchive ? '<button class="mini-btn" onclick="archiveNotification(\''+n.id+'\')">Archive</button>' : '')+
-            '</span></div>';
+            (canArchive ? '<button class="mini-btn" onclick="archiveNotification(\''+n.id+'\')">Archive</button>' : '');
+          return '<div class="nt-row">'+
+            '<span class="nt-emoji" aria-hidden="true">'+meta.emoji+'</span>'+
+            '<div class="nt-main">'+
+              '<div class="nt-top"><div class="nt-title">'+esc(n.title)+'</div>'+notifStatusLabel(n)+'</div>'+
+              '<div class="nt-meta">'+esc(recipient)+' · '+meta.label+' · '+shortDate((n.createdAt||'').slice(0,10))+(n.scheduledFor?' · sends '+shortDate(n.scheduledFor.slice(0,10)):'')+'</div>'+
+              (n.body ? '<div class="nt-body">'+esc(n.body)+'</div>' : '')+
+              (actions ? '<div class="nt-actions">'+actions+'</div>' : '')+
+            '</div></div>';
         }).join('') + '</div>';
 
-    return pageHeader('Notifications', 'Everything sent to residents — filter, review, or send a new one.') +
-      '<div class="card" style="margin-bottom:12px;"><div class="detail-head" style="margin-top:0;align-items:center;flex-wrap:wrap;gap:8px;">'+
-      '<select id="notif-filter-tenant" onchange="setNotifFilter(\'tenant\',this.value)" style="max-width:180px;">'+filterOptionsTenants+'</select>'+
-      '<select id="notif-filter-property" onchange="setNotifFilter(\'property\',this.value)" style="max-width:180px;">'+filterOptionsProperties+'</select>'+
-      '<select id="notif-filter-category" onchange="setNotifFilter(\'category\',this.value)" style="max-width:200px;">'+filterOptionsCategories+'</select>'+
-      '<button class="mini-btn primary" style="margin-left:auto;" onclick="openNotificationComposeModal()">+ New notification</button>'+
-      '</div></div>'+
+    return pageHeadAdd('Notifications', 'Everything sent to residents — filter, review, or send a new one.', 'New notification', 'openNotificationComposeModal()') +
+      toolbarHtml([
+        pillSelectHtml('👤', 'Resident', optionsHtml(tenantOpts, notifFilterTenantId), "setNotifFilter('tenant',this.value)", 'notif-filter-tenant'),
+        pillSelectHtml('🏠', 'Property', optionsHtml(propertyOptionList(), notifFilterPropertyId), "setNotifFilter('property',this.value)", 'notif-filter-property'),
+        pillSelectHtml('🏷️', 'Category', optionsHtml(catOpts, notifFilterCategory), "setNotifFilter('category',this.value)", 'notif-filter-category')
+      ])+
       listHtml;
   }
 
@@ -8047,12 +8072,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div id="migration-status" style="font-size:12px;color:var(--text-dim);margin-top:8px;white-space:pre-wrap;">'+esc(migrationStatusMessage)+'</div>'+
       '</div>';
     var recurringSection = isStaff() ? recurringBillsCardHtml('all') : '';
-    return pageHeader('Settings', 'App lock, backup and sync, and preferences.') +
-      '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">About storage</h2>'+
-      '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your data is stored in your own Supabase project, protected by row-level security, and loaded fresh from there every time you sign in. Use the backup below for an extra offline copy.</p></div>'+
-      recurringSection +
-      migrationCard +
-      '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">App lock (local)</h2>'+
+    var accountCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Account</h2>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+      '<button class="mini-btn" onclick="openChangePasswordModal()">Change password</button>'+
+      '<button class="mini-btn" onclick="signOutAndReload()">Sign out</button>'+
+      '</div></div>';
+    var pinCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">App lock (local)</h2>'+
       '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">A simple screen PIN for this app on this device. It is not encryption or real authentication — it only stops a casual glance; anyone using the browser\'s developer tools can bypass it.</p>'+
       (pin
         ? '<div class="field-row"><span class="k">Status</span><span class="v">PIN set</span></div>'+
@@ -8060,8 +8085,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<button class="mini-btn" onclick="openSetPinModal()">Change PIN</button>'+
           '<button class="mini-btn" onclick="removeAppPin()">Remove PIN</button></div>'
         : '<button class="mini-btn primary" onclick="openSetPinModal()">Set a PIN</button>')+
-      '</div>'+
-      '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Backup &amp; restore</h2>'+
+      '</div>';
+    var backupCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Backup &amp; restore</h2>'+
       '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">Export a JSON file with your properties, rooms, tenants, bonds, rent schedules, payments, bills (including allocations) and notification status. Import it to restore — this replaces the data currently on this device.</p>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
       '<button class="mini-btn primary" onclick="exportBackup()">Export backup (.json)</button>'+
@@ -8069,12 +8094,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>'+
       '<input type="file" id="backup-file-input" accept="application/json" hidden onchange="handleImportBackup(event)" />'+
       (backupStatusMessage ? '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;">'+esc(backupStatusMessage)+'</p>' : '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;"></p>')+
-      '</div>'+
-      '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Account</h2>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
-      '<button class="mini-btn" onclick="openChangePasswordModal()">Change password</button>'+
-      '<button class="mini-btn" onclick="signOutAndReload()">Sign out</button>'+
-      '</div></div>';
+      '</div>';
+    var advanced = collapsibleCardHtml('settings-advanced', 'Storage & old data', 'Where your data lives · migrate from an older version',
+      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">Your data is stored in your own Supabase project, protected by row-level security, and loaded fresh from there every time you sign in. Use the backup above for an extra offline copy.</p>'+
+      migrationCard.replace('<div class="card">', '<div class="cc-section">'), true);
+    // Most used first: account, app lock, backup; then recurring bills; rarely needed info folded at the end.
+    return pageHeader('Settings', 'Account, app lock, backup and preferences.') +
+      accountCard + pinCard + backupCard + recurringSection + advanced;
   }
 
   function openChangePasswordModal(){
@@ -10235,24 +10261,24 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function renderUsers(){
     if (!isSuperAdmin()) return accessDeniedPage();
     var USERS_TABS = [['administrator','Admins'],['super_admin','Super Admins'],['tenant','Tenants']];
-    var tabsHtml = '<div class="filter-chips" style="margin-bottom:10px;">' + USERS_TABS.map(function(tb){
+    var tabsHtml = segHtml(USERS_TABS.map(function(tb){
       var count = allProfiles.filter(function(p){ return p.role===tb[0]; }).length;
-      return '<button class="chip'+(usersViewTab===tb[0]?' active':'')+'" onclick="setUsersViewTab(\''+tb[0]+'\')">'+tb[1]+' ('+count+')</button>';
-    }).join('') + '</div>';
+      return [tb[0], tb[1].replace('Super Admins','Super')+' <span class="seg-count">'+count+'</span>'];
+    }), usersViewTab, 'setUsersViewTab');
     var scopedProfiles = allProfiles.filter(function(p){ return p.role === usersViewTab; });
     // Tenants tab: filter by the property the tenant lives at (via their linked tenant record).
     var usersPropertyFilterHtml = '';
     if (usersViewTab === 'tenant'){
       var tenantOfProfile = function(p){ return tenants.find(function(t){ return t.authUserId && t.authUserId === p.authUserId; }); };
-      usersPropertyFilterHtml = '<div style="max-width:320px;margin:0 0 12px;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Filter by property</label>'+
-        '<select class="modal-input" onchange="setUsersPropertyFilter(this.value)">'+
+      usersPropertyFilterHtml = '<div class="bills-toolbar page-toolbar"><label class="pill-select"><span aria-hidden="true">🏠</span>'+
+        '<select aria-label="Property" onchange="setUsersPropertyFilter(this.value)">'+
         '<option value="all"'+(usersPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
         properties.slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(pr){
           var n = scopedProfiles.filter(function(p){ var t = tenantOfProfile(p); return t && t.propertyId === pr.id; }).length;
           return '<option value="'+pr.id+'"'+(usersPropertyFilter===pr.id?' selected':'')+'>'+esc(pr.name)+' ('+n+')</option>';
         }).join('')+
         '<option value="none"'+(usersPropertyFilter==='none'?' selected':'')+'>Not linked to a tenant</option>'+
-        '</select></div>';
+        '</select></label></div>';
       if (usersPropertyFilter !== 'all'){
         scopedProfiles = scopedProfiles.filter(function(p){
           var t = tenantOfProfile(p);
@@ -10304,8 +10330,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<button class="mini-btn" style="color:var(--status-overdue);" onclick="confirmDeleteUser(\''+p.id+'\')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t delete your own account"':'')+'>Delete</button>'+
         '</div>'+assignHtml+'</div>';
     }).join('');
-    return pageHeader('Users', 'Every account and its role. Only a Super Admin sees this page.') +
-      '<button class="mini-btn primary" style="margin-bottom:12px;" onclick="openUserModal()">Create user</button>'+
+    return pageHeadAdd('Users', 'Every account and its role. Only a Super Admin sees this page.', 'Create user', 'openUserModal()') +
       tabsHtml + usersPropertyFilterHtml +
       (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No '+ (USERS_TABS.find(function(tb){return tb[0]===usersViewTab;})||['','users'])[1].toLowerCase() +' yet.</p></div>');
   }
@@ -10715,6 +10740,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     renderPreservingScroll();
   }
   window.setAuditFilter = setAuditFilter;
+  window.__auditType = function(v){ setAuditFilter('type', v); };
   function refreshAuditLog(){ auditLogRows = null; render(); }
   window.refreshAuditLog = refreshAuditLog;
 
@@ -10810,16 +10836,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (auditFilterUser!=='all' && r.user_id!==auditFilterUser) return false;
       return true;
     });
-    var chips = '<div class="filter-chips">'+[['all','All'],['logins','Sign-ins'],['changes','Changes']].map(function(c){
-      return '<button class="chip'+(auditFilterType===c[0]?' active':'')+'" onclick="setAuditFilter(\'type\',\''+c[0]+'\')">'+c[1]+'</button>'; }).join('')+'</div>';
-    var selects = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">'+
-      '<div style="flex:1;min-width:160px;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Who</label>'+
-      '<select class="modal-input" onchange="setAuditFilter(\'role\',this.value)">'+
-        [['all','Everyone'],['tenant','Tenants'],['staff','Admins']].map(function(o){ return '<option value="'+o[0]+'"'+(auditFilterRole===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>'+
-      '<div style="flex:1;min-width:160px;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin-bottom:4px;">Person</label>'+
-      '<select class="modal-input" onchange="setAuditFilter(\'user\',this.value)"><option value="all">All people</option>'+
-        Object.keys(people).sort(function(a,b){ return people[a].localeCompare(people[b]); }).map(function(id){ return '<option value="'+id+'"'+(auditFilterUser===id?' selected':'')+'>'+esc(people[id])+'</option>'; }).join('')+'</select></div>'+
-      '<button type="button" class="mini-btn" style="align-self:flex-end;" onclick="refreshAuditLog()">Refresh</button></div>';
+    var chips = segHtml([['all','All'],['logins','Sign-ins'],['changes','Changes']], auditFilterType, '__auditType');
+    var selects = toolbarHtml([
+      pillSelectHtml('👥', 'Who', optionsHtml([['all','Everyone'],['tenant','Tenants'],['staff','Admins']], auditFilterRole), "setAuditFilter('role',this.value)"),
+      pillSelectHtml('👤', 'Person', optionsHtml([['all','All people']].concat(Object.keys(people).sort(function(a,b){ return people[a].localeCompare(people[b]); }).map(function(id){ return [id, people[id]]; })), auditFilterUser), "setAuditFilter('user',this.value)"),
+      '<button type="button" class="pill-btn" onclick="refreshAuditLog()" aria-label="Refresh">↻ Refresh</button>'
+    ]);
     var ROLE_BADGE = { tenant:['upcoming','Tenant'], administrator:['move','Admin'], super_admin:['move','Super Admin'], system:['neutral','System'], unknown:['neutral','Unknown'] };
     var lastDay = '';
     var list = rows.map(function(r){
@@ -10834,7 +10856,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<span class="audit-main"><span class="audit-who">'+esc(w.name)+' '+badge(rb[0], rb[1])+'</span>'+
         '<span class="audit-what">'+esc(auditDescribe(r))+'</span></span></div>';
     }).join('');
-    return header + '<div class="card">'+chips+selects+
+    return header + chips + selects + '<div class="card">'+
       (list ? '<div class="audit-list">'+list+'</div>' : '<p style="font-size:13px;color:var(--text-faint);margin:6px 0 0;">Nothing matches these filters.</p>')+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:10px 0 0;">Showing the latest '+auditLogRows.length+' entries.</p></div>';
   }
