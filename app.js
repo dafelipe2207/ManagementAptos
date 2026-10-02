@@ -1802,8 +1802,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       leasePayments.unshift(row);
       // The "next due" date follows the latest period paid — recording an older, missed period
       // in the history must not move it backwards.
-      if (!p.lastLeasePaymentDate || start >= p.lastLeasePaymentDate){
-        var saved = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: start }));
+      var propPatch = {};
+      if (!p.lastLeasePaymentDate || start >= p.lastLeasePaymentDate) propPatch.lastLeasePaymentDate = start;
+      // No lease amount on the property yet → take it from this payment, so Lease / Profit work right away.
+      if (p.leasePaymentAmount == null && amount > 0) propPatch.leasePaymentAmount = amount;
+      if (Object.keys(propPatch).length){
+        var saved = await propertyService.update(p.id, Object.assign({}, p, propPatch));
         Object.assign(p, saved);
       }
       closeLeasePaymentModal();
