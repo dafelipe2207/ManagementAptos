@@ -1990,6 +1990,27 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (t.moveInDate > TODAY) return { color:'var(--status-upcoming)', label:'Upcoming move-in' };
       return { color:'var(--status-paid)', label:'Current tenant' };
     }
+    /** Last day the tenant's rent is paid up to: the end of the last period in an unbroken run of
+     *  paid periods from move-in (null when nothing has been paid yet). */
+    function paidUntilOf(t){
+      var mine = rentCharges.filter(function(c){ return c.tenantId === t.id; })
+        .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+      var until = null;
+      for (var i = 0; i < mine.length; i++){
+        if (mine[i].status === 'paid' || mine[i].remaining <= 0.004) until = mine[i].periodEnd; else break;
+      }
+      return until;
+    }
+    function paidMarkerHtml(t){
+      if (tenantStatus(t).label !== 'Current tenant') return '';
+      var until = paidUntilOf(t);
+      if (!until || until < rangeStart || until > rangeEnd) return '';
+      var left = pct(stepDateIso(until, 1));
+      var behind = until < TODAY;
+      return '<div title="'+esc(t.fullName)+': rent paid until '+shortDate(until)+(behind ? ' (behind)' : '')+'" '+
+        'style="position:absolute;top:0;bottom:0;left:calc('+left+'% - 2px);width:4px;border-radius:2px;background:#4ade80;'+
+        'box-shadow:0 0 0 1.5px var(--bg-elevated);z-index:2;pointer-events:none;"></div>';
+    }
     function barHtml(t){
       var end = endOf(t);
       var left = pct(t.moveInDate);
@@ -2007,7 +2028,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     function roomRowHtml(roomLabel, tenantsInRoom){
       return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
         '<span style="font-size:11.5px;color:var(--text-dim);width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(roomLabel)+'</span>'+
-        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+tenantsInRoom.map(barHtml).join('')+todayLineHtml+'</div></div>';
+        '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+tenantsInRoom.map(barHtml).join('')+todayLineHtml+tenantsInRoom.map(paidMarkerHtml).join('')+'</div></div>';
     }
 
     var byProperty = {};
@@ -2056,7 +2077,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       controls+
       (propRows || '<p style="font-size:12.5px;color:var(--text-faint);margin:6px 0;">No one was living there in these months.</p>')+
       '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
-      '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') + legendItem('var(--status-move)','Moved out')+'</div>'+
+      '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') + legendItem('var(--status-move)','Moved out') +
+        '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
+        '<span style="width:4px;height:11px;border-radius:2px;background:#4ade80;display:inline-block;box-shadow:0 0 0 1px var(--border);"></span>Rent paid until</span>'+
+        '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
+        '<span style="width:2px;height:11px;background:var(--text);opacity:.55;display:inline-block;"></span>Today</span></div>'+
       '</div>';
   }
 
