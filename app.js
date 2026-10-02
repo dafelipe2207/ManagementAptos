@@ -10103,7 +10103,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         ['super_admin','administrator','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
-        '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\')">Set / reset password</button>'+
+        '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\')">Reset password</button>'+
         (phoneLogin ? '' : '<button class="mini-btn" onclick="sendUserPasswordResetEmail(\''+p.id+'\')">Email reset link</button>')+
         '<button class="mini-btn" onclick="openEditUserModal(\''+p.id+'\')">Edit</button>'+
         '<button class="mini-btn" style="color:var(--status-overdue);" onclick="confirmDeleteUser(\''+p.id+'\')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t delete your own account"':'')+'>Delete</button>'+
@@ -10277,32 +10277,46 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  Tenant) directly — no email reset link is sent to anyone anymore. Instead,
    *  after saving the new password, the option to share it over WhatsApp is offered (using the
    *  phone number saved on the profile), just like the rest of the app shares things with tenants. */
-  async function resetUserPassword(profileId){
+  function resetUserPassword(profileId){
     var target = allProfiles.find(function(p){ return p.id===profileId; });
     if (!target) return;
     var label = (target.firstName + ' ' + target.lastName).trim() || target.email || 'this user';
-    var newPw = window.prompt('Set a password for ' + label + ' (at least 8 characters). You\'ll get the chance to send it to them over WhatsApp next.');
-    if (!newPw) return;
-    if (newPw.length < 8){ showToast('Password must be at least 8 characters.', 'error'); return; }
-    try {
-      await profileService.forceSetPassword(profileId, newPw);
-      target.currentPassword = newPw;
-      showToast('Password saved.', 'success');
-      render();
-      offerPasswordWhatsAppShare(target, newPw);
-    } catch(err){
-      showToast('Could not update the password. ' + friendlyErrorMessage(err), 'error');
-    }
+    // The new password is generated automatically (random, easy to read out) — no typing.
+    var newPw = generatePassword(10);
+    openConfirmModal('Reset ' + label + '\'s password?',
+      'A new password will be generated automatically:\n\n' + newPw + '\n\nTheir old password stops working right away. Next you can send the new one by WhatsApp.',
+      async function(){
+        try {
+          await profileService.forceSetPassword(profileId, newPw);
+          target.currentPassword = newPw;
+          showToast('New password set for ' + label + '.', 'success');
+          render();
+          setTimeout(function(){
+            openConfirmModal('Send the new password to ' + label + '?', passwordShareMessage(target, newPw),
+              function(){ offerPasswordWhatsAppShare(target, newPw); }, { confirmLabel: 'Send by WhatsApp' });
+          }, 50);
+        } catch(err){
+          return { blocked:true, message:'Could not update the password. ' + friendlyErrorMessage(err) };
+        }
+      },
+      { confirmLabel: 'Reset password' });
+  }
+  function passwordShareMessage(profile, newPassword){
+    var loginId = isPhoneLoginProfile(profile) ? profile.phone : profile.email;
+    var name = (profile.firstName + ' ' + profile.lastName).trim() || 'there';
+    var t = tenants.find(function(x){ return x.authUserId && x.authUserId === profile.authUserId; });
+    var ref = t ? tenantPaymentRef(t) : '';
+    return 'Hi ' + name + ', your login to the house app was reset.\n' +
+      (ref ? 'User: ' + ref + ' (or ' + loginId + ')' : 'User: ' + loginId) + '\nPassword: ' + newPassword +
+      '\n\nApp: ' + appPublicUrl() + '\nYou can change the password in Settings once you\'re in.';
   }
   /** Offers to share the newly assigned password over WhatsApp — uses the native share sheet
    *  when available (same as "Share to WhatsApp group" in Bills); otherwise, opens a direct
    *  WhatsApp chat with the phone number saved on the profile; if there's no saved phone number,
    *  just notes that it needs to be copied by hand (it's already saved and visible in Users). */
   async function offerPasswordWhatsAppShare(profile, newPassword){
-    var loginId = isPhoneLoginProfile(profile) ? profile.phone : profile.email;
     var name = (profile.firstName + ' ' + profile.lastName).trim() || 'there';
-    var message = 'Hi ' + name + ', your Manager login was updated.\n' +
-      'Username: ' + loginId + '\nPassword: ' + newPassword + '\n\nKeep this somewhere safe.';
+    var message = passwordShareMessage(profile, newPassword);
     if (navigator.share){
       try { await navigator.share({ text: message, title: 'Manager login' }); return; }
       catch(e){ /* user cancelled the share sheet — fall through to the direct link below */ }
@@ -10376,8 +10390,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function generatePassword(len){
     len = len || 8;
     var chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    var bytes = new Uint32Array(len);
+    (window.crypto || window.msCrypto).getRandomValues(bytes); // cryptographically random, not Math.random
     var out = '';
-    for (var i=0;i<len;i++) out += chars.charAt(Math.floor(Math.random()*chars.length));
+    for (var i=0;i<len;i++) out += chars.charAt(bytes[i] % chars.length);
+    // always include at least one digit, so it passes "must contain a number" rules
+    if (!/[0-9]/.test(out)) out = out.slice(0, -1) + '23456789'.charAt(bytes[0] % 8);
     return out;
   }
   function regenerateUserPassword(){
