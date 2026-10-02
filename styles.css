@@ -1703,3 +1703,50 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
   .pp-head .pp-actions{margin-left:auto !important;}
   .pp-head{flex-wrap:nowrap !important;}
 }
+
+/* ===== Bills page: segmented view switch, property pill, collapsible timeline ===== */
+.seg.seg-wide{display:flex;width:100%;max-width:420px;gap:2px;padding:3px;border-radius:12px;margin:0 0 12px;
+  background:var(--glass,rgba(120,120,128,.12));border:1px solid var(--glass-border,var(--border));
+  -webkit-backdrop-filter:blur(var(--glass-blur,18px));backdrop-filter:blur(var(--glass-blur,18px));}
+.seg.seg-wide .seg-btn{flex:1;border:none;background:none;font:inherit;font-size:13.5px;font-weight:600;letter-spacing:-.01em;
+  padding:7px 10px;min-height:34px;border-radius:9px;color:var(--text-dim);cursor:pointer;transition:background .18s,color .18s,box-shadow .18s;}
+.seg.seg-wide .seg-btn.active{background:var(--bg-elevated,#fff);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04);}
+.bills-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 14px;}
+.pill-select{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:0 4px 0 12px;min-height:38px;border-radius:999px;
+  background:var(--glass-strong,var(--bg-elevated));border:1px solid var(--glass-border,var(--border));box-shadow:var(--glass-shadow,none);}
+.pill-select > span{font-size:15px;line-height:1;}
+.pill-select select{appearance:none;-webkit-appearance:none;border:none !important;background:transparent !important;box-shadow:none !important;
+  font:inherit;font-size:14px;font-weight:600;color:var(--text);padding:8px 26px 8px 2px !important;min-height:0;max-width:240px;
+  text-overflow:ellipsis;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--text-dim) 50%),linear-gradient(135deg,var(--text-dim) 50%,transparent 50%) !important;
+  background-position:calc(100% - 13px) 52%,calc(100% - 8px) 52% !important;background-size:5px 5px,5px 5px !important;background-repeat:no-repeat !important;}
+.pill-select select:focus{outline:none;}
+.pill-select:focus-within{box-shadow:0 0 0 3px rgba(10,132,255,.25);}
+.collapsible-card{padding:0 !important;overflow:hidden;}
+.collapsible-card > summary{list-style:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:16px 44px 16px 18px;
+  cursor:pointer;position:relative;font-weight:700;font-size:16px;letter-spacing:-.01em;}
+.collapsible-card > summary::-webkit-details-marker{display:none;}
+.collapsible-card > summary::after{content:"";position:absolute;right:20px;top:50%;width:8px;height:8px;margin-top:-6px;
+  border-right:2px solid var(--text-dim);border-bottom:2px solid var(--text-dim);transform:rotate(45deg);transition:transform .2s;}
+.collapsible-card[open] > summary::after{transform:rotate(-135deg);margin-top:-2px;}
+.collapsible-card .cc-hint{font-size:12.5px;font-weight:500;color:var(--text-dim);}
+.collapsible-card > :not(summary){margin-left:18px;margin-right:18px;}
+.collapsible-card > :last-child{margin-bottom:16px;}
+@media (max-width:640px){
+  .seg.seg-wide{max-width:none;}
+  .bills-toolbar .pill-select{flex:1;}
+  .bills-toolbar .pill-select select{max-width:none;flex:1;}
+}
+.pill-select{min-width:0;}
+.pill-select select{min-width:0;width:100%;}
+@media (max-width:640px){ .bills-toolbar .pill-select select{width:0;} }
+.seg.seg-wide + .bills-toolbar{margin-top:-2px;}
+@media (max-width:640px){
+  .bills-stats{grid-template-columns:repeat(3,minmax(0,1fr)) !important;gap:8px !important;}
+  .bills-stats .stat{padding:10px 11px !important;min-width:0;}
+  .bills-stats .stat .label{font-size:11.5px;}
+  .bills-stats .stat .value{font-size:17px !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+}
+@media (max-width:640px){ .bills-stats .stat{padding:10px 9px !important;} .bills-stats .stat .value{font-size:15.5px !important;letter-spacing:-.02em;} }
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .seg.seg-wide .seg-btn.active{background:rgba(255,255,255,.16);} }
+:root[data-theme="dark"] .seg.seg-wide .seg-btn.active{background:rgba(255,255,255,.16);}

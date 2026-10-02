@@ -5993,30 +5993,34 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.setBillsViewTab = setBillsViewTab;
   function billsViewTabsHtml(){
-    return '<div class="filter-chips" style="margin-bottom:10px;">'+
-      '<button class="chip'+(billsViewTab==='list'?' active':'')+'" onclick="setBillsViewTab(\'list\')">Bills</button>'+
-      '<button class="chip'+(billsViewTab==='missing'?' active':'')+'" onclick="setBillsViewTab(\'missing\')">Missing invoices</button>'+
-      '<button class="chip'+(billsViewTab==='recurring'?' active':'')+'" onclick="setBillsViewTab(\'recurring\')">Recurring bills</button>'+
-      '</div>';
+    var tabs = [['list','Bills'],['missing','Missing'],['recurring','Recurring']];
+    return '<div class="seg seg-wide" role="tablist">'+tabs.map(function(t){
+      return '<button type="button" role="tab" aria-selected="'+(billsViewTab===t[0])+'" class="seg-btn'+(billsViewTab===t[0]?' active':'')+'" onclick="setBillsViewTab(\''+t[0]+'\')">'+t[1]+'</button>';
+    }).join('')+'</div>';
   }
-
+  /** One compact "Property" picker (a pill dropdown) instead of a row of chips per property. */
+  function billsPropertySelectHtml(){
+    if (!properties.length) return '';
+    return '<label class="pill-select"><span aria-hidden="true">🏠</span>'+
+      '<select aria-label="Property" onchange="setBillsPropertyFilter(this.value)">'+
+      '<option value="all"'+(billsPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
+      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
+        return '<option value="'+p.id+'"'+(billsPropertyFilter===p.id?' selected':'')+'>'+esc(p.name)+'</option>';
+      }).join('')+'</select></label>';
+  }
   function renderBills(){
-    var tabBody = billsViewTab==='missing' ? renderMissingInvoicesTab()
-      : billsViewTab==='recurring' ? renderRecurringBillsTab()
-      : renderBillsListTab();
-    return billsViewTabsHtml() + tabBody;
+    // Title first, then the Bills / Missing / Recurring switch right under it (iOS segmented control).
+    var tabs = billsViewTabsHtml();
+    return billsViewTab==='missing' ? renderMissingInvoicesTab(tabs)
+      : billsViewTab==='recurring' ? renderRecurringBillsTab(tabs)
+      : renderBillsListTab(tabs);
   }
 
   /** Its own top-level Bills tab (moved out of the main bills list, which was getting crowded) —
    *  reuses the same property chips filter as the list tab. */
-  function renderRecurringBillsTab(){
-    var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
-      '<button class="chip'+(billsPropertyFilter==='all'?' active':'')+'" onclick="setBillsPropertyFilter(\'all\')">All properties</button>'+
-      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
-        return '<button class="chip'+(billsPropertyFilter===p.id?' active':'')+'" onclick="setBillsPropertyFilter(\''+p.id+'\')">'+esc(p.name)+'</button>';
-      }).join('') + '</div>';
+  function renderRecurringBillsTab(tabs){
     return pageHeader('Recurring bills', 'Bills that repeat every month, generated automatically when they come due.') +
-      propertyTabsHtml + recurringBillsCardHtml(billsPropertyFilter);
+      (tabs || '') + '<div class="bills-toolbar">'+billsPropertySelectHtml()+'</div>' + recurringBillsCardHtml(billsPropertyFilter);
   }
 
   /** Consolidates, per tenant, how much they still owe across all the (non-admin) bill shares
@@ -6082,16 +6086,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>';
   }
 
-  function renderBillsListTab(){
+  function renderBillsListTab(tabs){
     // Property tab — "All properties" or a specific one; the status filter (chips)
     // and the stats are computed AFTER applying this, so each tab shows its own
     // numbers instead of the whole portfolio's.
     var propertyScoped = billsPropertyFilter==='all' ? bills : bills.filter(function(b){ return b.propertyId===billsPropertyFilter; });
-    var propertyTabsHtml = properties.length===0 ? '' : '<div class="filter-chips" style="margin-bottom:10px;">'+
-      '<button class="chip'+(billsPropertyFilter==='all'?' active':'')+'" onclick="setBillsPropertyFilter(\'all\')">All properties</button>'+
-      properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
-        return '<button class="chip'+(billsPropertyFilter===p.id?' active':'')+'" onclick="setBillsPropertyFilter(\''+p.id+'\')">'+esc(p.name)+'</button>';
-      }).join('') + '</div>';
 
     // "Pending" and "Paid" use the ACTUALLY collected amount (billPaidAmount),
     // not an all-or-nothing cut by bill.status: a partially paid bill
@@ -6101,7 +6100,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var overdueCount = propertyScoped.filter(function(b){ return billEffectiveStatus(b)==='overdue'; }).length;
     var paidTotal = propertyScoped.reduce(function(s,b){ return s+billPaidAmount(b); },0);
 
-    var statHtml = '<div class="stat-grid cols-3">'+
+    var statHtml = '<div class="stat-grid cols-3 bills-stats">'+
       '<div class="stat"><div class="label">Pending</div><div class="value'+(pendingTotal>0?' warn':'')+'">'+money(pendingTotal)+'</div></div>'+
       '<div class="stat"><div class="label">Overdue</div><div class="value'+(overdueCount>0?' warn':'')+'">'+overdueCount+'</div></div>'+
       '<div class="stat"><div class="label">Paid</div><div class="value">'+money(paidTotal)+'</div></div>'+
@@ -6122,12 +6121,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           : emptyState('receipt', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every bill.', ''))
       : billsTableHtml(filtered, billsPropertyFilter==='all');
 
+    // Order: title → switch → property picker → totals → status filter → the bills →
+    // who owes what → the timeline (folded away on phones; it's a reference, not the to-do list).
     return '<div class="detail-head">'+pageHeader('Bills', 'Electricity, gas, water, internet and more.')+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
-      '<button class="mini-btn primary" style="display:flex;align-items:center;gap:6px;white-space:nowrap;" onclick="openImportModal()">'+svg('plus','style="width:14px;height:14px;"')+'Add bill</button>'+
+      '<button class="mini-btn primary" onclick="openImportModal()">+ Add bill</button>'+
       '</div></div>'+
-      importQueueCard() + propertyTabsHtml + billsTimelineHtml() + statHtml +
-      pendingBillsByTenantHtml(propertyScoped) + chipsHtml + rows;
+      (tabs || '') +
+      '<div class="bills-toolbar">'+billsPropertySelectHtml()+'</div>'+
+      importQueueCard() + statHtml + chipsHtml + rows +
+      pendingBillsByTenantHtml(propertyScoped) + billsTimelineHtml();
   }
 
   /* ============ "Missing invoices" tab — local calculation based on the average of past invoices ============
@@ -6244,8 +6247,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>';
   }
 
-  function renderMissingInvoicesTab(){
-    var header = pageHeader('Missing invoices', "Looks at each property's own billing history — the average time between its past invoices — to guess when the next one should arrive, and flags the ones that seem overdue. Improves automatically as more bills are loaded.");
+  function renderMissingInvoicesTab(tabs){
+    var header = pageHeader('Missing invoices', "Bills that should have arrived by now, based on each property's usual billing rhythm.") + (tabs || '');
     var predictions = computeMissingInvoicePredictions();
     if (!predictions.length){
       return header + emptyState('receipt', 'Nothing missing', "Every recurring bill on file looks up to date — nothing seems overdue based on each property's usual pattern.", '');
@@ -6392,9 +6395,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
         '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
     };
-    return '<div class="card">'+
-      '<h2 style="text-transform:none;letter-spacing:0;font-size:13.5px;margin:0 0 6px;">Invoice timeline</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 10px;">Each bar is a bill, drawn across its actual billing period, with a small gap so consecutive bills stay visually separate. For gas, a bill priced differently from the usual amount (its rate changes every 3 months) gets its own "rate change" line; every other service stays on one line. Striped gaps are stretches with no bill loaded. Tap a bar to open that bill.</p>'+
+    var openNow = billsTimelineOpen !== null ? billsTimelineOpen : !(window.matchMedia && window.matchMedia('(max-width:640px)').matches);
+    return '<details class="card collapsible-card"'+(openNow?' open':'')+' ontoggle="__setBillsTimelineOpen(this.open)">'+
+      '<summary><span>Invoice timeline</span><span class="cc-hint">Last 6 months · tap a bar to open the bill</span></summary>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 10px;">Each bar is a bill across its billing period. Striped = no bill loaded. Gas gets a separate "rate change" line when its price changes.</p>'+
       '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+
       rows.join('')+
       '<div style="margin-top:8px;">'+
@@ -6405,8 +6409,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
       '<span style="width:2px;height:11px;background:var(--text);opacity:0.55;display:inline-block;"></span>Today</span>'+
       '</div>'+
-      '</div>';
+      '</details>';
   }
+  var billsTimelineOpen = null; // null = default (open on wide screens, folded on phones); then whatever the user chose
+  window.__setBillsTimelineOpen = function(v){ billsTimelineOpen = v; };
 
   /** Generates the data-driven automatic notifications (check-out reminder, rent due/overdue,
    *  bill due/overdue, cleaning turn, bins) — one call per load, staff-only (mirrors
