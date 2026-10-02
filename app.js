@@ -2025,9 +2025,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var todayLineHtml = !todayInWindow ? '' : '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
     // One row per room — all stays that passed through that room are drawn
     // as bars within the SAME row (not a new row per tenant).
-    function roomRowHtml(roomLabel, tenantsInRoom){
+    function roomRowHtml(roomLabel, tenantsInRoom, hint){
       return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
-        '<span style="font-size:11.5px;color:var(--text-dim);width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(roomLabel)+'</span>'+
+        '<span title="'+esc(roomLabel)+(hint ? ' · '+esc(hint) : '')+'" style="font-size:11.5px;color:var(--text-dim);width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(roomLabel)+'</span>'+
         '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+tenantsInRoom.map(barHtml).join('')+todayLineHtml+tenantsInRoom.map(paidMarkerHtml).join('')+'</div></div>';
     }
 
@@ -2041,10 +2041,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var ra = rooms.find(function(r){ return r.id===a; }), rb = rooms.find(function(r){ return r.id===b; });
         return (ra?ra.name:'').localeCompare(rb?rb.name:'');
       });
+      // One row per tenant, labelled with their name (ordered by room, then move-in date).
       var roomRows = roomIds.map(function(roomId){
         var room = rooms.find(function(r){ return r.id===roomId; });
-        var tenantsInRoom = byRoom[roomId].slice().sort(function(a,b){ return a.moveInDate.localeCompare(b.moveInDate); });
-        return roomRowHtml(room ? room.name : 'No room', tenantsInRoom);
+        return byRoom[roomId].slice().sort(function(a,b){ return a.moveInDate.localeCompare(b.moveInDate); })
+          .map(function(t){ return roomRowHtml(t.fullName, [t], room ? room.name : 'No room'); }).join('');
       }).join('');
       return '<div style="margin-bottom:12px;"><div style="font-size:12.5px;font-weight:650;margin-bottom:4px;">'+esc(p?p.name:'—')+'</div>'+
         roomRows + '</div>';
@@ -2073,7 +2074,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<span style="font-size:11.5px;color:var(--text-faint);margin-left:auto;">'+rangeLabel+'</span></div>';
     return '<div class="card">'+
       '<h2 style="margin-bottom:2px;">Tenancy timeline</h2>'+
-      '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">Grouped by room. Each bar is one tenant\'s stay, from move-in to move-out (or today, if still living there).</p>'+
+      '<p style="font-size:11px;color:var(--text-faint);margin:0 0 10px;">One row per tenant, by property. Each bar is their stay, from move-in to move-out (or today, if still living there).</p>'+
       controls+
       (propRows || '<p style="font-size:12.5px;color:var(--text-faint);margin:6px 0;">No one was living there in these months.</p>')+
       '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
