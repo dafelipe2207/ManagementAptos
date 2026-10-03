@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap">
-<link rel="stylesheet" href="styles.css?v=75">
+<link rel="stylesheet" href="styles.css?v=77">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -577,6 +577,13 @@
       <p id="bill-actions-sub" style="font-size:12.5px;color:var(--text-faint);margin:0 0 8px;"></p>
       <div id="bill-actions-list" class="bill-sheet-list"></div>
       <div class="modal-actions"><button class="mini-btn" onclick="closeBillActions()">Close</button></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="welcome-modal" hidden>
+    <div class="card modal-card welcome-card" role="dialog" aria-modal="true" aria-label="Welcome guide">
+      <div class="modal-x-bar"><button type="button" class="modal-x" aria-label="Close" onclick="closeWelcomeGuide(true)">&times;</button></div>
+      <div id="welcome-modal-body"></div>
     </div>
   </div>
 
@@ -1282,6 +1289,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=209"></script>
+<script type="module" src="app.js?v=211"></script>
 </body>
 </html>

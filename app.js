@@ -8,7 +8,7 @@ import { friendlyErrorMessage } from './lib/errors.js';
 import { supabase as realtimeClient } from './lib/supabaseClient.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js?v=7';
+import * as tenantService from './services/tenantService.js?v=8';
 import * as bondService from './services/bondService.js?v=2';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
@@ -11049,6 +11049,139 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k" style="font-weight:650;">Estimated refund</span><span class="v" style="font-weight:650;">'+(totals.bondRefund!=null?money(totals.bondRefund):'—')+'</span></div>'+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">Pending administrator approval — this is not final.</p></div>';
   }
+
+  /* ---------- New-tenant welcome guide ----------
+   * Shown automatically the first time a new tenant opens the app (tenants.welcome_seen_at is
+   * null), and any time after from the "Welcome guide" card on their dashboard. Five short steps:
+   * welcome → the home (Wi-Fi, address, room) → rent & payment days → house rules → move-in
+   * inspection photos. Finishing (or closing) stamps welcome_seen_at so it doesn't pop up again. */
+  var welcomeStep = 0, welcomeAutoShown = false;
+  var WELCOME_STEPS = ['hello', 'home', 'rent', 'rules', 'photos'];
+  function welcomeNextDates(t){
+    // The coming payment days (today or later), whatever their status — overdue ones are flagged separately.
+    return rentCharges.filter(function(c){ return c.tenantId===t.id && c.periodStart >= TODAY; })
+      .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); }).slice(0, 3);
+  }
+  var WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  function weekdayOf(iso){ var d = new Date(iso + 'T00:00:00Z'); return WEEKDAYS[d.getUTCDay()]; }
+  function welcomeStepHtml(t){
+    var p = propertyOf(t.propertyId), r = t.roomId ? roomOf(t.roomId) : null;
+    var first = (t.fullName || '').split(' ')[0] || 'there';
+    var step = WELCOME_STEPS[welcomeStep];
+    if (step === 'hello'){
+      return '<div class="wg-hero">👋</div><h2 class="wg-title">Welcome home, '+esc(first)+'!</h2>'+
+        '<p class="wg-lead">We\'re glad to have you. This quick guide shows you everything you need for your first days — it takes about a minute.</p>'+
+        '<div class="wg-facts">'+
+          (p ? '<div class="wg-fact"><span>🏠</span><div><small>Your home</small><b>'+esc(p.address || p.name)+'</b></div></div>' : '')+
+          (r ? '<div class="wg-fact"><span>🛏️</span><div><small>Your room</small><b>'+esc(r.name)+'</b></div></div>' : '')+
+          (t.moveInDate ? '<div class="wg-fact"><span>📅</span><div><small>Move-in date</small><b>'+shortDate(t.moveInDate)+'</b></div></div>' : '')+
+        '</div>'+
+        '<ul class="wg-list"><li>📶 Wi-Fi and details of the home</li><li>💳 Your rent and payment days</li><li>📋 The house rules</li><li>📸 How to upload your move-in photos</li></ul>';
+    }
+    if (step === 'home'){
+      var wifi = p ? wifiCardHtml(p).replace(' id="pp-wifi"', '') : '';
+      return '<div class="wg-hero">🏡</div><h2 class="wg-title">Your home</h2>'+
+        '<p class="wg-lead">The essentials for '+esc(p ? p.name : 'the property')+'.</p>'+
+        (wifi || '<div class="wg-note">📶 The Wi-Fi details haven\'t been added yet — your administrator will share them soon.</div>')+
+        '<div class="wg-facts">'+
+          (p && p.address ? '<div class="wg-fact"><span>📍</span><div><small>Address</small><b>'+esc(p.address)+'</b></div></div>' : '')+
+          (r ? '<div class="wg-fact"><span>🛏️</span><div><small>Room</small><b>'+esc(r.name)+'</b></div></div>' : '')+
+          (p && p.hasParking && p.parkingTenantId === t.id ? '<div class="wg-fact"><span>🚗</span><div><small>Parking</small><b>A parking spot is assigned to you</b></div></div>' : '')+
+        '</div>'+
+        (p && p.whatsappGroupLink ? '<a class="wg-cta wa" href="'+esc(p.whatsappGroupLink)+'" target="_blank" rel="noopener">💬 Join the house WhatsApp group</a>' : '');
+    }
+    if (step === 'rent'){
+      var next = welcomeNextDates(t);
+      var freq = t.rentFrequency === 'fortnightly' ? 'every 2 weeks' : t.rentFrequency === 'monthly' ? 'every month' : 'every week';
+      var ref = tenantPaymentRef(t);
+      return '<div class="wg-hero">💳</div><h2 class="wg-title">Rent & payment days</h2>'+
+        '<div class="wg-rent"><b>'+money(t.rentAmount)+'</b><span>'+freq+(next.length && t.rentFrequency !== 'monthly' ? ', paid in advance on '+weekdayOf(next[0].periodStart)+'s' : ', paid in advance')+'</span></div>'+
+        (next.length ? '<div class="wg-sub">Your next payment days</div><div class="wg-dates">'+next.map(function(c){
+          var d = daysBetween(TODAY, c.periodStart);
+          return '<div class="wg-date"><b>'+weekdayOf(c.periodStart).slice(0,3)+' '+shortDate(c.periodStart)+'</b><small>'+(c.status==='paid' ? 'already paid ✓' : (d === 0 ? 'today' : 'in '+d+' day'+(d===1?'':'s'))+' · '+money(c.remaining))+'</small></div>';
+        }).join('')+'</div>' : '')+
+        (function(){ var od = rentCharges.filter(function(c){ return c.tenantId===t.id && c.status!=='paid' && c.periodStart < TODAY && c.remaining > 0.004; });
+          return od.length ? '<div class="wg-note late">⚠️ You have '+od.length+' earlier period'+(od.length===1?'':'s')+' still to pay ('+money(od.reduce(function(x,c){ return x+c.remaining; },0))+') — see <b>Payments</b>.</div>' : ''; })()+
+        (ref ? '<div class="wg-ref"><div><small>Your payment reference</small><b>'+esc(ref)+'</b><p>Write it in the description of every transfer — rent and bills — so your payment is matched to you.</p></div>'+
+          '<button type="button" class="wifi-btn" onclick="welcomeCopyRef(this)">Copy</button></div>' : '')+
+        '<ol class="wg-steps"><li>Make the transfer before each payment day.</li><li>Open <b>Payments</b> and tap <b>“I paid”</b> on that period.</li><li>Attach the receipt — your administrator confirms it.</li></ol>'+
+        '<div class="wg-note">🧾 Shared bills (electricity, water, gas, internet) are split between housemates. Your share and its due date appear under <b>Bills</b>, and you\'ll get a notification when a new one arrives.</div>';
+    }
+    if (step === 'rules'){
+      var hr = houseRulesOf(t.propertyId), doc = parseHouseRules(hr ? hr.content : '');
+      var all = []; doc.sections.forEach(function(sec){ sec.rules.forEach(function(rl){ all.push(rl); }); });
+      all.sort(function(a,b){ return RULE_LEVEL_ORDER.indexOf(a.level) - RULE_LEVEL_ORDER.indexOf(b.level); });
+      var top = all.slice(0, 5);
+      return '<div class="wg-hero">📋</div><h2 class="wg-title">House rules</h2>'+
+        '<p class="wg-lead">How we live together'+(p ? ' at '+esc(p.name) : '')+'. These are the most important ones'+(all.length > top.length ? ' ('+top.length+' of '+all.length+')' : '')+':</p>'+
+        (top.length ? '<ul class="wg-rules">'+top.map(function(rl){ return '<li>'+ruleLevelPill(rl.level)+'<span>'+esc(rl.text)+'</span></li>'; }).join('')+'</ul>'
+          : '<div class="wg-note">Your administrator hasn\'t added the house rules yet — you\'ll get a notification when they do.</div>')+
+        (top.length ? '<a class="wg-cta" href="#/rules" onclick="closeWelcomeGuide(true)">Read all the house rules ›</a>' : '');
+    }
+    var photos = inspectionSubmissionsFor(t.id, 'move_in');
+    var nPhotos = photos.reduce(function(n, sub){ return n + ((sub.photoPaths || []).length); }, 0);
+    return '<div class="wg-hero">📸</div><h2 class="wg-title">Move-in photos</h2>'+
+      '<p class="wg-lead">Photos of your room as you found it protect your bond: anything already there won\'t be charged to you when you move out.</p>'+
+      '<ol class="wg-steps">'+
+        '<li>Tap <b>Upload move-in photos</b> below (or go to <b>More › Inspection</b>).</li>'+
+        '<li>Take clear photos of <b>each wall, the floor, the window, the bed, wardrobe and desk</b> — and close-ups of any marks, stains or damage.</li>'+
+        '<li>Add a short note if something needs explaining, then tap <b>Submit</b>.</li>'+
+        '<li>Try to do it in your <b>first few days</b> — you can add more photos later.</li>'+
+      '</ol>'+
+      (nPhotos ? '<div class="wg-done">✅ You\'ve already uploaded '+nPhotos+' photo'+(nPhotos===1?'':'s')+'. You can add more any time.</div>' : '')+
+      (t.roomId ? '<button type="button" class="wg-cta primary" onclick="welcomeUploadPhotos()">📷 Upload move-in photos'+(nPhotos?' (add more)':'')+'</button>' : '');
+  }
+  function renderWelcomeGuide(){
+    var t = myTenantRecord(); var box = document.getElementById('welcome-modal-body'); if (!t || !box) return;
+    var last = welcomeStep === WELCOME_STEPS.length - 1;
+    box.innerHTML = '<div class="wg-dots">'+WELCOME_STEPS.map(function(_, i){ return '<i class="'+(i===welcomeStep?'on':i<welcomeStep?'done':'')+'"></i>'; }).join('')+'</div>'+
+      '<div class="wg-body">'+welcomeStepHtml(t)+'</div>'+
+      '<div class="wg-actions">'+
+        (welcomeStep > 0 ? '<button type="button" class="mini-btn" onclick="welcomeGo(-1)">Back</button>' : '<button type="button" class="mini-btn ghost-btn" onclick="closeWelcomeGuide(true)">Skip</button>')+
+        '<button type="button" class="mini-btn primary" onclick="'+(last ? 'closeWelcomeGuide(true)' : 'welcomeGo(1)')+'">'+(last ? 'Got it — let\'s go!' : welcomeStep === 0 ? 'Start' : 'Next')+'</button>'+
+      '</div>';
+    var card = box.closest('.modal-card'); if (card) card.scrollTop = 0;
+  }
+  function openWelcomeGuide(){
+    if (!isTenantRole() || !myTenantRecord()) return;
+    welcomeStep = 0;
+    document.getElementById('welcome-modal').hidden = false;
+    renderWelcomeGuide();
+  }
+  window.openWelcomeGuide = openWelcomeGuide;
+  window.welcomeGo = function(dir){ welcomeStep = Math.max(0, Math.min(WELCOME_STEPS.length - 1, welcomeStep + dir)); renderWelcomeGuide(); };
+  async function closeWelcomeGuide(markSeen){
+    document.getElementById('welcome-modal').hidden = true;
+    var t = myTenantRecord();
+    if (markSeen && t && !t.welcomeSeenAt){
+      t.welcomeSeenAt = new Date().toISOString();
+      try { await tenantService.markOwnWelcomeSeen(); } catch (err) { console.warn('welcome seen not saved', err); }
+      if (location.hash === '' || location.hash === '#/') render();
+    }
+  }
+  window.closeWelcomeGuide = closeWelcomeGuide;
+  window.welcomeCopyRef = function(btn){
+    var t = myTenantRecord(); if (!t) return;
+    copyTextReliably(tenantPaymentRef(t)).then(function(ok){ btn.textContent = ok ? 'Copied ✓' : 'Copy failed'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1600); });
+  };
+  window.welcomeUploadPhotos = function(){
+    var t = myTenantRecord(); if (!t) return;
+    closeWelcomeGuide(true);
+    location.hash = '#/inspection';
+    setTimeout(function(){ openInspectionSubmitModal(t.id, 'move_in'); }, 350);
+  };
+  /** Dashboard: pop the guide once per session for a tenant who hasn't seen it yet. */
+  function maybeAutoOpenWelcome(t){
+    if (welcomeAutoShown || !t || t.welcomeSeenAt) return;
+    welcomeAutoShown = true;
+    setTimeout(function(){ if (isTenantRole() && document.getElementById('welcome-modal').hidden) openWelcomeGuide(); }, 500);
+  }
+  function welcomeGuideCardHtml(t){
+    return '<button type="button" class="card wg-entry" onclick="openWelcomeGuide()">'+
+      '<span class="wg-entry-ic" aria-hidden="true">📘</span><span class="wg-entry-txt"><b>Welcome guide</b>'+
+      '<small>Wi-Fi, payment days, house rules and move-in photos</small></span><span class="wg-entry-go" aria-hidden="true">›</span></button>';
+  }
+
   function renderTenantDashboard(){
     var t = myTenantRecord();
     if (!t) return pageHeader('My Dashboard', '') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
@@ -11067,6 +11200,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return '<div class="field-row" style="padding-left:12px;"><span class="k" style="font-size:12.5px;">'+esc(x.bill.provider||x.bill.billType||'Bill')+' · due '+shortDate(x.bill.dueDate)+'</span><span class="v" style="font-size:12.5px;">'+money(x.alloc.amount)+'</span></div>';
       }).join('')+
       '</details>';
+    maybeAutoOpenWelcome(t);
     return pageHeader('My Dashboard', 'Welcome back, '+esc(t.fullName)+'.') + tenantOverdueRentBannerHtml(t) + realEstateInspectionBannerHtml(true) +
       '<div class="card">'+
       '<div class="field-row"><span class="k">Property</span><span class="v">'+(p?esc(p.address||p.name):'—')+'</span></div>'+
@@ -11080,6 +11214,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       outstandingBreakdown+
       '</div>'+
       wifiCardHtml(p) +
+      welcomeGuideCardHtml(t) +
       tenantRentHistoryHtml(t.id) +
       // The bond now sits in the summary card above; its own card only shows during a move-out
       // (deductions / refund), where there's more to say than the amount.

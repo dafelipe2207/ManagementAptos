@@ -1977,3 +1977,58 @@ input[type="date"].dp-open{border-color:var(--accent,#0a84ff) !important;box-sha
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .pill-menu,:root:not([data-theme="light"]) .date-pop{background:rgba(38,44,56,.97);} }
 :root[data-theme="dark"] .pill-menu,:root[data-theme="dark"] .date-pop{background:rgba(38,44,56,.97);}
+
+/* ===== New-tenant welcome guide ===== */
+#welcome-modal{z-index:1050;}
+.welcome-card{max-width:520px;width:100%;}
+.wg-dots{display:flex;justify-content:center;gap:6px;margin:-6px 0 14px;}
+.wg-dots i{width:7px;height:7px;border-radius:99px;background:rgba(120,120,128,.25);transition:all .25s;}
+.wg-dots i.done{background:var(--status-paid);}
+.wg-dots i.on{width:22px;background:var(--text);}
+.wg-body{animation:pmIn .2s ease-out;}
+.wg-hero{font-size:44px;line-height:1;text-align:center;margin:0 0 8px;}
+.wg-title{text-align:center;font-size:22px !important;font-weight:800;letter-spacing:-.02em;text-transform:none !important;color:var(--text) !important;margin:0 0 6px !important;}
+.wg-lead{text-align:center;font-size:14px;color:var(--text-dim);margin:0 0 16px;line-height:1.45;}
+.wg-sub{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);margin:14px 0 6px;}
+.wg-facts{display:flex;flex-direction:column;gap:8px;margin:12px 0;}
+.wg-fact{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;background:rgba(120,120,128,.08);border:1px solid var(--border);}
+.wg-fact > span{font-size:20px;}
+.wg-fact small{display:block;font-size:11.5px;color:var(--text-faint);font-weight:600;}
+.wg-fact b{font-size:14px;}
+.wg-list{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:6px;font-size:14px;color:var(--text-dim);}
+.wg-rent{text-align:center;margin:4px 0 6px;}
+.wg-rent b{display:block;font-size:30px;font-weight:800;letter-spacing:-.02em;}
+.wg-rent span{font-size:13.5px;color:var(--text-dim);}
+.wg-dates{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;}
+.wg-date{padding:10px 12px;border-radius:14px;background:rgba(120,120,128,.08);border:1px solid var(--border);}
+.wg-date b{display:block;font-size:15px;}
+.wg-date small{font-size:11.5px;color:var(--text-faint);}
+.wg-date.late{border-color:var(--status-overdue);}
+.wg-date.late small{color:var(--status-overdue);}
+.wg-ref{display:flex;align-items:center;gap:12px;margin:14px 0;padding:12px 14px;border-radius:14px;background:var(--accent-bg,rgba(10,132,255,.08));}
+.wg-ref > div{flex:1;min-width:0;}
+.wg-ref small{display:block;font-size:11.5px;color:var(--text-faint);font-weight:600;}
+.wg-ref b{font-size:20px;letter-spacing:.04em;}
+.wg-ref p{margin:4px 0 0;font-size:12.5px;color:var(--text-dim);}
+.wg-steps{margin:12px 0;padding-left:22px;display:grid;gap:7px;font-size:14px;line-height:1.4;}
+.wg-note{margin:12px 0 0;padding:10px 12px;border-radius:12px;font-size:13px;line-height:1.45;color:var(--text-dim);background:rgba(120,120,128,.08);}
+.wg-done{margin:10px 0;padding:10px 12px;border-radius:12px;font-size:13.5px;background:var(--status-paid-bg);color:var(--status-paid);font-weight:600;}
+.wg-rules{list-style:none;padding:0;margin:0;display:grid;gap:8px;}
+.wg-rules li{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:rgba(120,120,128,.07);font-size:14px;line-height:1.4;}
+.wg-rules li > :first-child{flex-shrink:0;}
+.wg-cta{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:14px;min-height:46px;padding:10px 14px;border-radius:14px;
+  border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);font:inherit;font-weight:700;font-size:14.5px;text-decoration:none;cursor:pointer;}
+.wg-cta.primary{background:var(--text);color:var(--bg-elevated);border-color:transparent;}
+.wg-cta.wa{background:#25d366;color:#fff;border-color:transparent;}
+.wg-actions{display:flex;justify-content:space-between;gap:10px;margin-top:20px;}
+.wg-actions .mini-btn{min-height:44px;padding:0 20px;font-size:14.5px;}
+.wg-actions .mini-btn.primary{flex:1;max-width:260px;margin-left:auto;}
+.ghost-btn{background:transparent !important;border-color:transparent !important;color:var(--text-dim) !important;}
+.welcome-card .wifi-card{margin:0;box-shadow:none;}
+.wg-entry{display:flex;align-items:center;gap:14px;width:100%;text-align:left;cursor:pointer;font:inherit;color:var(--text);}
+.wg-entry-ic{font-size:26px;}
+.wg-entry-txt{flex:1;display:flex;flex-direction:column;}
+.wg-entry-txt b{font-size:15px;}
+.wg-entry-txt small{font-size:12.5px;color:var(--text-faint);}
+.wg-entry-go{font-size:22px;color:var(--text-faint);}
+.wg-note.late{background:var(--status-overdue-bg);color:var(--status-overdue);}

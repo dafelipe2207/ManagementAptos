@@ -36,6 +36,7 @@ function fromRow(row) {
   // on a later save. Null/absent = not settled yet. See processMoveOutBondSettlement in app.js.
   t.moveOutSettledAt = row.move_out_settled_at || null;
   t.authUserId = row.auth_user_id || null;
+  t.welcomeSeenAt = row.welcome_seen_at || null; // null = show the new-tenant welcome guide
   return t;
 }
 
@@ -100,5 +101,12 @@ export async function markMoveOutSettled(id, isoTimestamp) {
 // touches that one column on the caller's own row (current_tenant_id()).
 export async function setOwnActualMoveOutDate(date) {
   const { error } = await supabase.rpc('set_own_actual_move_out_date', { p_date: date });
+  if (error) throw error;
+}
+
+// Stamps welcome_seen_at on the signed-in tenant's own row (SECURITY DEFINER RPC — tenants have
+// no UPDATE grant on `tenants`), so the welcome guide isn't shown again.
+export async function markOwnWelcomeSeen() {
+  const { error } = await supabase.rpc('mark_own_welcome_seen');
   if (error) throw error;
 }
