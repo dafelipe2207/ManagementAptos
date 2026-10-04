@@ -8268,6 +8268,86 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.onMaintenancePropertyChange = onMaintenancePropertyChange;
 
+
+  /* ---------- Tenant "Report a problem": quick, friendly flow ----------
+   * For a tenant creating a NEW request the plain form (category/priority dropdowns, three photo
+   * pickers) is replaced by: tap what's wrong → tap where → (auto-filled) title → a sentence about
+   * it → how urgent → add photos. It still fills the same hidden fields, so saving is unchanged. */
+  var MQ_PROBLEMS = [
+    ['plumbing','🚿','Water / leak','Water leak'], ['electrical','💡','Lights / power','Electrical problem'],
+    ['appliance','🧊','Appliance','Appliance not working'], ['structural','🚪','Door, window, wall','Door / window / wall damaged'],
+    ['pest_control','🐜','Pests','Pests'], ['cleaning','🧽','Cleaning','Cleaning needed'], ['other','💬','Something else','']
+  ];
+  var MQ_WHERE = [['My room','🛏️'],['Bathroom','🛁'],['Kitchen','🍳'],['Living room','🛋️'],['Laundry','🧺'],['Outside','🌿']];
+  var MQ_URGENCY = [['low','🙂','Can wait','Whenever possible'],['medium','⏳','Soon','This week, please'],['urgent','🚨','Urgent','Safety risk, flooding, no power or water']];
+  var mq = { on:false, problem:null, where:null, autoTitle:'' };
+  function mqTitleFrom(){
+    var pr = MQ_PROBLEMS.find(function(x){ return x[0]===mq.problem; });
+    var base = pr ? pr[3] : '';
+    return base ? (base + (mq.where ? ' — ' + mq.where : '')) : (mq.where ? 'Problem — ' + mq.where : '');
+  }
+  function mqApplyTitle(){
+    var el = document.getElementById('maintenance-title');
+    var next = mqTitleFrom();
+    if (!el.value.trim() || el.value === mq.autoTitle){ el.value = next; mq.autoTitle = next; }
+  }
+  function mqRender(){
+    var top = document.getElementById('mq-top'), bottom = document.getElementById('mq-bottom');
+    var pri = document.getElementById('maintenance-priority').value;
+    top.innerHTML =
+      '<p class="mq-intro">Tell us what\'s wrong — it only takes a moment. Your administrator gets it straight away.</p>'+
+      '<div class="mq-label">What\'s the problem?</div>'+
+      '<div class="mq-tiles">'+MQ_PROBLEMS.map(function(x){
+        return '<button type="button" class="mq-tile'+(mq.problem===x[0]?' on':'')+'" onclick="mqPick(\'problem\',\''+x[0]+'\')"><span>'+x[1]+'</span>'+x[2]+'</button>';
+      }).join('')+'</div>'+
+      '<div class="mq-label">Where is it?</div>'+
+      '<div class="mq-chips">'+MQ_WHERE.map(function(x){
+        return '<button type="button" class="mq-chip'+(mq.where===x[0]?' on':'')+'" onclick="mqPick(\'where\',\''+x[0]+'\')">'+x[1]+' '+x[0]+'</button>';
+      }).join('')+'</div>';
+    var files = document.getElementById('maintenance-photo-before').files || [];
+    bottom.innerHTML =
+      '<div class="mq-label">How urgent is it?</div>'+
+      '<div class="mq-urg">'+MQ_URGENCY.map(function(x){
+        return '<button type="button" class="mq-u mq-u-'+x[0]+(pri===x[0]?' on':'')+'" onclick="mqPick(\'urgency\',\''+x[0]+'\')"><span>'+x[1]+'</span><b>'+x[2]+'</b><small>'+x[3]+'</small></button>';
+      }).join('')+'</div>'+
+      '<div class="mq-label">Photos <em>(they help a lot)</em></div>'+
+      '<button type="button" class="mq-photo" onclick="document.getElementById(\'maintenance-photo-before\').click()">'+
+        '<span class="mq-cam">📷</span><span><b>'+(files.length ? 'Add more photos' : 'Add photos')+'</b><small>Take one now or choose from your gallery</small></span></button>'+
+      (files.length ? '<div class="mq-thumbs">'+Array.prototype.map.call(files, function(f, i){
+          return '<img alt="Photo '+(i+1)+'" src="'+URL.createObjectURL(f)+'">';
+        }).join('')+'<button type="button" class="mq-clear" onclick="mqClearPhotos()">Remove</button></div>' : '');
+  }
+  window.mqPick = function(kind, v){
+    if (kind === 'problem'){ mq.problem = v; document.getElementById('maintenance-category').value = v; mqApplyTitle(); }
+    else if (kind === 'where'){ mq.where = (mq.where === v ? null : v); mqApplyTitle(); }
+    else if (kind === 'urgency'){ document.getElementById('maintenance-priority').value = v; }
+    mqRender();
+    if (kind === 'problem' && !document.getElementById('maintenance-description').value) { /* keep focus flow natural */ }
+  };
+  window.mqClearPhotos = function(){ document.getElementById('maintenance-photo-before').value = ''; mqRender(); };
+  function setupMaintenanceQuick(on){
+    mq = { on:on, problem:null, where:null, autoTitle:'' };
+    var card = document.getElementById('maintenance-modal-card');
+    if (card){ card.classList.toggle('mq-mode', on); card.style.maxWidth = on ? '520px' : '380px'; }
+    ['mq-top','mq-bottom'].forEach(function(id){ document.getElementById(id).hidden = !on; });
+    ['maintenance-catpri-row','maintenance-before-row','maintenance-during-row','maintenance-after-row'].forEach(function(id){
+      var el = document.getElementById(id); if (el) el.hidden = on;
+    });
+    var tl = document.querySelector('label[for="maintenance-title"]'), dl = document.querySelector('label[for="maintenance-description"]');
+    if (tl) tl.textContent = on ? 'Short title' : 'Title';
+    if (dl) dl.textContent = on ? 'What\'s happening?' : 'Description';
+    var ti = document.getElementById('maintenance-title'), de = document.getElementById('maintenance-description');
+    ti.placeholder = on ? 'e.g. Shower is leaking' : '';
+    de.placeholder = on ? 'A sentence or two is enough — e.g. "The shower drips all the time and water pools on the floor. Started yesterday."' : '';
+    var saveBtn = document.querySelector('#maintenance-modal .modal-actions .mini-btn.primary');
+    if (saveBtn) saveBtn.textContent = on ? 'Send report' : 'Save';
+    if (on){
+      document.getElementById('maintenance-priority').value = 'medium';
+      mqRender();
+    }
+  }
+  document.addEventListener('change', function(e){ if (mq.on && e.target && e.target.id === 'maintenance-photo-before') mqRender(); });
+
   function openMaintenanceModal(id){
     maintenanceModalEditId = id || null;
     var m = id ? maintenanceRequests.find(function(x){ return x.id===id; }) : null;
@@ -8352,6 +8432,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     renderMaintenancePhotosPreview('before', m ? (m.photosBefore||[]) : (prefill ? prefill.photosBefore : []));
     renderMaintenancePhotosPreview('during', m ? (m.photosDuring||[]) : []);
     renderMaintenancePhotosPreview('after', m ? (m.photosAfter||[]) : []);
+    setupMaintenanceQuick(!staff && !m);
   }
   window.openMaintenanceModal = openMaintenanceModal;
 

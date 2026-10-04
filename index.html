@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap">
-<link rel="stylesheet" href="styles.css?v=78">
+<link rel="stylesheet" href="styles.css?v=80">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -778,7 +778,7 @@
   </div>
 
   <div class="modal-overlay" id="maintenance-modal" hidden>
-    <div class="card modal-card" style="max-width:380px;">
+    <div class="card modal-card" id="maintenance-modal-card" style="max-width:380px;">
       <h2 id="maintenance-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Report a problem</h2>
       <p id="maintenance-modal-source-note" style="font-size:12px;color:var(--text-dim);margin:0 0 10px;" hidden></p>
       <div class="form-row" id="maintenance-property-row">
@@ -789,9 +789,11 @@
         <label for="maintenance-room">Room (optional)</label>
         <select id="maintenance-room"><option value="">— Not specific to a room —</option></select>
       </div>
-      <div class="form-row"><label for="maintenance-title">Title</label><input id="maintenance-title" type="text" /></div>
-      <div class="form-row"><label for="maintenance-description">Description</label><textarea id="maintenance-description"></textarea></div>
-      <div class="form-row form-row-2">
+      <div id="mq-top" hidden></div>
+      <div class="form-row" id="maintenance-title-row"><label for="maintenance-title">Title</label><input id="maintenance-title" type="text" /></div>
+      <div class="form-row" id="maintenance-description-row"><label for="maintenance-description">Description</label><textarea id="maintenance-description"></textarea></div>
+      <div id="mq-bottom" hidden></div>
+      <div class="form-row form-row-2" id="maintenance-catpri-row">
         <div><label for="maintenance-category">Category</label>
           <select id="maintenance-category">
             <option value="plumbing">Plumbing</option>
@@ -812,13 +814,13 @@
           </select>
         </div>
       </div>
-      <div class="form-row"><label for="maintenance-photo-before">Before photos (optional)</label><input id="maintenance-photo-before" type="file" accept="image/*" multiple />
+      <div class="form-row" id="maintenance-before-row"><label for="maintenance-photo-before">Before photos (optional)</label><input id="maintenance-photo-before" type="file" accept="image/*" multiple />
         <div id="maintenance-photos-before-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
       </div>
-      <div class="form-row"><label for="maintenance-photo-during">During photos (optional)</label><input id="maintenance-photo-during" type="file" accept="image/*" multiple />
+      <div class="form-row" id="maintenance-during-row"><label for="maintenance-photo-during">During photos (optional)</label><input id="maintenance-photo-during" type="file" accept="image/*" multiple />
         <div id="maintenance-photos-during-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
       </div>
-      <div class="form-row"><label for="maintenance-photo-after">After photos (optional)</label><input id="maintenance-photo-after" type="file" accept="image/*" multiple />
+      <div class="form-row" id="maintenance-after-row"><label for="maintenance-photo-after">After photos (optional)</label><input id="maintenance-photo-after" type="file" accept="image/*" multiple />
         <div id="maintenance-photos-after-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
       </div>
       <div class="form-row" id="maintenance-status-row" hidden>
@@ -1289,6 +1291,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=212"></script>
+<script type="module" src="app.js?v=213"></script>
 </body>
 </html>
