@@ -2488,7 +2488,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  already recorded (cleaning, damage, etc.) — and subtracts all of that from the paid bond. It
    *  never replaces the real bill once it arrives: it's only a projection to guide the
    *  administrator in the meantime, only shown once there's a move-out date (actual or expected). */
-  var MOVE_OUT_BILL_BUFFER = 0.70; // +70% on bills not received yet when a tenant leaves
+  var MOVE_OUT_BILL_BUFFER = 0.50; // +50% on bills not received yet when a tenant leaves
   /** True when this service at this property always comes in at the same amount: it's set up as
    *  a recurring bill, or its last bills (at least 2, up to 3) all had the same total (±$0.50).
    *  Those don't need the move-out safety margin. */
