@@ -2488,6 +2488,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  already recorded (cleaning, damage, etc.) — and subtracts all of that from the paid bond. It
    *  never replaces the real bill once it arrives: it's only a projection to guide the
    *  administrator in the meantime, only shown once there's a move-out date (actual or expected). */
+  var MOVE_OUT_BILL_BUFFER = 0.70; // +70% on bills not received yet when a tenant leaves
+  /** True when this service at this property always comes in at the same amount: it's set up as
+   *  a recurring bill, or its last bills (at least 2, up to 3) all had the same total (±$0.50).
+   *  Those don't need the move-out safety margin. */
+  function billTypeHasFixedAmount(propertyId, billType){
+    // Gas never counts as fixed: even where the monthly amount is flat, a quarterly adjustment
+    // charge arrives every 3 months to settle the real consumption.
+    if (billType === 'gas') return false;
+    if (recurringBills.some(function(r){ return r.propertyId === propertyId && r.billType === billType && r.isActive !== false; })) return true;
+    var recent = bills.filter(function(b){ return b.propertyId === propertyId && b.billType === billType && b.amount > 0; })
+      .sort(function(a,b){ return (b.billingPeriodStart || b.issueDate || '').localeCompare(a.billingPeriodStart || a.issueDate || ''); })
+      .slice(0, 3);
+    if (recent.length < 2) return false;
+    return recent.every(function(b){ return Math.abs(b.amount - recent[0].amount) <= 0.5; });
+  }
   function computeMoveOutEstimate(t){
     var moveOutDate = t.actualMoveOutDate || t.expectedMoveOutDate;
     if (!moveOutDate) return null;
@@ -2519,14 +2534,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var dailyRate = hasHistory ? (g.billedAmount / g.billedDays) : 0;
       var gapStart = stepDateIso(g.lastCovered, 1);
       var gapDays = gapStart <= moveOutDate ? (daysBetween(gapStart, moveOutDate) + 1) : 0;
-      var estimatedGapAmount = round2(dailyRate * gapDays);
+      // Average-based projection, plus a safety margin (MOVE_OUT_BILL_BUFFER) in case the bill that
+      // hasn't arrived yet comes in more expensive than usual (winter heating, price rises…).
+      var baseGapAmount = round2(dailyRate * gapDays);
+      // No margin for services that always cost the same (e.g. internet, or a set-up recurring
+      // bill); variable ones (gas with its quarterly adjustment, electricity, water…) get it.
+      var fixed = billTypeHasFixedAmount(t.propertyId, bt);
+      var estimatedGapAmount = round2(baseGapAmount * (1 + (fixed ? 0 : MOVE_OUT_BILL_BUFFER)));
       var unpaid = round2(g.unpaid);
       if (unpaid <= 0 && estimatedGapAmount <= 0) return; // nothing to show for this type
       totalUnpaid += unpaid;
       totalEstimatedGap += estimatedGapAmount;
       lines.push({
         billType: bt, unpaid: unpaid, hasHistory: hasHistory,
-        dailyRate: round2(dailyRate), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount
+        dailyRate: round2(dailyRate), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount,
+        baseGapAmount: baseGapAmount, bufferAmount: round2(estimatedGapAmount - baseGapAmount), fixedAmount: fixed
       });
     });
 
@@ -2558,7 +2580,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     function typeLineHtml(line){
       var parts = [];
       if (line.unpaid > 0) parts.push('<b>'+money(line.unpaid)+'</b> already charged (unpaid)');
-      if (line.estimatedGapAmount > 0) parts.push('<b>'+money(line.estimatedGapAmount)+'</b> estimated ('+line.gapDays+' day'+(line.gapDays===1?'':'s')+' not billed yet'+(line.hasHistory?(', at '+money(line.dailyRate)+'/day'):'')+')');
+      if (line.estimatedGapAmount > 0) parts.push('<b>'+money(line.estimatedGapAmount)+'</b> estimated ('+line.gapDays+' day'+(line.gapDays===1?'':'s')+' not billed yet'+(line.hasHistory?(', at '+money(line.dailyRate)+'/day'+(line.fixedAmount ? ' · same amount every time, no margin' : ' = '+money(line.baseGapAmount)+' + '+Math.round(MOVE_OUT_BILL_BUFFER*100)+'% margin '+money(line.bufferAmount))):'')+')');
       return '<div class="field-row" style="align-items:flex-start;">'+
         '<span class="k">'+esc(billTypeLabel(line.billType))+'</span>'+
         '<span class="v" style="text-align:right;font-weight:400;">'+money(round2(line.unpaid+line.estimatedGapAmount))+
@@ -2576,7 +2598,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (est.bondDeduction > 0 ? '<div class="field-row"><span class="k">Bond deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(est.bondDeduction)+'</span></div>' : '')+
       '<div class="field-row"><span class="k" style="font-weight:650;">Estimated bond to return</span><span class="v" style="font-weight:650;">'+money(est.estimatedReturn)+'</span></div>';
     return '<div class="card"><h2>Move-out settlement</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Below, each service shows what\'s already charged and unpaid (a real amount) separately from what\'s estimated from the average for days not billed yet. Update it once the real bills for the final days arrive. "Estimated bond to return" already subtracts unpaid rent and any bond deductions, along with the bills above.</p>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Below, each service shows what\'s already charged and unpaid (a real amount) separately from what\'s estimated from the average for days not billed yet. Bills that haven\'t arrived yet include a '+Math.round(MOVE_OUT_BILL_BUFFER*100)+'% safety margin in case they come in more expensive (e.g. gas with its quarterly adjustment) — except services that always cost the same, like internet. Update it once the real bills for the final days arrive. "Estimated bond to return" already subtracts unpaid rent and any bond deductions, along with the bills above.</p>'+
       '<div class="field-list">'+rows+'</div></div>';
   }
 
