@@ -11256,8 +11256,57 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // already show, with their periods and receipts, in Rent history.
     return pageHeader('My Payments', 'Your rent. Paid it? Tap "I paid" and attach the receipt — it stays pending until your administrator confirms it.') +
       tenantPaymentRefCardHtml(t) +
+      (t ? tenantBillsSummaryHtml(t) : '') +
       (t ? tenantRentHistoryHtml(t.id) : '');
   }
+
+  /** "Bills you owe" summary on the tenant's My Payments: the total, how many are overdue, and the
+   *  next few shares — each one taps through to that bill on My Bills (scrolled to and highlighted). */
+  function tenantBillsSummaryHtml(t){
+    var owed = [];
+    bills.forEach(function(b){
+      if (isTenantHiddenProvider(b.provider)) return;
+      (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id && !a.paid && a.amount > 0.004) owed.push({ bill:b, alloc:a }); });
+    });
+    owed.sort(function(x,y){ return (x.bill.dueDate||'9999').localeCompare(y.bill.dueDate||'9999'); });
+    if (!owed.length){
+      return '<div class="card tb-sum ok"><div class="tb-head"><span class="tb-ic">🧾</span><div class="tb-titles"><b>Bills</b><small>Your share of shared bills</small></div>'+
+        '<span class="tb-total ok">All paid ✓</span></div>'+
+        '<a class="tb-all" href="#/bills">See my bills ›</a></div>';
+    }
+    var total = owed.reduce(function(sum,x){ return sum + x.alloc.amount; }, 0);
+    var overdue = owed.filter(function(x){ return x.bill.dueDate && x.bill.dueDate < TODAY; });
+    var review = owed.filter(function(x){ return allocationPaymentStatus(x.alloc) === 'pending_verification'; }).length;
+    var shown = owed.slice(0, 4);
+    function rowHtml(x){
+      var b = x.bill, d = b.dueDate ? daysBetween(TODAY, b.dueDate) : null;
+      var pending = allocationPaymentStatus(x.alloc) === 'pending_verification';
+      var when = pending ? '<span class="tb-when wait">Under review</span>'
+        : d === null ? '' : d < 0 ? '<span class="tb-when late">Overdue '+(-d)+' d</span>' : '<span class="tb-when">'+(d===0?'Due today':'Due in '+d+' d')+'</span>';
+      return '<button type="button" class="tb-row" onclick="goTenantBill(\''+b.id+'\')">'+
+        '<span class="tb-type" style="background:'+((BILL_TYPE_ICON[b.billType]||[])[1]||'rgba(120,120,128,.12)')+'">'+((BILL_TYPE_ICON[b.billType]||[])[0]||'🧾')+'</span>'+
+        '<span class="tb-main"><b>'+esc(billTypeLabel(b.billType))+(b.provider ? ' · '+esc(b.provider) : '')+'</b>'+
+          '<small>'+(b.dueDate ? 'Due '+shortDate(b.dueDate) : 'No due date')+'</small></span>'+
+        '<span class="tb-amt">'+money(x.alloc.amount)+when+'</span><span class="tb-go" aria-hidden="true">›</span></button>';
+    }
+    return '<div class="card tb-sum'+(overdue.length ? ' bad' : '')+'">'+
+      '<div class="tb-head"><span class="tb-ic">🧾</span><div class="tb-titles"><b>Bills you owe</b>'+
+        '<small>'+owed.length+' bill share'+(owed.length===1?'':'s')+(overdue.length ? ' · <span class="tb-red">'+overdue.length+' overdue</span>' : '')+(review ? ' · '+review+' under review' : '')+'</small></div>'+
+        '<span class="tb-total">'+money(total)+'</span></div>'+
+      '<div class="tb-list">'+shown.map(rowHtml).join('')+'</div>'+
+      '<a class="tb-all" href="#/bills">'+(owed.length > shown.length ? 'See all '+owed.length+' in My Bills ›' : 'See details in My Bills ›')+'</a></div>';
+  }
+  /** Opens My Bills and scrolls to that bill's card, with a short highlight. */
+  window.goTenantBill = function(billId){
+    location.hash = '#/bills';
+    var tries = 0;
+    (function find(){
+      var el = document.getElementById('tbill-' + billId);
+      if (!el){ if (++tries < 20) setTimeout(find, 60); return; }
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('tb-flash'); setTimeout(function(){ el.classList.remove('tb-flash'); }, 1800);
+    })();
+  };
 
 
   var MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -11357,7 +11406,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             var lastReport = paymentReportsForAllocation(a.id)[0];
             rejectionHtml = '<div class="field-row"><span class="k">Payment could not be verified</span><span class="v" style="color:var(--status-overdue);">'+esc(lastReport.rejectionReason||'')+'</span></div>';
           }
-          return '<div class="card">'+
+          return '<div class="card" id="tbill-'+b.id+'">'+
             '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(billTypeLabel(b.billType))+(b.provider?' — '+esc(b.provider):'')+'</h2>'+
             (a.paid ? badge('paid','Paid'+(a.paidVia==='bond_deduction' ? ' · Paid from bond' : '')) : payStatus==='pending_verification' ? badge('upcoming','Pending verification') : badge('due','Pending'))+'</div>'+
             '<div class="field-list">'+
