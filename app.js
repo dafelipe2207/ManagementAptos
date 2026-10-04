@@ -977,6 +977,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var ICONS = {
     dashboard:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
     building:'<path d="M4 21V6l8-3 8 3v15"/><path d="M4 21h16"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1"/>',
+    eye:'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     tenants:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.4"/><path d="M14.8 12.5c2.4.1 4.4 2.3 4.7 5.5"/>',
     payments:'<rect x="2.5" y="6" width="19" height="13" rx="2"/><path d="M2.5 10.5h19"/><path d="M6 15h4"/>',
     receipt:'<path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5V3z"/><path d="M9 8h6M9 12h6M9 16h3"/>',
@@ -1019,6 +1020,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
     { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:false },
+    { hash:'#/view-as', label:'Tenant view', icon:'eye', primary:false },
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
     { hash:'#/profits', label:'Profits', icon:'chart', primary:false },
     { header:true, label:'Property Operations' },
@@ -2405,6 +2407,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<p class="page-sub">'+esc(p?p.name:'')+(room?' • '+esc(room.name):'')+'</p></div>'+
       (tenancyBadge?'<div>'+tenancyBadge+'</div>':'')+'</div>'+
       '<div class="actions-row">'+
+      '<button class="mini-btn" onclick="startViewAs(\''+t.id+'\')">👁 View as tenant</button>'+
       '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
       '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
       '<button class="mini-btn" onclick="toggleTenantActiveConfirm(\''+t.id+'\')">'+(t.isActive===false?'Reactivate tenant':'Deactivate tenant')+'</button>'+
@@ -11275,7 +11278,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   };
   /** Dashboard: pop the guide once per session for a tenant who hasn't seen it yet. */
   function maybeAutoOpenWelcome(t){
-    if (welcomeAutoShown || !t || t.welcomeSeenAt) return;
+    if (viewAs || welcomeAutoShown || !t || t.welcomeSeenAt) return;
     welcomeAutoShown = true;
     setTimeout(function(){ if (isTenantRole() && document.getElementById('welcome-modal').hidden) openWelcomeGuide(); }, 500);
   }
@@ -13021,6 +13024,272 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return renderPropertyOperations();
     };
   }
+  /* ============ Tenant view ("View as tenant") ============
+   * Lets staff open the tenant app exactly as a given tenant sees it — same menu, same pages,
+   * same numbers. Nothing is faked: staff already have every row loaded, so entering the view
+   * keeps a copy of the full data, trims every list down to what that tenant's own login can
+   * read (mirroring the Row Level Security rules on each table — see supabase/migrations), and
+   * swaps in a tenant profile. Leaving the view puts the full copy back.
+   * It is strictly a preview: while it's on, every database write (insert/update/delete, RPCs,
+   * uploads, account functions) is refused at the client, so nothing can be saved "as" them. */
+  var viewAs = null; // { tenantId, realProfile, snapshot, hashBefore }
+  function isViewingAsTenant(){ return !!viewAs; }
+  var VIEW_AS_BLOCKED_MSG = "This is a preview of the tenant's app — changes are turned off. Exit the tenant view to make changes.";
+  function viewAsBlockedError(){ var e = new Error(VIEW_AS_BLOCKED_MSG); e.viewAsBlocked = true; return e; }
+  (function installViewAsWriteGuard(){
+    try {
+      var c = realtimeClient;
+      var origFrom = c.from.bind(c);
+      c.from = function(table){
+        var q = origFrom(table);
+        if (viewAs){
+          ['insert','update','upsert','delete'].forEach(function(m){ q[m] = function(){ throw viewAsBlockedError(); }; });
+        }
+        return q;
+      };
+      var origRpc = c.rpc.bind(c);
+      c.rpc = function(){
+        if (viewAs) return Promise.reject(viewAsBlockedError());
+        return origRpc.apply(null, arguments);
+      };
+      // storage/functions are created fresh on every access, so their prototypes are patched.
+      var fileApiProto = Object.getPrototypeOf(c.storage.from('documents'));
+      if (fileApiProto === Object.prototype) fileApiProto = null;
+      if (fileApiProto) ['upload','update','remove','move','copy','uploadToSignedUrl'].forEach(function(m){
+        var orig = fileApiProto[m];
+        if (typeof orig !== 'function') return;
+        fileApiProto[m] = function(){
+          if (viewAs) return Promise.reject(viewAsBlockedError());
+          return orig.apply(this, arguments);
+        };
+      });
+      var READ_ONLY_FUNCTIONS = ['predict-bills', 'tenant-bill-receipt'];
+      var fnProto = Object.getPrototypeOf(c.functions);
+      if (fnProto === Object.prototype) fnProto = c.functions; // (test doubles: a plain object)
+      var origInvoke = fnProto.invoke;
+      if (typeof origInvoke === 'function') fnProto.invoke = function(name){
+        if (viewAs && READ_ONLY_FUNCTIONS.indexOf(name) === -1) return Promise.reject(viewAsBlockedError());
+        return origInvoke.apply(this, arguments);
+      };
+    } catch(err){ console.error('Tenant view write guard could not be installed', err); }
+  })();
+
+  // Every global list the data load fills — what gets saved on entry and put back on exit.
+  function viewAsSnapshot(){
+    return {
+      properties: properties, rooms: rooms, tenants: tenants, bonds: bonds, rentSchedules: rentSchedules,
+      paymentRecords: paymentRecords, bills: bills, tenantDocuments: tenantDocuments,
+      maintenanceRequests: maintenanceRequests, notificationsList: notificationsList, recurringBills: recurringBills,
+      cleaningTasks: cleaningTasks, cleaningSubmissions: cleaningSubmissions, cleaningComments: cleaningComments,
+      trashSchedule: trashSchedule, inspectionSubmissions: inspectionSubmissions, inspectionComments: inspectionComments,
+      paymentReports: paymentReports, moveOutSettlements: moveOutSettlements, weeklyDuties: weeklyDuties,
+      binOutTasks: binOutTasks, taskIndexRows: taskIndexRows, activityLogRows: activityLogRows, entityLinks: entityLinks,
+      roomIncludedBills: roomIncludedBills, binDuties: binDuties, rentPaymentReports: rentPaymentReports,
+      houseRules: houseRules, maintenanceLog: maintenanceLog, realEstateInspections: realEstateInspections,
+      leasePayments: leasePayments, allProfiles: allProfiles, propertyAssignments: propertyAssignments
+    };
+  }
+  function viewAsRestore(s){
+    properties = s.properties; rooms = s.rooms; tenants = s.tenants; bonds = s.bonds; rentSchedules = s.rentSchedules;
+    paymentRecords = s.paymentRecords; bills = s.bills; tenantDocuments = s.tenantDocuments;
+    maintenanceRequests = s.maintenanceRequests; notificationsList = s.notificationsList; recurringBills = s.recurringBills;
+    cleaningTasks = s.cleaningTasks; cleaningSubmissions = s.cleaningSubmissions; cleaningComments = s.cleaningComments;
+    trashSchedule = s.trashSchedule; inspectionSubmissions = s.inspectionSubmissions; inspectionComments = s.inspectionComments;
+    paymentReports = s.paymentReports; moveOutSettlements = s.moveOutSettlements; weeklyDuties = s.weeklyDuties;
+    binOutTasks = s.binOutTasks; taskIndexRows = s.taskIndexRows; activityLogRows = s.activityLogRows; entityLinks = s.entityLinks;
+    roomIncludedBills = s.roomIncludedBills; binDuties = s.binDuties; rentPaymentReports = s.rentPaymentReports;
+    houseRules = s.houseRules; maintenanceLog = s.maintenanceLog; realEstateInspections = s.realEstateInspections;
+    leasePayments = s.leasePayments; allProfiles = s.allProfiles; propertyAssignments = s.propertyAssignments;
+  }
+
+  /** Trims the full data down to what `target`'s own login can read — one rule per table,
+   *  matching that table's RLS select policy for a tenant. */
+  function viewAsApplyFilter(s, target, tenantSafeProperties){
+    var fakeAuthId = target.authUserId || ('view-as-' + target.id);
+    // All tenancies under the same login (RLS matches on auth_user_id), with the chosen one
+    // first so it is the "current" record — current_tenant_id() / myTenantRecord().
+    var mine = s.tenants.filter(function(t){ return target.authUserId ? t.authUserId === target.authUserId : t.id === target.id; })
+      .sort(function(a,b){ return (a.id === target.id ? -1 : 0) - (b.id === target.id ? -1 : 0); })
+      .map(function(t){ return Object.assign({}, t, { authUserId: fakeAuthId }); });
+    var curId = target.id;
+    var propIds = mine.map(function(t){ return t.propertyId; });
+    var roomIds = mine.map(function(t){ return t.roomId; }).filter(Boolean);
+    var liveRoomIds = mine.filter(function(t){ return t.isActive !== false && (!t.actualMoveOutDate || t.actualMoveOutDate > TODAY); })
+      .map(function(t){ return t.roomId; }).filter(Boolean);
+    function own(r){ return r.tenantId === curId; }
+    function inProps(r){ return propIds.indexOf(r.propertyId) > -1; }
+    function inRooms(r){ return roomIds.indexOf(r.roomId) > -1; }
+    function ownOrSharedDuty(r){
+      return r.tenantId === curId || (!r.tenantId && (r.category === 'cleaning' || r.category === 'bin_out') && liveRoomIds.indexOf(r.roomId) > -1);
+    }
+    var nowIso = new Date().toISOString();
+    var safeById = {};
+    (tenantSafeProperties || []).forEach(function(p){ safeById[p.id] = p; });
+    properties = s.properties.filter(function(p){ return propIds.indexOf(p.id) > -1; })
+      .map(function(p){ return safeById[p.id] || p; });
+    rooms = s.rooms.filter(function(r){ return roomIds.indexOf(r.id) > -1; });
+    tenants = mine;
+    bonds = s.bonds.filter(own);
+    rentSchedules = s.rentSchedules.filter(own);
+    paymentRecords = s.paymentRecords.filter(own);
+    bills = s.bills.filter(inProps).map(function(b){
+      return Object.assign({}, b, { allocations: (b.allocations || []).filter(own) });
+    });
+    tenantDocuments = s.tenantDocuments.filter(own);
+    maintenanceRequests = s.maintenanceRequests.filter(own);
+    maintenanceLog = s.maintenanceLog.filter(own);
+    notificationsList = s.notificationsList.filter(function(n){
+      return !!target.authUserId && n.authUserId === target.authUserId && (!n.scheduledFor || n.scheduledFor <= nowIso) && !n.canceledAt && !n.archivedAt;
+    }).map(function(n){ return Object.assign({}, n, { authUserId: fakeAuthId }); });
+    recurringBills = s.recurringBills.filter(inProps);
+    trashSchedule = s.trashSchedule.filter(inProps);
+    var curProp = target.propertyId;
+    houseRules = s.houseRules.filter(function(r){ return r.propertyId === curProp; });
+    realEstateInspections = s.realEstateInspections.filter(function(r){ return r.propertyId === curProp; });
+    cleaningTasks = s.cleaningTasks.filter(inRooms);
+    cleaningComments = s.cleaningComments.filter(inRooms);
+    weeklyDuties = s.weeklyDuties.filter(inRooms);
+    binDuties = s.binDuties.filter(inRooms);
+    binOutTasks = s.binOutTasks.filter(inRooms);
+    cleaningSubmissions = s.cleaningSubmissions.filter(own);
+    inspectionSubmissions = s.inspectionSubmissions.filter(own);
+    inspectionComments = s.inspectionComments.filter(own);
+    paymentReports = s.paymentReports.filter(own);
+    rentPaymentReports = s.rentPaymentReports.filter(own);
+    moveOutSettlements = s.moveOutSettlements.filter(own);
+    taskIndexRows = s.taskIndexRows.filter(ownOrSharedDuty);
+    activityLogRows = s.activityLogRows.filter(ownOrSharedDuty);
+    entityLinks = []; roomIncludedBills = []; leasePayments = []; allProfiles = []; propertyAssignments = [];
+    return fakeAuthId;
+  }
+
+  async function startViewAs(tenantId){
+    if (!isStaff() && !viewAs) return;
+    if (anyModalOpen()){ showToast('Close the open form first.', 'info'); return; }
+    var base = viewAs ? viewAs.snapshot : viewAsSnapshot();
+    var target = base.tenants.find(function(t){ return t.id === tenantId; });
+    if (!target){ showToast('Tenant not found.', 'error'); return; }
+    if (maintenanceRunning){ try { await maintenanceRunning; } catch(_e){} }
+    var safeProps = null;
+    try { safeProps = await propertyService.getAll(true); } catch(_e){ safeProps = null; }
+    var realProfile = viewAs ? viewAs.realProfile : currentProfile;
+    var hashBefore = viewAs ? viewAs.hashBefore : (location.hash || '#/');
+    viewAs = { tenantId: tenantId, realProfile: realProfile, snapshot: base, hashBefore: hashBefore };
+    var fakeAuthId = viewAsApplyFilter(base, target, safeProps);
+    var prof = target.authUserId && base.allProfiles.find(function(p){ return p.authUserId === target.authUserId; });
+    var nameParts = (target.fullName || '').split(' ');
+    currentProfile = Object.assign({
+      id: null, email: '', phone: target.phone || '', avatarUrl: '', createdAt: null,
+      firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ')
+    }, prof || {}, { authUserId: fakeAuthId, role: 'tenant', isActive: true, currentPassword: '' });
+    recomputeRentCharges();
+    refreshStaticSelects();
+    buildNavDom(TENANT_NAV);
+    ROUTES = TENANT_ROUTES;
+    document.body.classList.add('viewas-on');
+    renderViewAsBar();
+    if (location.hash === '#/' || !location.hash) render(); else location.hash = '#/';
+  }
+  window.startViewAs = startViewAs;
+
+  function exitViewAs(toPicker){
+    if (!viewAs) return;
+    if (anyModalOpen()) closeAllModalsForViewAs();
+    var back = viewAs.hashBefore;
+    var backTenant = viewAs.tenantId;
+    viewAsRestore(viewAs.snapshot);
+    currentProfile = viewAs.realProfile;
+    viewAs = null;
+    recomputeRentCharges();
+    refreshStaticSelects();
+    buildNavDom(STAFF_NAV);
+    ROUTES = STAFF_ROUTES;
+    document.body.classList.remove('viewas-on');
+    renderViewAsBar();
+    var dest = !toPicker && back && /^#\/tenants\//.test(back) ? back : '#/view-as';
+    viewAsLastTenantId = backTenant;
+    if (location.hash === dest) render(); else location.hash = dest;
+  }
+  window.exitViewAs = exitViewAs;
+  function closeAllModalsForViewAs(){
+    document.querySelectorAll('.modal-overlay').forEach(function(m){ m.hidden = true; });
+    document.body.classList.remove('modal-open');
+  }
+
+  function renderViewAsBar(){
+    var bar = document.getElementById('viewas-bar');
+    if (!viewAs){ if (bar) bar.remove(); return; }
+    if (!bar){
+      bar = document.createElement('div');
+      bar.id = 'viewas-bar';
+      bar.className = 'viewas-bar';
+      bar.setAttribute('role', 'status');
+      var main = document.querySelector('main.content');
+      main.insertBefore(bar, main.firstChild);
+    }
+    var t = tenants[0];
+    var p = t && propertyOf(t.propertyId), r = t && roomOf(t.roomId);
+    var where = [p ? p.name : '', r ? r.name : ''].filter(Boolean).join(' · ');
+    bar.innerHTML =
+      '<span class="viewas-eye" aria-hidden="true">'+svg('eye')+'</span>'+
+      '<span class="viewas-txt"><b>Viewing as '+esc(t ? t.fullName : 'tenant')+'</b>'+
+      '<small>'+(where ? esc(where)+' · ' : '')+'Read-only preview — what they see in their app</small></span>'+
+      '<span class="viewas-actions">'+
+      '<button type="button" class="mini-btn" onclick="exitViewAs(true)">Switch tenant</button>'+
+      '<button type="button" class="mini-btn primary" onclick="exitViewAs()">Exit</button></span>';
+  }
+
+  var viewAsLastTenantId = null;
+  var viewAsSearch = '';
+  function renderViewAsPicker(){
+    if (!isStaff()) return accessDeniedPage();
+    var header = pageHeader('Tenant view', 'Open the app exactly as a tenant sees it — their real balance, bills, rules and tasks. Read-only: nothing can be changed while you look.');
+    var list = tenants.filter(function(t){ return t.rentAmount > 0 || t.authUserId; });
+    if (list.length === 0) return header + emptyState('tenants', 'No tenants yet', 'Add a tenant first, then you can preview their app here.', '');
+    function rank(t){ return tenantHasMovedOut(t) ? 2 : (t.moveInDate && t.moveInDate > TODAY ? 1 : 0); }
+    list.sort(function(a,b){
+      var pa = propertyOf(a.propertyId), pb = propertyOf(b.propertyId);
+      return rank(a) - rank(b) || (pa?pa.name:'').localeCompare(pb?pb.name:'') || (a.fullName||'').localeCompare(b.fullName||'');
+    });
+    var groups = [['Living there now', 0], ['Moving in soon', 1], ['Moved out', 2]];
+    var html = groups.map(function(g){
+      var items = list.filter(function(t){ return rank(t) === g[1]; });
+      if (!items.length) return '';
+      return '<div class="va-group"><div class="va-group-title">'+g[0]+' <span class="seg-count">'+items.length+'</span></div>'+
+        '<div class="va-list">'+items.map(function(t){
+          var p = propertyOf(t.propertyId), r = roomOf(t.roomId);
+          var initials = (t.fullName||'?').split(/\s+/).filter(Boolean).slice(0,2).map(function(w){ return w[0]; }).join('').toUpperCase();
+          var hasLogin = !!t.authUserId;
+          var search = ((t.fullName||'')+' '+(p?p.name:'')+' '+(r?r.name:'')+' '+(t.paymentReference||'')).toLowerCase();
+          return '<button type="button" class="card va-row'+(t.id===viewAsLastTenantId?' va-last':'')+'" data-search="'+esc(search)+'" onclick="startViewAs(\''+t.id+'\')">'+
+            '<span class="va-av" aria-hidden="true">'+esc(initials)+'</span>'+
+            '<span class="va-who"><b>'+esc(t.fullName)+'</b><small>'+esc([p?p.name:'', r?r.name:''].filter(Boolean).join(' · ') || '—')+'</small>'+
+            (hasLogin ? '' : '<small class="va-nologin">No app login yet</small>')+'</span>'+
+            '<span class="va-go">'+svg('eye')+'<span>View</span></span></button>';
+        }).join('')+'</div></div>';
+    }).join('');
+    return header +
+      '<div class="va-search"><input type="search" id="va-search" placeholder="Search name, property or room" value="'+esc(viewAsSearch)+'" oninput="viewAsFilter(this.value)" autocomplete="off"></div>'+
+      '<div id="va-groups">'+html+'</div>'+
+      '<p class="va-empty" id="va-empty" hidden>No tenant matches that search.</p>'+
+      '';
+  }
+  function viewAsFilter(q){
+    viewAsSearch = q || '';
+    var needle = viewAsSearch.trim().toLowerCase();
+    var shown = 0;
+    document.querySelectorAll('#va-groups .va-row').forEach(function(el){
+      var ok = !needle || el.getAttribute('data-search').indexOf(needle) > -1;
+      el.hidden = !ok; if (ok) shown++;
+    });
+    document.querySelectorAll('#va-groups .va-group').forEach(function(g){
+      g.hidden = !g.querySelector('.va-row:not([hidden])');
+    });
+    var empty = document.getElementById('va-empty');
+    if (empty) empty.hidden = shown > 0;
+  }
+  window.viewAsFilter = viewAsFilter;
+
   var STAFF_ROUTES = {
     '#/': renderDashboard,
     '#/properties': renderProperties,
@@ -13037,6 +13306,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     '#/documents': routeToOperationsTab('#/documents', 'documents'),
     '#/rules': routeToOperationsTab('#/rules', 'rules'),
     '#/notifications': function(){ return isTenantRole() ? renderNotifications() : renderNotificationsStaff(); },
+    '#/view-as': renderViewAsPicker,
     '#/users': renderUsers,
     '#/audit-log': renderAuditLog,
     '#/settings': renderSettings,
@@ -13075,6 +13345,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     else if (billMatch) html = renderBillDetail(decodeURIComponent(billMatch[1]));
     else html = (ROUTES[hash] || ROUTES['#/'])();
     content.innerHTML = html;
+    if (hash === '#/view-as' && viewAsSearch) viewAsFilter(viewAsSearch);
     compactAddButtons();
     setActiveNav(hash);
     updateNotifNavBadge();
@@ -14259,6 +14530,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var lastMaintenanceAt = 0;
   var maintenanceRunning = null;
   function runMaintenanceTasks(){
+    if (viewAs) return Promise.resolve();
     if (maintenanceRunning) return maintenanceRunning;
     maintenanceRunning = (async function(){
     try { await generateDueRecurringBills(); } catch(_e){ console.error('generateDueRecurringBills failed', _e); }
@@ -14373,6 +14645,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   });
   var deferredRefreshTimer = null;
   async function refreshAllData(){
+    if (viewAs) return; // the tenant view is a snapshot — leave it to refresh on exit
     if (isRefreshingData || anyModalOpen()) return;
     if (Date.now() - lastUserInputAt < 1500){
       clearTimeout(deferredRefreshTimer);
