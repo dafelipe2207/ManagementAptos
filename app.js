@@ -228,8 +228,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         .sort(function(a,b){ return a.date.localeCompare(b.date); });
       var payIdx = 0, payLeft = pays.length ? pays[0].amount : 0;
 
+      var cutoff = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || null;
       return periods.map(function(period){
         var amountDue = schedule.amount;
+        var periodEnd = period.periodEnd;
+        // Last period of the tenancy: only charge the days up to (and including) the move-out
+        // date, not the whole week/fortnight/month.
+        if (cutoff && period.periodStart <= cutoff && cutoff < period.periodEnd){
+          var fullDays = daysBetween(period.periodStart, period.periodEnd) + 1;
+          var stayDays = daysBetween(period.periodStart, cutoff) + 1;
+          amountDue = round2(schedule.amount * stayDays / fullDays);
+          periodEnd = cutoff;
+        }
         var need = amountDue, amountPaid = 0, lastPaidDate = null;
         while (need > 0.004 && payIdx < pays.length){
           var take = Math.min(need, payLeft);
@@ -246,7 +256,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           id: tenant.id + '-' + period.periodStart,
           tenantId: tenant.id,
           periodStart: period.periodStart,
-          periodEnd: period.periodEnd,
+          periodEnd: periodEnd,
+          prorated: periodEnd !== period.periodEnd,
           dueDate: period.dueDate,
           amountDue: amountDue,
           amountPaid: amountPaid,
@@ -2560,20 +2571,30 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     });
 
     var totalEstimatedOwed = round2(totalUnpaid + totalEstimatedGap);
-    // Rent periods that START on/after the move-out date aren't owed — they're past the tenancy.
-    var outstandingRent = round2(rentCharges
-      .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004 && c.periodStart < moveOutDate; })
-      .reduce(function(s,c){ return s + c.remaining; }, 0));
+    // Rent owed through the move-out date (the last period is already prorated by rentService).
+    // Regenerated up to the move-out date so periods between today and then are included, and any
+    // payment beyond what's owed counts as credit in the tenant's favour.
+    var schedule = rentSchedules.find(function(s){ return s.tenantId===t.id; });
+    var rentList = (schedule && t.rentAmount > 0)
+      ? rentService.generateChargesForTenant(t, schedule, moveOutDate > TODAY ? moveOutDate : TODAY, paymentRecords)
+      : rentCharges.filter(function(c){ return c.tenantId===t.id; });
+    rentList = rentList.filter(function(c){ return c.periodStart <= moveOutDate; });
+    var rentRemaining = rentList.reduce(function(s,c){ return s + Math.max(0, c.remaining); }, 0);
+    var rentPaidAllocated = rentList.reduce(function(s,c){ return s + c.amountPaid; }, 0);
+    var rentPaidTotal = paymentRecords.filter(function(p){ return p.tenantId===t.id; }).reduce(function(s,p){ return s + (p.amount || 0); }, 0);
+    var rentCredit = Math.max(0, rentPaidTotal - rentPaidAllocated);
+    var outstandingRent = round2(Math.max(0, rentRemaining - rentCredit));
+    rentCredit = round2(Math.max(0, rentCredit - rentRemaining));
     // The full picture: bond paid, minus whatever's still owed on rent, minus whatever's still
     // owed on bills (real + estimated), minus any discount/deduction already applied to the bond.
-    var estimatedReturn = round2(bondPaid - outstandingRent - totalEstimatedOwed - bondDeduction - bondReturned);
+    var estimatedReturn = round2(bondPaid - outstandingRent + rentCredit - totalEstimatedOwed - bondDeduction - bondReturned);
 
     return {
       moveOutDate: moveOutDate, isActual: !!t.actualMoveOutDate, hasBond: !!bond,
       bondPaid: bondPaid, bondDeduction: round2(bondDeduction), bondReturned: round2(bondReturned), lines: lines,
       totalUnpaid: round2(totalUnpaid), totalEstimatedGap: round2(totalEstimatedGap),
       totalEstimatedOwed: totalEstimatedOwed, estimatedReturn: estimatedReturn,
-      outstandingRent: outstandingRent
+      outstandingRent: outstandingRent, rentCredit: rentCredit
     };
   }
 
@@ -2589,14 +2610,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
 
     var owedRows = '';
-    if (est.outstandingRent > 0) owedRows += '<div class="field-row"><span class="k">Rent</span>'+neg(est.outstandingRent)+'</div>';
+    if (est.outstandingRent > 0) owedRows += '<div class="field-row"><span class="k">Rent (until '+fullDate(est.moveOutDate)+')</span>'+neg(est.outstandingRent)+'</div>';
     est.lines.forEach(function(l){
       if (l.unpaid > 0) owedRows += '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' (bills already charged)</span>'+neg(l.unpaid)+'</div>';
     });
     manual.forEach(function(d){ owedRows += '<div class="field-row"><span class="k">'+esc(d.description)+'</span>'+neg(d.amount)+'</div>'; });
     if (est.bondDeduction > 0) owedRows += '<div class="field-row"><span class="k">Other bond deductions</span>'+neg(est.bondDeduction)+'</div>';
     if (est.bondReturned > 0) owedRows += '<div class="field-row"><span class="k">Bond already returned</span>'+neg(est.bondReturned)+'</div>';
-    var owedTotal = round2(est.outstandingRent + est.totalUnpaid + manualTotal + est.bondDeduction + est.bondReturned);
+    if (est.rentCredit > 0) owedRows += '<div class="field-row"><span class="k">Rent paid in advance (credit)</span><span class="v" style="color:var(--status-paid);">+'+money(est.rentCredit)+'</span></div>';
+    var owedTotal = round2(est.outstandingRent + est.totalUnpaid + manualTotal + est.bondDeduction + est.bondReturned - (est.rentCredit || 0));
 
     var estRows = '';
     est.lines.forEach(function(l){
@@ -2925,7 +2947,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!est) return '';
     var manual = (settlement && settlement.status === 'in_progress') ? (settlement.manualDeductions || []) : [];
     var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
-    var owedTotal = round2(est.outstandingRent + est.totalUnpaid + manualTotal + est.bondDeduction + est.bondReturned);
+    var owedTotal = round2(est.outstandingRent + est.totalUnpaid + manualTotal + est.bondDeduction + est.bondReturned - (est.rentCredit || 0));
     var left = round2(est.bondPaid - owedTotal - est.totalEstimatedGap);
     var first = (t.fullName || '').split(' ')[0] || 'there';
     var L = [];
@@ -2937,11 +2959,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     L.push('');
     L.push('*What you already owe*');
     var owedLines = [];
-    if (est.outstandingRent > 0) owedLines.push('• Rent: '+money(est.outstandingRent));
+    if (est.outstandingRent > 0) owedLines.push('• Rent (until '+fullDate(est.moveOutDate)+'): '+money(est.outstandingRent));
     est.lines.forEach(function(l){ if (l.unpaid > 0) owedLines.push('• '+billTypeLabel(l.billType)+' (bills already charged): '+money(l.unpaid)); });
     manual.forEach(function(d){ owedLines.push('• '+d.description+': '+money(d.amount)); });
     if (est.bondDeduction > 0) owedLines.push('• Other bond deductions: '+money(est.bondDeduction));
     if (est.bondReturned > 0) owedLines.push('• Bond already returned: '+money(est.bondReturned));
+    if (est.rentCredit > 0) owedLines.push('• Rent paid in advance (credit): -'+money(est.rentCredit));
     L = L.concat(owedLines.length ? owedLines : ['• Nothing owed right now']);
     L.push('Subtotal: *'+money(owedTotal)+'*');
     L.push('');
