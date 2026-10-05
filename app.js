@@ -3189,55 +3189,87 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     return new Promise(function(res){ c.toBlob(function(b){ res(b); }, 'image/png'); });
   }
+  /** Opens a preview window with the summary image, so it's always visible and in hand, plus
+   *  the ways to get it into WhatsApp: Copy (then paste with Ctrl+V in the chat), Share (phones),
+   *  Download, and Open the tenant's chat. The image can also be dragged straight into WhatsApp. */
+  var estimateImageState = null;
   function shareMoveOutEstimateImage(tenantId){
     var t = tenantOf(tenantId); if (!t) return;
     var d = moveOutEstimateData(t);
     if (!d){ showToast('Set a move-out date first.', 'error'); return; }
-    var name = 'move-out-' + (d.final ? 'settlement' : 'estimate') + '-' + (d.first || 'tenant').toLowerCase() + '.png';
-    var caption = 'Hi ' + d.first + ', here is ' + (d.final ? 'the final settlement of your bond' : 'the estimate') + ' for your move-out on ' + fullDate(d.moveOutDate) + '.';
-    var digits = phoneDigitsForWhatsApp(t.phone);
-    var blobPromise = moveOutEstimateImageBlob(t);
-    var isPhone = isAppleMobile() || /Android/i.test(navigator.userAgent || '');
-
-    if (isPhone){
-      // Phone: the system share sheet lists WhatsApp / WhatsApp Business — pick the tenant's chat.
-      blobPromise.then(function(blob){
-        var file = new File([blob], name, { type:'image/png' });
-        if (navigator.canShare && navigator.canShare({ files:[file] })){
-          return navigator.share({ files:[file], text: caption }).catch(function(err){
-            if (!err || err.name !== 'AbortError') downloadEstimateImage(blob, name, digits, caption);
-          });
-        }
-        downloadEstimateImage(blob, name, digits, caption);
-      });
-      return;
-    }
-    // Computer: WhatsApp isn't offered by Windows' share menu, so copy the picture to the
-    // clipboard (started right away, inside the click, so the browser allows it) and open the
-    // tenant's chat — the admin just pastes it with Ctrl+V.
-    var copied = (navigator.clipboard && window.ClipboardItem)
-      ? navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]).then(function(){ return true; }, function(){ return false; })
-      : Promise.resolve(false);
-    copied.then(function(ok){
-      if (ok){
-        if (digits){
-          showToast('Image copied — in the WhatsApp chat that opens, press Ctrl+V to paste it, then send.', 'success');
-          openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(caption));
-        } else {
-          showToast('Image copied — no phone on file for this tenant, paste it (Ctrl+V) in their chat.', 'info');
-        }
-        return;
+    var p;
+    try { p = moveOutEstimateImageBlob(t); }
+    catch(err){ console.error('estimate image', err); showToast('Could not create the image. ' + (err && err.message || ''), 'error'); return; }
+    p.then(function(blob){
+      if (!blob){ showToast('Could not create the image.', 'error'); return; }
+      var name = 'move-out-' + (d.final ? 'settlement' : 'estimate') + '-' + (d.first || 'tenant').toLowerCase() + '.png';
+      var caption = 'Hi ' + d.first + ', here is ' + (d.final ? 'the final settlement of your bond' : 'the estimate') + ' for your move-out on ' + fullDate(d.moveOutDate) + '.';
+      if (estimateImageState && estimateImageState.url) URL.revokeObjectURL(estimateImageState.url);
+      estimateImageState = { blob: blob, url: URL.createObjectURL(blob), name: name, caption: caption, digits: phoneDigitsForWhatsApp(t.phone) };
+      var file = null;
+      try { file = new File([blob], name, { type:'image/png' }); } catch(_e){}
+      var canShareFile = !!(file && navigator.canShare && navigator.canShare({ files:[file] }));
+      var canCopy = !!(navigator.clipboard && window.ClipboardItem);
+      var phone = isAppleMobile() || /Android/i.test(navigator.userAgent || '');
+      var m = document.getElementById('estimate-image-modal');
+      if (!m){
+        m = document.createElement('div');
+        m.className = 'modal-overlay'; m.id = 'estimate-image-modal';
+        m.addEventListener('click', function(e){ if (e.target === m) closeEstimateImageModal(); });
+        document.body.appendChild(m);
       }
-      blobPromise.then(function(blob){ downloadEstimateImage(blob, name, digits, caption); });
+      var btn = function(label, fn, primary){ return '<button type="button" class="mini-btn'+(primary?' primary':'')+'" onclick="'+fn+'">'+label+'</button>'; };
+      m.innerHTML = '<div class="card modal-card" style="max-width:520px;">'+
+        '<div class="modal-actions" style="justify-content:space-between;align-items:center;margin:0 0 10px;">'+
+          '<h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:15px;">Send to '+esc(d.first)+' on WhatsApp</h2>'+
+          btn('Close', 'closeEstimateImageModal()')+'</div>'+
+        '<img src="'+estimateImageState.url+'" alt="Move-out summary" draggable="true" style="display:block;width:100%;max-height:55vh;object-fit:contain;border-radius:12px;border:1px solid var(--border, rgba(127,127,127,.25));background:#f4f5f8;">'+
+        '<p style="font-size:12px;color:var(--text-dim);margin:10px 0 0;">'+
+          (phone
+            ? 'Tap <b>Share</b> and choose WhatsApp Business → '+esc(d.first)+'\'s chat.'
+            : '<b>1.</b> Copy image &nbsp; <b>2.</b> Open chat &nbsp; <b>3.</b> Press <b>Ctrl+V</b> in the chat and send. You can also drag the image into WhatsApp.')+
+        '</p>'+
+        '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;margin-top:12px;">'+
+          (canShareFile ? btn('📤 Share', 'estimateImageShare()', phone) : '')+
+          (canCopy ? btn('📋 Copy image', 'estimateImageCopy(this)', !phone) : '')+
+          (estimateImageState.digits ? btn('💬 Open chat', 'estimateImageOpenChat()') : '')+
+          btn('⬇️ Download', 'estimateImageDownload()')+
+        '</div></div>';
+      m.hidden = false;
+    }, function(err){ console.error('estimate image', err); showToast('Could not create the image.', 'error'); });
+  }
+  function closeEstimateImageModal(){ var m = document.getElementById('estimate-image-modal'); if (m) m.hidden = true; }
+  function estimateImageCopy(b){
+    var st = estimateImageState; if (!st) return;
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': st.blob })]).then(function(){
+      if (b){ b.textContent = 'Copied ✓'; setTimeout(function(){ b.textContent = '📋 Copy image'; }, 2000); }
+      showToast('Image copied — open the chat and press Ctrl+V.', 'success');
+    }, function(err){
+      console.error('copy image', err);
+      showToast('Couldn\'t copy here — use Download (or drag the image) instead.', 'error');
     });
   }
-  function downloadEstimateImage(blob, name, digits, caption){
-    var url = URL.createObjectURL(blob);
-    var aEl = document.createElement('a'); aEl.href = url; aEl.download = name; document.body.appendChild(aEl); aEl.click(); aEl.remove();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
-    showToast('Image saved to your downloads' + (digits ? ' — attach it in the WhatsApp chat that just opened.' : '.'), 'info');
-    if (digits) openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(caption));
+  function estimateImageShare(){
+    var st = estimateImageState; if (!st) return;
+    var file = new File([st.blob], st.name, { type:'image/png' });
+    navigator.share({ files:[file], text: st.caption }).catch(function(err){
+      if (!err || err.name !== 'AbortError') showToast('Couldn\'t share — use Download instead.', 'error');
+    });
   }
+  function estimateImageDownload(){
+    var st = estimateImageState; if (!st) return;
+    var aEl = document.createElement('a'); aEl.href = st.url; aEl.download = st.name; document.body.appendChild(aEl); aEl.click(); aEl.remove();
+    showToast('Image saved to your downloads.', 'success');
+  }
+  function estimateImageOpenChat(){
+    var st = estimateImageState; if (!st || !st.digits) return;
+    openWhatsApp('https://wa.me/' + st.digits + '?text=' + encodeURIComponent(st.caption));
+  }
+  window.closeEstimateImageModal = closeEstimateImageModal;
+  window.estimateImageCopy = estimateImageCopy;
+  window.estimateImageShare = estimateImageShare;
+  window.estimateImageDownload = estimateImageDownload;
+  window.estimateImageOpenChat = estimateImageOpenChat;
   window.shareMoveOutEstimateImage = shareMoveOutEstimateImage;
 
   var moveOutDeductionModalSettlementId = null;
