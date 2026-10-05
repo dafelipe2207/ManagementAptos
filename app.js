@@ -5,7 +5,7 @@
 // services/* modules instead of synchronous localStorage.
 import * as auth from './lib/auth.js?v=3';
 import { friendlyErrorMessage } from './lib/errors.js';
-import { supabase as realtimeClient } from './lib/supabaseClient.js';
+import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
 import * as tenantService from './services/tenantService.js?v=8';
@@ -94,7 +94,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
   function phoneDigitsOnly(raw){ return (raw || '').replace(/[^0-9]/g, ''); }
   function isSuperAdmin(){ return !!currentProfile && currentProfile.role === 'super_admin'; }
-  function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator'); }
+  // A Viewer sees the staff app (for their assigned properties) but can't change anything.
+  function isViewer(){ return !!currentProfile && currentProfile.role === 'viewer'; }
+  function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator' || currentProfile.role === 'viewer'); }
   function isTenantRole(){ return !!currentProfile && currentProfile.role === 'tenant'; }
   /** Bills from this provider are NEVER shown to or sent to tenants — not in "My Bills",
    *  not in the outstanding balance on their dashboard, and not with the WhatsApp buttons
@@ -10802,7 +10804,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.saveInspectionSubmitForm = saveInspectionSubmitForm;
 
   /* ============ Users (Super Admin only) ============ */
-  var ROLE_LABEL = { super_admin:'Super Admin', administrator:'Administrator', tenant:'Tenant' };
+  var ROLE_LABEL = { super_admin:'Super Admin', administrator:'Administrator', viewer:'Viewer (read-only)', tenant:'Tenant' };
 
   var usersViewTab = 'administrator'; // 'administrator' | 'super_admin' | 'tenant'
   function setUsersViewTab(tab){ usersViewTab = tab; renderPreservingScroll(); }
@@ -10813,7 +10815,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.setUsersPropertyFilter = setUsersPropertyFilter;
   function renderUsers(){
     if (!isSuperAdmin()) return accessDeniedPage();
-    var USERS_TABS = [['administrator','Admins'],['super_admin','Super Admins'],['tenant','Tenants']];
+    var USERS_TABS = [['administrator','Admins'],['viewer','Viewers'],['super_admin','Super Admins'],['tenant','Tenants']];
     var tabsHtml = segHtml(USERS_TABS.map(function(tb){
       var count = allProfiles.filter(function(p){ return p.role===tb[0]; }).length;
       return [tb[0], tb[1].replace('Super Admins','Super')+' <span class="seg-count">'+count+'</span>'];
@@ -10846,7 +10848,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var phoneLogin = isPhoneLoginProfile(p);
       var identityLine = phoneLogin ? ('Logs in with: '+esc(p.phone||'—')) : (esc(p.email)+(p.phone?' · '+esc(p.phone):''));
       var assignHtml = '';
-      if (p.role === 'administrator'){
+      if (p.role === 'administrator' || p.role === 'viewer'){
         var assignedIds = propertyAssignments.filter(function(a){ return a.profileId===p.id; }).map(function(a){ return a.propertyId; });
         assignHtml = '<div style="margin-top:8px;"><div style="font-size:11.5px;color:var(--text-faint);margin-bottom:4px;">Assigned properties</div>'+
           '<div style="display:flex;flex-wrap:wrap;gap:6px;">'+
@@ -10874,7 +10876,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           : '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0;">No saved password yet — use Reset password to set one.</p>')+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;">'+
         '<select onchange="changeUserRole(\''+p.id+'\',this.value)" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t change your own role"':'')+'>'+
-        ['super_admin','administrator','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
+        ['super_admin','administrator','viewer','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
         '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\')">Reset password</button>'+
@@ -15352,6 +15354,36 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var app = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone ? ' (home-screen app)' : '';
     return os + ' · ' + br + app;
   }
+
+  /* ---------- View-only (Viewer role) ----------
+   * The Viewer sees the same screens as an administrator, but every action that would change
+   * something is stopped here, before it runs, with a clear message. Opening things to LOOK at
+   * them (details, previews, history, receipts, filters, tabs) still works. The database refuses
+   * a viewer's writes too, and lib/supabaseClient.js blocks them in the browser — this is just
+   * the friendly front layer. */
+  var VIEW_ONLY_BLOCKED = /^(save|delete|remove|add|create|confirm|submit|mark|unmark|approve|reject|calculate|startMoveOut|startEdit|cancelMoveOut|changeMoveOutDate|changeUserRole|send|share(Bill|MoveOut)|upload|trigger|pick|handle|record|regenerate|reset|run(Local|Confirm)|end[A-Z]|discard|notify|quickAdd|import|rules(Add|Delete|Move|Set|Use)|toggle(User|Tenant|Recurring|Property|Allocation|ReviewRecurring)|update(Allocation|LeasePayment)|set(Allocation)|openSetPin|removeApp|requestAuth|welcomeUpload|openWeekReassign|openMoveOutDeduction|openImport|openAllocate|openCleaningSubmit|openInspectionSubmit|openBinOutComplete|openRentReport|openPaymentReport|openPartial|openChargePaid|openAllocPaid|openNotificationCompose|openReview|openRentReject|openRejectPayment|exitViewAs___none)/;
+  var VIEW_ONLY_ALLOWED = /^(confirmSignOut|signOutAndReload|saveChangePassword|toggleNotifRead|markDbNotifRead|copy|copyWifi)/;
+  function viewOnlyBlockedCall(el){
+    var code = el.getAttribute('onclick') || el.getAttribute('onchange') || el.getAttribute('onsubmit') || '';
+    var names = code.replace(/event\.(stopPropagation|preventDefault)\(\);?/g, '').match(/[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\()/g) || [];
+    for (var i = 0; i < names.length; i++){
+      if (VIEW_ONLY_ALLOWED.test(names[i])) return null;
+      if (VIEW_ONLY_BLOCKED.test(names[i])) return names[i];
+    }
+    return null;
+  }
+  function viewOnlyGuard(e){
+    if (!isViewer()) return;
+    var el = e.target && e.target.closest ? e.target.closest('[onclick],[onchange],[onsubmit]') : null;
+    if (!el || !viewOnlyBlockedCall(el)) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    if (e.type === 'change' && el.type === 'checkbox') el.checked = !el.checked; // undo the visual toggle
+    showToast(VIEW_ONLY_MESSAGE, 'info');
+  }
+  document.addEventListener('click', viewOnlyGuard, true);
+  document.addEventListener('change', viewOnlyGuard, true);
+  document.addEventListener('submit', viewOnlyGuard, true);
+
   async function enterApp(){
     document.getElementById('auth-screen').hidden = true;
     document.getElementById('app-loading-screen').hidden = false;
@@ -15362,6 +15394,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
       if (!currentProfile.isActive){
         throw new Error('Your account has been deactivated. Ask your Super Admin to reactivate it.');
+      }
+      setViewOnly(isViewer());
+      document.body.classList.toggle('view-only', isViewer());
+      if (isViewer() && !document.getElementById('view-only-banner')){
+        var vb = document.createElement('div');
+        vb.id = 'view-only-banner';
+        vb.textContent = '👁️ View-only access — you can see everything for your properties, but can\'t make changes.';
+        document.body.appendChild(vb);
       }
       await bootstrapData({ skipMaintenance: true }); // show the app as soon as the data is read
     } catch(err){
@@ -15382,7 +15422,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     auditService.logLogin(deviceLabel()).catch(function(){}); // sign-in entry for the Audit log
     // Upkeep (recurring bills, duties, automatic notifications) runs after the app is on screen,
     // then the page quietly redraws with anything it created.
-    runMaintenanceTasks().then(function(){ if (!anyModalOpen()) render(true); })
+    if (!isViewer()) runMaintenanceTasks().then(function(){ if (!anyModalOpen()) render(true); })
       .catch(function(e){ console.error('maintenance failed', e); });
     if (getAppPin()){
       document.getElementById('lock-screen').hidden = false;
@@ -15391,7 +15431,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   function roleLabel(role){
-    return role==='super_admin' ? 'Super Admin' : role==='administrator' ? 'Administrator' : 'Tenant';
+    return role==='super_admin' ? 'Super Admin' : role==='administrator' ? 'Administrator' : role==='viewer' ? 'Viewer' : 'Tenant';
   }
 
   // A "reset your password" email link lets supabase-js automatically create a

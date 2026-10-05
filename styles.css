@@ -2161,3 +2161,15 @@ body.viewas-on .topbar{box-shadow:inset 0 -2px 0 var(--status-move);}
   padding:6px 10px;border-radius:999px;background:var(--accent-bg);}
 .va-go svg{width:15px;height:15px;}
 .va-empty{color:var(--text-dim);font-size:13.5px;}
+
+/* ---------- View-only (Viewer role) ---------- */
+#view-only-banner{
+  position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:900;
+  background:var(--status-due-bg, #fbf0dd); color:var(--status-due, #8a5a00);
+  border:1px solid var(--status-due, #8a5a00); border-radius:999px;
+  padding:7px 14px; font-size:12.5px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,.18);
+  max-width:calc(100vw - 32px); text-align:center; pointer-events:none;
+}
+body:not(.view-only) #view-only-banner{ display:none; }
+/* Destructive buttons are never usable by a viewer — hide them outright. */
+body.view-only .mini-btn.danger, body.view-only .icon-mini-btn.danger, body.view-only .rcpt-btn.rm{ display:none !important; }
