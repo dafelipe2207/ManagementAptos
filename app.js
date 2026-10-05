@@ -2322,6 +2322,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }).join('');
     var candidateRowsHtml = (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Outstanding rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill (Unpaid)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('');
+    var estimatedRowsHtml = (candidates.estimatedLines || []).map(function(l){
+      return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill <span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
+        '<br><span style="font-size:10.5px;color:var(--text-faint);">'+l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet</span></span><span class="v">'+money(l.amount)+'</span></div>';
+    }).join('');
     var summaryHtml = '<div class="field-row"><span class="k">Original bond</span><span class="v">'+(bond?money(bond.amountPaid):'No bond on file')+'</span></div>'+
       '<div class="field-row"><span class="k">Total deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(totals.totalDeductions)+'</span></div>'+
       (totals.bondRefund != null ? '<div class="field-row"><span class="k" style="font-weight:650;">Refund to tenant</span><span class="v" style="font-weight:650;">'+money(totals.bondRefund)+'</span></div>' : '');
@@ -2329,7 +2333,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (settlement.status === 'in_progress'){
       return '<div class="card"><h2>Move-Out Settlement</h2>'+
         '<p style="font-size:12px;color:var(--text-faint);">Move-Out in Progress. Bills remain Unpaid until you approve a settlement below.</p>'+
-        '<h3 style="font-size:12.5px;">Candidate deductions (from unpaid bills/rent)</h3>'+candidateRowsHtml+
+        '<h3 style="font-size:12.5px;">Candidate deductions (from unpaid bills/rent)</h3>'+(candidateRowsHtml||'<p style="font-size:12.5px;color:var(--text-dim);">Nothing unpaid.</p>')+
+        (estimatedRowsHtml ? '<h3 style="font-size:12.5px;">Estimated bills (not billed yet)</h3>'+estimatedRowsHtml : '')+
         '<h3 style="font-size:12.5px;">Other deductions</h3>'+(deductionRowsHtml||'<p style="font-size:12.5px;color:var(--text-dim);">None added yet.</p>')+
         '<button class="mini-btn" onclick="openMoveOutDeductionModal(\''+settlement.id+'\')">Add deduction</button>'+
         '<h3 style="font-size:12.5px;">Bond Summary (preview — not final)</h3>'+summaryHtml+
@@ -2338,7 +2343,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // pending_approval
     return '<div class="card"><h2>Move-Out Settlement — Pending Approval</h2>'+
       '<h3 style="font-size:12.5px;">Deductions in this proposal</h3>'+
-      settlement.billsSnapshot.map(function(l){ return '<div class="field-row"><span class="k">'+esc(l.label)+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
+      settlement.billsSnapshot.map(function(l){ return '<div class="field-row"><span class="k">'+esc(l.label)+
+        (l.kind === 'estimated' ? ' <span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>' : '')+
+        '</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
       deductionRowsHtml+
       '<h3 style="font-size:12.5px;">Bond Summary</h3>'+summaryHtml+
       '<div class="actions-row">'+
@@ -2712,7 +2719,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         billLines.push({ billId: b.id, billType: b.billType || 'other', allocationId: a.id, amount: round2(a.amount) });
       });
     });
-    return { rentAmount: rentAmount, billLines: billLines };
+    // Bills not billed yet (days between the last bill and the move-out date), estimated from the
+    // tenant's average — the same projection as the move-out estimate. Flagged as estimated
+    // everywhere they're shown; on approval they're deducted from the bond without touching any bill.
+    var estimatedLines = [];
+    var t = tenantOf(tenantId);
+    var est = t ? computeMoveOutEstimate(t) : null;
+    if (est) est.lines.forEach(function(l){
+      if (l.estimatedGapAmount > 0) estimatedLines.push({ billType: l.billType, amount: round2(l.estimatedGapAmount), gapDays: l.gapDays });
+    });
+    return { rentAmount: rentAmount, billLines: billLines, estimatedLines: estimatedLines };
   }
 
   /** bondRefund is null (not 0) when there's no bond on file, so the UI can show "No bond on
@@ -2720,7 +2736,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function computeSettlementTotals(bond, manualDeductions, candidates){
     var manualTotal = (manualDeductions || []).reduce(function(s, d){ return s + (d.amount || 0); }, 0);
     var billsTotal = candidates.billLines.reduce(function(s, l){ return s + l.amount; }, 0);
-    var totalDeductions = round2(candidates.rentAmount + billsTotal + manualTotal);
+    var estimatedTotal = (candidates.estimatedLines || []).reduce(function(s, l){ return s + l.amount; }, 0);
+    var totalDeductions = round2(candidates.rentAmount + billsTotal + estimatedTotal + manualTotal);
     // Account for anything already deducted from / returned out of this bond before this
     // settlement (e.g. an old-format single-number deduction, or a partial refund already paid).
     var existingDeduction = bond ? round2(bond.deduction || 0) : 0;
@@ -3220,6 +3237,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var billsSnapshot = candidates.billLines.map(function(l){
       return { kind:'bill', label: billTypeLabel(l.billType) + ' bill', amount: l.amount, billId: l.billId, billType: l.billType, allocationId: l.allocationId };
     });
+    (candidates.estimatedLines || []).forEach(function(l){
+      billsSnapshot.push({ kind:'estimated', label: billTypeLabel(l.billType) + ' bill (estimated, ' + l.gapDays + ' day' + (l.gapDays===1?'':'s') + ' not billed yet)', amount: l.amount, billType: l.billType, gapDays: l.gapDays });
+    });
     if (candidates.rentAmount > 0){
       billsSnapshot.unshift({ kind:'rent', label:'Outstanding rent', amount: candidates.rentAmount });
     }
@@ -3294,6 +3314,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         if (rentDiscountTotal > 0.004){
           newDiscountLines.push({ label:'Outstanding Rent', amount:rentDiscountTotal, category:'rent', sourceType:'rent', sourceId:'rent', settlementId:settlement.id });
         }
+        continue;
+      }
+      if (line.kind === 'estimated'){
+        // Not a real bill yet — nothing to mark paid; it's simply deducted from the bond, flagged
+        // as an estimate so it can be squared up once the real bill arrives.
+        newDiscountLines.push({ label: billTypeLabel(line.billType) + ' bill (estimated)', amount: line.amount, category:'bill', sourceType:'estimate', sourceId:'estimate-' + line.billType, billType: line.billType, settlementId:settlement.id });
+        timelineEntries.push({ at:new Date().toISOString(), action: billTypeLabel(line.billType) + ' bill (estimated) deducted from bond.', amount: line.amount });
         continue;
       }
       // line.kind === 'bill'
@@ -11282,6 +11309,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<h3 style="font-size:12.5px;">Deductions (estimated)</h3>'+
       (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
+      (candidates.estimatedLines || []).map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' (estimated — not billed yet)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
       settlement.manualDeductions.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.description)+'</span><span class="v">'+money(d.amount)+'</span></div>'; }).join('')+
       '<div class="field-row"><span class="k">Total deductions</span><span class="v">'+money(totals.totalDeductions)+'</span></div>'+
       '<div class="field-row"><span class="k" style="font-weight:650;">Estimated refund</span><span class="v" style="font-weight:650;">'+(totals.bondRefund!=null?money(totals.bondRefund):'—')+'</span></div>'+
