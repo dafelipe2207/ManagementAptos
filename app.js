@@ -2324,7 +2324,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill (Unpaid)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('');
     var estimatedRowsHtml = (candidates.estimatedLines || []).map(function(l){
       return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill <span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
-        '<br><span style="font-size:10.5px;color:var(--text-faint);">'+l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet</span></span><span class="v">'+money(l.amount)+'</span></div>';
+        '<br><span style="font-size:10.5px;color:var(--text-faint);">'+(l.includedInRent ? 'Included in rent' : l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet')+'</span></span><span class="v">'+money(l.amount)+'</span></div>';
     }).join('');
     var summaryHtml = '<div class="field-row"><span class="k">Original bond</span><span class="v">'+(bond?money(bond.amountPaid):'No bond on file')+'</span></div>'+
       '<div class="field-row"><span class="k">Total deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(totals.totalDeductions)+'</span></div>'+
@@ -2588,20 +2588,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var unpaid = round2(g.unpaid);
       // Not-yet-billed days. Services this tenant doesn't pay for (excluded / included in their
       // rent) are never estimated — only what's already charged (if anything) counts.
-      var estimate = isTenantExcludedFromBillType(t, bt)
-        ? { amount:0, days:0, dailyRate:0 }
-        : estimateTenantBillGap(t, bt, gapStart, moveOutDate, hasHistory ? g.billedAmount / g.billedDays : 0);
+      var includedInRent = isTenantExcludedFromBillType(t, bt);
+      var estimate = estimateTenantBillGap(t, bt, gapStart, moveOutDate, hasHistory ? g.billedAmount / g.billedDays : 0);
+      if (includedInRent) estimate = { amount:0, days:estimate.days, dailyRate:0 };
       var gapDays = estimate.days;
       // Projection plus a safety margin (MOVE_OUT_BILL_BUFFER) for variable services, in case the
       // bill that hasn't arrived yet comes in higher (winter heating, price rises…). Never shown.
       var baseGapAmount = round2(estimate.amount);
       var fixed = billTypeHasFixedAmount(t.propertyId, bt);
       var estimatedGapAmount = round2(baseGapAmount * (1 + (fixed ? 0 : MOVE_OUT_BILL_BUFFER)));
-      if (unpaid <= 0 && estimatedGapAmount <= 0) return; // nothing to show for this type
+      // Nothing to show — except a service included in their rent, which stays listed at $0.
+      if (unpaid <= 0 && estimatedGapAmount <= 0 && !(includedInRent && gapDays > 0)) return;
       totalUnpaid += unpaid;
       totalEstimatedGap += estimatedGapAmount;
       lines.push({
-        billType: bt, unpaid: unpaid, hasHistory: hasHistory || estimate.dailyRate > 0,
+        billType: bt, unpaid: unpaid, includedInRent: includedInRent && gapDays > 0, hasHistory: hasHistory || estimate.dailyRate > 0,
         dailyRate: round2(estimate.dailyRate), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount,
         baseGapAmount: baseGapAmount, bufferAmount: round2(estimatedGapAmount - baseGapAmount), fixedAmount: fixed
       });
@@ -2661,6 +2662,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     est.lines.forEach(function(l){
       if (l.estimatedGapAmount > 0) estRows += '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+
         sub(l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet')+'</span>'+neg(l.estimatedGapAmount)+'</div>';
+      else if (l.includedInRent) estRows += '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+
+        sub('Included in rent')+'</span><span class="v">'+money(0)+'</span></div>';
     });
 
     var left = round2(est.bondPaid - owedTotal - est.totalEstimatedGap);
@@ -2757,6 +2760,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var est = t ? computeMoveOutEstimate(t) : null;
     if (est) est.lines.forEach(function(l){
       if (l.estimatedGapAmount > 0) estimatedLines.push({ billType: l.billType, amount: round2(l.estimatedGapAmount), gapDays: l.gapDays });
+      else if (l.includedInRent) estimatedLines.push({ billType: l.billType, amount: 0, gapDays: l.gapDays, includedInRent: true });
     });
     return { rentAmount: rentAmount, billLines: billLines, estimatedLines: estimatedLines };
   }
@@ -3010,7 +3014,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return { label: x.sourceType === 'rent' ? 'Rent' : (x.sourceType === 'bill' ? String(x.label || 'Bill').replace(/ bill$/,'') + ' (charged)' : (x.label || 'Deduction')), amount: x.amount };
       }));
       var fEst = group(mine.filter(function(x){ return x.sourceType === 'estimate'; }).map(function(x){
-        return { label: String(x.label || 'Bill').replace(/ bill \(estimated\)$/,''), amount: x.amount };
+        return { label: x.includedInRent ? String(x.label || 'Bill').replace(/ bill.*$/,'') + ' (in rent)' : String(x.label || 'Bill').replace(/ bill \(estimated\)$/,''), amount: x.amount };
       }));
       var other = round2((finalBond.deduction || 0) - mine.reduce(function(s2,x){ return s2 + (x.amount || 0); }, 0));
       if (other > 0.004) fOwed.push({ label:'Other deductions', amount: other });
@@ -3038,7 +3042,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (est.bondReturned > 0) owed.push({ label:'Bond already returned', amount:est.bondReturned });
     if (est.rentCredit > 0) owed.push({ label:'Rent paid in advance', amount:-est.rentCredit });
     var estimated = [];
-    est.lines.forEach(function(l){ if (l.estimatedGapAmount > 0) estimated.push({ label:billTypeLabel(l.billType)+' ('+l.gapDays+' day'+(l.gapDays===1?'':'s')+')', amount:l.estimatedGapAmount }); });
+    est.lines.forEach(function(l){
+      if (l.estimatedGapAmount > 0) estimated.push({ label:billTypeLabel(l.billType)+' ('+l.gapDays+' day'+(l.gapDays===1?'':'s')+')', amount:l.estimatedGapAmount });
+      else if (l.includedInRent) estimated.push({ label:billTypeLabel(l.billType)+' (in rent)', amount:0 });
+    });
     var owedTotal = round2(owed.reduce(function(s,x){ return s + x.amount; }, 0));
     var total = round2(owedTotal + est.totalEstimatedGap);
     var left = round2(est.bondPaid - total);
@@ -3458,7 +3465,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return { kind:'bill', label: billTypeLabel(l.billType) + ' bill', amount: l.amount, billId: l.billId, billType: l.billType, allocationId: l.allocationId };
     });
     (candidates.estimatedLines || []).forEach(function(l){
-      billsSnapshot.push({ kind:'estimated', label: billTypeLabel(l.billType) + ' bill (estimated, ' + l.gapDays + ' day' + (l.gapDays===1?'':'s') + ' not billed yet)', amount: l.amount, billType: l.billType, gapDays: l.gapDays });
+      billsSnapshot.push({ kind:'estimated', label: l.includedInRent ? billTypeLabel(l.billType) + ' bill — included in rent' : billTypeLabel(l.billType) + ' bill (estimated, ' + l.gapDays + ' day' + (l.gapDays===1?'':'s') + ' not billed yet)', amount: l.amount, billType: l.billType, gapDays: l.gapDays, includedInRent: !!l.includedInRent });
     });
     if (candidates.rentAmount > 0){
       billsSnapshot.unshift({ kind:'rent', label:'Outstanding rent', amount: candidates.rentAmount });
@@ -3539,7 +3546,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (line.kind === 'estimated'){
         // Not a real bill yet — nothing to mark paid; it's simply deducted from the bond, flagged
         // as an estimate so it can be squared up once the real bill arrives.
-        newDiscountLines.push({ label: billTypeLabel(line.billType) + ' bill (estimated)', amount: line.amount, category:'bill', sourceType:'estimate', sourceId:'estimate-' + line.billType, billType: line.billType, settlementId:settlement.id });
+        newDiscountLines.push({ label: billTypeLabel(line.billType) + ' bill (estimated)' + (line.includedInRent ? ' — included in rent' : ''), amount: line.amount, category:'bill', sourceType:'estimate', sourceId:'estimate-' + line.billType, billType: line.billType, includedInRent: !!line.includedInRent, settlementId:settlement.id });
         timelineEntries.push({ at:new Date().toISOString(), action: billTypeLabel(line.billType) + ' bill (estimated) deducted from bond.', amount: line.amount });
         continue;
       }
@@ -11529,7 +11536,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<h3 style="font-size:12.5px;">Deductions (estimated)</h3>'+
       (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
-      (candidates.estimatedLines || []).map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' (estimated — not billed yet)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
+      (candidates.estimatedLines || []).map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+(l.includedInRent ? ' (included in rent)' : ' (estimated — not billed yet)')+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
       settlement.manualDeductions.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.description)+'</span><span class="v">'+money(d.amount)+'</span></div>'; }).join('')+
       '<div class="field-row"><span class="k">Total deductions</span><span class="v">'+money(totals.totalDeductions)+'</span></div>'+
       '<div class="field-row"><span class="k" style="font-weight:650;">Estimated refund</span><span class="v" style="font-weight:650;">'+(totals.bondRefund!=null?money(totals.bondRefund):'—')+'</span></div>'+
