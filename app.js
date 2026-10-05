@@ -2577,37 +2577,62 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     };
   }
 
+  /** Shared body for the move-out estimate (admin + tenant). Two clearly separate blocks:
+   *  1) what's ALREADY owed (real amounts: unpaid rent, bills charged and unpaid, deductions), and
+   *  2) bills ESTIMATED for the days not billed yet. Then the total and the bond left.
+   *  The safety margin on variable bills is applied in the numbers but never mentioned. */
+  function moveOutEstimateBodyHtml(est, manual, who){
+    manual = manual || [];
+    var neg = function(v){ return '<span class="v" style="color:var(--status-overdue);">-'+money(v)+'</span>'; };
+    var sub = function(txt){ return '<br><span style="font-size:10.5px;font-weight:400;color:var(--text-faint);">'+txt+'</span>'; };
+    var head = function(txt){ return '<h3 style="font-size:12.5px;margin:12px 0 4px;">'+txt+'</h3>'; };
+    var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
+
+    var owedRows = '';
+    if (est.outstandingRent > 0) owedRows += '<div class="field-row"><span class="k">Rent</span>'+neg(est.outstandingRent)+'</div>';
+    est.lines.forEach(function(l){
+      if (l.unpaid > 0) owedRows += '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' (bills already charged)</span>'+neg(l.unpaid)+'</div>';
+    });
+    manual.forEach(function(d){ owedRows += '<div class="field-row"><span class="k">'+esc(d.description)+'</span>'+neg(d.amount)+'</div>'; });
+    if (est.bondDeduction > 0) owedRows += '<div class="field-row"><span class="k">Other bond deductions</span>'+neg(est.bondDeduction)+'</div>';
+    if (est.bondReturned > 0) owedRows += '<div class="field-row"><span class="k">Bond already returned</span>'+neg(est.bondReturned)+'</div>';
+    var owedTotal = round2(est.outstandingRent + est.totalUnpaid + manualTotal + est.bondDeduction + est.bondReturned);
+
+    var estRows = '';
+    est.lines.forEach(function(l){
+      if (l.estimatedGapAmount > 0) estRows += '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+
+        sub(l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet')+'</span>'+neg(l.estimatedGapAmount)+'</div>';
+    });
+
+    var left = round2(est.bondPaid - owedTotal - est.totalEstimatedGap);
+    var html =
+      '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(est.moveOutDate)+(est.isActual?'':' (expected)')+'</span></div>'+
+      (est.hasBond ? '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(est.bondPaid)+'</span></div>'
+                   : '<div class="field-row"><span class="k">Bond</span><span class="v">No bond on file</span></div>')+
+      head(who==='tenant' ? 'What you already owe' : 'Already owed')+
+      (owedRows || '<div class="field-row"><span class="k">Nothing owed right now</span><span class="v">'+money(0)+'</span></div>')+
+      '<div class="field-row"><span class="k" style="font-weight:600;">Subtotal owed</span><span class="v">'+money(owedTotal)+'</span></div>'+
+      head('Estimated bills (not billed yet)')+
+      (estRows || '<div class="field-row"><span class="k">No bills to estimate</span><span class="v">'+money(0)+'</span></div>')+
+      '<div class="field-row"><span class="k" style="font-weight:600;">Subtotal estimated</span><span class="v">'+money(est.totalEstimatedGap)+'</span></div>'+
+      head('Summary')+
+      '<div class="field-row"><span class="k">Total owed + estimated</span><span class="v">'+money(round2(owedTotal + est.totalEstimatedGap))+'</span></div>';
+    var label = who==='tenant' ? 'Bond left for you (estimated)' : 'Estimated bond to return';
+    if (!est.hasBond) html += '<div class="field-row"><span class="k" style="font-weight:650;">'+label+'</span><span class="v" style="font-weight:650;">—</span></div>';
+    else if (left >= 0) html += '<div class="field-row"><span class="k" style="font-weight:650;">'+label+'</span><span class="v" style="font-weight:650;">'+money(left)+'</span></div>';
+    else html += '<div class="field-row"><span class="k" style="font-weight:650;">'+label+'</span><span class="v" style="font-weight:650;">'+money(0)+'</span></div>'+
+      '<div class="field-row"><span class="k" style="font-weight:650;">'+(who==='tenant' ? 'Still to pay beyond the bond' : 'Tenant owes beyond the bond')+'</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(-left)+'</span></div>';
+    return '<div class="field-list">'+html+'</div>';
+  }
+
   function moveOutSettlementHtml(t){
     if (t.moveOutSettledAt) return ''; // already settled for real — see bondSettlementSummaryHtml
     if (moveOutSettlementOf(t.id)) return ''; // the staged move-out settlement flow has taken over — see moveOutSettlementCardHtml
     var est = computeMoveOutEstimate(t);
     if (!est) return '';
-    /** One row per service type, showing the FIXED part (already billed, unpaid — a
-     *  real amount) separate from the ESTIMATED part (projected from the average, for the days
-     *  that don't have a bill yet) — so it's clear what's certain and what's a projection. */
-    function typeLineHtml(line){
-      var parts = [];
-      if (line.unpaid > 0) parts.push('<b>'+money(line.unpaid)+'</b> already charged (unpaid)');
-      if (line.estimatedGapAmount > 0) parts.push('<b>'+money(line.estimatedGapAmount)+'</b> estimated ('+line.gapDays+' day'+(line.gapDays===1?'':'s')+' not billed yet'+(line.hasHistory?(', at '+money(line.dailyRate)+'/day'+(line.fixedAmount ? ' · same amount every time, no margin' : ' = '+money(line.baseGapAmount)+' + '+Math.round(MOVE_OUT_BILL_BUFFER*100)+'% margin '+money(line.bufferAmount))):'')+')');
-      return '<div class="field-row" style="align-items:flex-start;">'+
-        '<span class="k">'+esc(billTypeLabel(line.billType))+'</span>'+
-        '<span class="v" style="text-align:right;font-weight:400;">'+money(round2(line.unpaid+line.estimatedGapAmount))+
-        '<br/><span style="font-size:10.5px;color:var(--text-faint);font-weight:400;">'+parts.join(' + ')+'</span></span></div>';
-    }
-    var rows =
-      '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(est.moveOutDate)+(est.isActual?'':' (expected)')+'</span></div>'+
-      '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(est.bondPaid)+'</span></div>';
-    rows += est.lines.length
-      ? est.lines.map(typeLineHtml).join('')
-      : '<div class="field-row"><span class="k">Bills</span><span class="v">Nothing charged or estimated</span></div>';
-    rows +=
-      '<div class="field-row"><span class="k">Estimated total owed on bills</span><span class="v">'+money(est.totalEstimatedOwed)+'</span></div>'+
-      (est.outstandingRent > 0 ? '<div class="field-row"><span class="k">Still owed on rent</span><span class="v" style="color:var(--status-overdue);">-'+money(est.outstandingRent)+'</span></div>' : '')+
-      (est.bondDeduction > 0 ? '<div class="field-row"><span class="k">Bond deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(est.bondDeduction)+'</span></div>' : '')+
-      '<div class="field-row"><span class="k" style="font-weight:650;">Estimated bond to return</span><span class="v" style="font-weight:650;">'+money(est.estimatedReturn)+'</span></div>';
     return '<div class="card"><h2>Move-out settlement</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Below, each service shows what\'s already charged and unpaid (a real amount) separately from what\'s estimated from the average for days not billed yet. Bills that haven\'t arrived yet include a '+Math.round(MOVE_OUT_BILL_BUFFER*100)+'% safety margin in case they come in more expensive (e.g. gas with its quarterly adjustment) — except services that always cost the same, like internet. Update it once the real bills for the final days arrive. "Estimated bond to return" already subtracts unpaid rent and any bond deductions, along with the bills above.</p>'+
-      '<div class="field-list">'+rows+'</div></div>';
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">"Already owed" are real amounts (unpaid rent and bills already charged). "Estimated bills" are projected from the tenant\'s average for the days not billed yet — update once the real bills arrive.</p>'+
+      moveOutEstimateBodyHtml(est, [], 'admin')+'</div>';
   }
 
   /* ============ Move-out bond settlement ============
@@ -11137,34 +11162,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var est = computeMoveOutEstimate(t, { tenantView:true });
     if (!est) return '';
     var manual = settlement ? (settlement.manualDeductions || []) : [];
-    var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
-    var totalOwed = round2(est.outstandingRent + est.totalEstimatedOwed + est.bondDeduction + manualTotal);
-    var left = round2(est.estimatedReturn - manualTotal);
-    var neg = function(v){ return '<span class="v" style="color:var(--status-overdue);">-'+money(v)+'</span>'; };
-    var billRows = est.lines.map(function(l){
-      var parts = [];
-      if (l.unpaid > 0) parts.push(money(l.unpaid)+' already charged');
-      if (l.estimatedGapAmount > 0) parts.push(money(l.estimatedGapAmount)+' estimated for '+l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet');
-      return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+'</span>'+
-        '<span class="v" style="text-align:right;"><span style="color:var(--status-overdue);">-'+money(round2(l.unpaid + l.estimatedGapAmount))+'</span>'+
-        '<br><span style="font-size:10.5px;font-weight:400;color:var(--text-faint);">'+parts.join(' + ')+'</span></span></div>';
-    }).join('');
-    var rows =
-      '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(est.moveOutDate)+'</span></div>'+
-      (est.hasBond ? '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(est.bondPaid)+'</span></div>' : '<div class="field-row"><span class="k">Bond</span><span class="v">No bond on file</span></div>')+
-      (est.outstandingRent > 0 ? '<div class="field-row"><span class="k">Rent still to pay</span>'+neg(est.outstandingRent)+'</div>' : '')+
-      billRows+
-      manual.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.description)+'</span>'+neg(d.amount)+'</div>'; }).join('')+
-      (est.bondDeduction > 0 ? '<div class="field-row"><span class="k">Other bond deductions</span>'+neg(est.bondDeduction)+'</div>' : '')+
-      (est.bondReturned > 0 ? '<div class="field-row"><span class="k">Already returned to you</span>'+neg(est.bondReturned)+'</div>' : '')+
-      '<div class="field-row"><span class="k">Total you owe (estimated)</span><span class="v">'+money(totalOwed)+'</span></div>'+
-      (left >= 0 || !est.hasBond
-        ? '<div class="field-row"><span class="k" style="font-weight:650;">Bond left for you (estimated)</span><span class="v" style="font-weight:650;color:var(--status-paid, inherit);">'+(est.hasBond ? money(left) : '—')+'</span></div>'
-        : '<div class="field-row"><span class="k" style="font-weight:650;">Bond left for you (estimated)</span><span class="v" style="font-weight:650;">'+money(0)+'</span></div>'+
-          '<div class="field-row"><span class="k" style="font-weight:650;">Still to pay beyond the bond</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(-left)+'</span></div>');
     return '<div class="card"><h2>Your move-out estimate</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">What you still owe is taken from your bond. Bills for the days not billed yet are estimated from your average (with a safety margin for bills that vary). Anything you pay before you leave lowers what\'s taken from the bond. This is an estimate, not the final figure — it\'s confirmed once the last bills arrive and your administrator approves it.</p>'+
-      '<div class="field-list">'+rows+'</div></div>';
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">What you owe is taken from your bond. "What you already owe" are real amounts; "Estimated bills" are an estimate for the days not billed yet, based on your average. Anything you pay before you leave lowers what\'s taken from the bond. The final figure is confirmed once the last bills arrive and your administrator approves it.</p>'+
+      moveOutEstimateBodyHtml(est, manual, 'tenant')+'</div>';
   }
 
   function renderTenantMyBondHtml(t){
