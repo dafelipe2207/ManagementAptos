@@ -2524,6 +2524,34 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (recent.length < 2) return false;
     return recent.every(function(b){ return Math.abs(b.amount - recent[0].amount) <= 0.5; });
   }
+  /** Estimates a tenant's share of a service for the days not billed yet (gapStart..moveOutDate).
+   *  Uses the HOUSE's daily cost for that service (its last few bills: total ÷ days) and splits
+   *  each day among the tenants living there that day, weighted by bill_occupancy_factor — the
+   *  same rule the real occupancy split uses — so it follows how many people are there now, not
+   *  the tenant's own past share (which can be much higher if they lived with fewer people then).
+   *  Falls back to the tenant's own average only when the property has no usable bill history. */
+  function estimateTenantBillGap(t, billType, gapStart, moveOutDate, personalDailyRate){
+    var recent = bills.filter(function(b){
+      return b.propertyId === t.propertyId && (b.billType || 'other') === billType && b.amount > 0 && b.billingPeriodStart && b.billingPeriodEnd;
+    }).sort(function(a,b){ return b.billingPeriodEnd.localeCompare(a.billingPeriodEnd); }).slice(0, 3);
+    var amt = 0, days = 0;
+    recent.forEach(function(b){ amt += b.amount; days += daysBetween(b.billingPeriodStart, b.billingPeriodEnd) + 1; });
+    var houseDaily = days > 0 ? amt / days : 0;
+    var propTenants = tenantsOfProperty(t.propertyId);
+    var total = 0, n = 0;
+    for (var d = gapStart; d <= moveOutDate; d = stepDateIso(d, 1)){
+      if (!tenantOccupiesDay(t, d)) continue;
+      n++;
+      if (houseDaily > 0){
+        var present = propTenants.filter(function(x){ return tenantOccupiesDay(x, d); });
+        var totalFactor = present.reduce(function(s,x){ return s + (x.billOccupancyFactor || 1); }, 0) || 1;
+        total += houseDaily * (t.billOccupancyFactor || 1) / totalFactor;
+      } else {
+        total += personalDailyRate;
+      }
+    }
+    return { amount: total, days: n, dailyRate: n ? total / n : 0 };
+  }
   function computeMoveOutEstimate(t, opts){
     opts = opts || {};
     var moveOutDate = t.actualMoveOutDate || t.expectedMoveOutDate;
@@ -2556,23 +2584,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     Object.keys(byType).sort(function(a,b){ return billTypeLabel(a).localeCompare(billTypeLabel(b)); }).forEach(function(bt){
       var g = byType[bt];
       var hasHistory = g.billedDays > 0;
-      var dailyRate = hasHistory ? (g.billedAmount / g.billedDays) : 0;
       var gapStart = stepDateIso(g.lastCovered, 1);
-      var gapDays = gapStart <= moveOutDate ? (daysBetween(gapStart, moveOutDate) + 1) : 0;
-      // Average-based projection, plus a safety margin (MOVE_OUT_BILL_BUFFER) in case the bill that
-      // hasn't arrived yet comes in more expensive than usual (winter heating, price rises…).
-      var baseGapAmount = round2(dailyRate * gapDays);
-      // No margin for services that always cost the same (e.g. internet, or a set-up recurring
-      // bill); variable ones (gas with its quarterly adjustment, electricity, water…) get it.
+      var unpaid = round2(g.unpaid);
+      // Not-yet-billed days. Services this tenant doesn't pay for (excluded / included in their
+      // rent) are never estimated — only what's already charged (if anything) counts.
+      var estimate = isTenantExcludedFromBillType(t, bt)
+        ? { amount:0, days:0, dailyRate:0 }
+        : estimateTenantBillGap(t, bt, gapStart, moveOutDate, hasHistory ? g.billedAmount / g.billedDays : 0);
+      var gapDays = estimate.days;
+      // Projection plus a safety margin (MOVE_OUT_BILL_BUFFER) for variable services, in case the
+      // bill that hasn't arrived yet comes in higher (winter heating, price rises…). Never shown.
+      var baseGapAmount = round2(estimate.amount);
       var fixed = billTypeHasFixedAmount(t.propertyId, bt);
       var estimatedGapAmount = round2(baseGapAmount * (1 + (fixed ? 0 : MOVE_OUT_BILL_BUFFER)));
-      var unpaid = round2(g.unpaid);
       if (unpaid <= 0 && estimatedGapAmount <= 0) return; // nothing to show for this type
       totalUnpaid += unpaid;
       totalEstimatedGap += estimatedGapAmount;
       lines.push({
-        billType: bt, unpaid: unpaid, hasHistory: hasHistory,
-        dailyRate: round2(dailyRate), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount,
+        billType: bt, unpaid: unpaid, hasHistory: hasHistory || estimate.dailyRate > 0,
+        dailyRate: round2(estimate.dailyRate), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount,
         baseGapAmount: baseGapAmount, bufferAmount: round2(estimatedGapAmount - baseGapAmount), fixedAmount: fixed
       });
     });
