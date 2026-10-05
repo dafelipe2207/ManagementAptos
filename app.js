@@ -2910,8 +2910,68 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var st = stop ? 'event.stopPropagation();event.preventDefault();' : '';
     return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
       '<button type="button" class="mini-btn" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Change date</button>'+
-      '<button type="button" class="mini-btn danger" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel move-out</button></div>';
+      '<button type="button" class="mini-btn danger" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel move-out</button>'+
+      ((!s || s.status === 'in_progress') && (t.actualMoveOutDate || t.expectedMoveOutDate)
+        ? '<button type="button" class="mini-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')">💬 Send estimate on WhatsApp</button>' : '')+
+      '</div>';
   }
+
+  /** Plain-text version of the tenant's move-out estimate — the same figures they see on their
+   *  dashboard (tenantView: hidden providers left out; the safety margin is in the numbers but
+   *  never mentioned) — formatted for WhatsApp (*bold*). */
+  function moveOutEstimateMessage(t){
+    var settlement = moveOutSettlementOf(t.id);
+    var est = computeMoveOutEstimate(t, { tenantView:true });
+    if (!est) return '';
+    var manual = (settlement && settlement.status === 'in_progress') ? (settlement.manualDeductions || []) : [];
+    var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
+    var owedTotal = round2(est.outstandingRent + est.totalUnpaid + manualTotal + est.bondDeduction + est.bondReturned);
+    var left = round2(est.bondPaid - owedTotal - est.totalEstimatedGap);
+    var first = (t.fullName || '').split(' ')[0] || 'there';
+    var L = [];
+    L.push('Hi '+first+',');
+    L.push('');
+    L.push('Here is the estimate for your move-out on *'+fullDate(est.moveOutDate)+'*:');
+    L.push('');
+    L.push(est.hasBond ? 'Bond paid: *'+money(est.bondPaid)+'*' : 'Bond: no bond on file');
+    L.push('');
+    L.push('*What you already owe*');
+    var owedLines = [];
+    if (est.outstandingRent > 0) owedLines.push('• Rent: '+money(est.outstandingRent));
+    est.lines.forEach(function(l){ if (l.unpaid > 0) owedLines.push('• '+billTypeLabel(l.billType)+' (bills already charged): '+money(l.unpaid)); });
+    manual.forEach(function(d){ owedLines.push('• '+d.description+': '+money(d.amount)); });
+    if (est.bondDeduction > 0) owedLines.push('• Other bond deductions: '+money(est.bondDeduction));
+    if (est.bondReturned > 0) owedLines.push('• Bond already returned: '+money(est.bondReturned));
+    L = L.concat(owedLines.length ? owedLines : ['• Nothing owed right now']);
+    L.push('Subtotal: *'+money(owedTotal)+'*');
+    L.push('');
+    L.push('*Estimated bills (not billed yet)*');
+    var estLines = [];
+    est.lines.forEach(function(l){ if (l.estimatedGapAmount > 0) estLines.push('• '+billTypeLabel(l.billType)+' ('+l.gapDays+' day'+(l.gapDays===1?'':'s')+'): '+money(l.estimatedGapAmount)); });
+    L = L.concat(estLines.length ? estLines : ['• None']);
+    L.push('Subtotal: *'+money(est.totalEstimatedGap)+'*');
+    L.push('');
+    L.push('Total owed + estimated: *'+money(round2(owedTotal + est.totalEstimatedGap))+'*');
+    if (est.hasBond){
+      if (left >= 0) L.push('Estimated bond to return to you: *'+money(left)+'*');
+      else { L.push('Estimated bond to return to you: *'+money(0)+'*'); L.push('Still to pay beyond the bond: *'+money(-left)+'*'); }
+    }
+    L.push('');
+    L.push('What you owe is taken from your bond, and anything you pay before you leave lowers that amount. The bills not billed yet are an estimate based on your average — the final figure is confirmed once the last bills arrive. You can also see this anytime in your app.');
+    return L.join('\n');
+  }
+  function sendMoveOutEstimateWhatsApp(tenantId){
+    var t = tenantOf(tenantId); if (!t) return;
+    var msg = moveOutEstimateMessage(t);
+    if (!msg){ showToast('Set a move-out date first.', 'error'); return; }
+    var digits = phoneDigitsForWhatsApp(t.phone);
+    if (!digits){
+      copyTextReliably(msg).then(function(ok){ showToast('No phone number on file for this tenant.'+(ok ? ' The estimate was copied so you can paste it.' : ''), 'error'); });
+      return;
+    }
+    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(msg));
+  }
+  window.sendMoveOutEstimateWhatsApp = sendMoveOutEstimateWhatsApp;
 
   var moveOutDeductionModalSettlementId = null;
   var moveOutDeductionModalEditId = null;
