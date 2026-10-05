@@ -2506,18 +2506,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (recent.length < 2) return false;
     return recent.every(function(b){ return Math.abs(b.amount - recent[0].amount) <= 0.5; });
   }
-  function computeMoveOutEstimate(t){
+  function computeMoveOutEstimate(t, opts){
+    opts = opts || {};
     var moveOutDate = t.actualMoveOutDate || t.expectedMoveOutDate;
     if (!moveOutDate) return null;
     var bond = bondOf(t.id);
     var bondPaid = bond ? bond.amountPaid : 0;
-    var bondDeduction = bond ? bond.deduction : 0;
+    var bondDeduction = bond ? (bond.deduction || 0) : 0;
+    var bondReturned = bond ? (bond.amountReturned || 0) : 0;
 
     // Grouped by service TYPE (electricity, gas, internet, etc.) — each one has its
     // own billing cycle, so the "not-yet-billed gap" and the average rate are
     // computed separately for each, not mixed into a single number.
     var byType = {};
     bills.forEach(function(b){
+      // Tenant-facing view: leave out the providers tenants never see (same rule as their dashboard).
+      if (opts.tenantView && isTenantHiddenProvider(b.provider)) return;
       (b.allocations || []).forEach(function(a){
         if (a.tenantId !== t.id) return;
         var bt = b.billType || 'other';
@@ -2556,16 +2560,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     });
 
     var totalEstimatedOwed = round2(totalUnpaid + totalEstimatedGap);
+    // Rent periods that START on/after the move-out date aren't owed — they're past the tenancy.
     var outstandingRent = round2(rentCharges
-      .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004; })
+      .filter(function(c){ return c.tenantId===t.id && c.remaining > 0.004 && c.periodStart < moveOutDate; })
       .reduce(function(s,c){ return s + c.remaining; }, 0));
     // The full picture: bond paid, minus whatever's still owed on rent, minus whatever's still
     // owed on bills (real + estimated), minus any discount/deduction already applied to the bond.
-    var estimatedReturn = round2(bondPaid - outstandingRent - totalEstimatedOwed - bondDeduction);
+    var estimatedReturn = round2(bondPaid - outstandingRent - totalEstimatedOwed - bondDeduction - bondReturned);
 
     return {
       moveOutDate: moveOutDate, isActual: !!t.actualMoveOutDate, hasBond: !!bond,
-      bondPaid: bondPaid, bondDeduction: round2(bondDeduction), lines: lines,
+      bondPaid: bondPaid, bondDeduction: round2(bondDeduction), bondReturned: round2(bondReturned), lines: lines,
       totalUnpaid: round2(totalUnpaid), totalEstimatedGap: round2(totalEstimatedGap),
       totalEstimatedOwed: totalEstimatedOwed, estimatedReturn: estimatedReturn,
       outstandingRent: outstandingRent
@@ -11120,6 +11125,48 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<div class="field-row"><span class="k">Bond</span><span class="v">'+v+startMoveOut+'</span></div>';
   }
 
+  /** Tenant dashboard: as soon as there's a move-out date (set by the admin, or by the tenant giving
+   *  notice), show the running estimate — what they still owe (unpaid rent, bills already charged,
+   *  plus an estimate for the days not billed yet) and how much bond is left after that. Same
+   *  engine as the admin's estimate (computeMoveOutEstimate), minus the providers tenants never see.
+   *  Replaced by the frozen figures once the admin sends the settlement for approval / completes it. */
+  function tenantMoveOutEstimateHtml(t){
+    if (t.moveOutSettledAt) return '';
+    var settlement = moveOutSettlementOf(t.id);
+    if (settlement && settlement.status !== 'in_progress') return '';
+    var est = computeMoveOutEstimate(t, { tenantView:true });
+    if (!est) return '';
+    var manual = settlement ? (settlement.manualDeductions || []) : [];
+    var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
+    var totalOwed = round2(est.outstandingRent + est.totalEstimatedOwed + est.bondDeduction + manualTotal);
+    var left = round2(est.estimatedReturn - manualTotal);
+    var neg = function(v){ return '<span class="v" style="color:var(--status-overdue);">-'+money(v)+'</span>'; };
+    var billRows = est.lines.map(function(l){
+      var parts = [];
+      if (l.unpaid > 0) parts.push(money(l.unpaid)+' already charged');
+      if (l.estimatedGapAmount > 0) parts.push(money(l.estimatedGapAmount)+' estimated for '+l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet');
+      return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+'</span>'+
+        '<span class="v" style="text-align:right;"><span style="color:var(--status-overdue);">-'+money(round2(l.unpaid + l.estimatedGapAmount))+'</span>'+
+        '<br><span style="font-size:10.5px;font-weight:400;color:var(--text-faint);">'+parts.join(' + ')+'</span></span></div>';
+    }).join('');
+    var rows =
+      '<div class="field-row"><span class="k">Move-out date</span><span class="v">'+fullDate(est.moveOutDate)+'</span></div>'+
+      (est.hasBond ? '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(est.bondPaid)+'</span></div>' : '<div class="field-row"><span class="k">Bond</span><span class="v">No bond on file</span></div>')+
+      (est.outstandingRent > 0 ? '<div class="field-row"><span class="k">Rent still to pay</span>'+neg(est.outstandingRent)+'</div>' : '')+
+      billRows+
+      manual.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.description)+'</span>'+neg(d.amount)+'</div>'; }).join('')+
+      (est.bondDeduction > 0 ? '<div class="field-row"><span class="k">Other bond deductions</span>'+neg(est.bondDeduction)+'</div>' : '')+
+      (est.bondReturned > 0 ? '<div class="field-row"><span class="k">Already returned to you</span>'+neg(est.bondReturned)+'</div>' : '')+
+      '<div class="field-row"><span class="k">Total you owe (estimated)</span><span class="v">'+money(totalOwed)+'</span></div>'+
+      (left >= 0 || !est.hasBond
+        ? '<div class="field-row"><span class="k" style="font-weight:650;">Bond left for you (estimated)</span><span class="v" style="font-weight:650;color:var(--status-paid, inherit);">'+(est.hasBond ? money(left) : '—')+'</span></div>'
+        : '<div class="field-row"><span class="k" style="font-weight:650;">Bond left for you (estimated)</span><span class="v" style="font-weight:650;">'+money(0)+'</span></div>'+
+          '<div class="field-row"><span class="k" style="font-weight:650;">Still to pay beyond the bond</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(-left)+'</span></div>');
+    return '<div class="card"><h2>Your move-out estimate</h2>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">What you still owe is taken from your bond. Bills for the days not billed yet are estimated from your average (with a safety margin for bills that vary). Anything you pay before you leave lowers what\'s taken from the bond. This is an estimate, not the final figure — it\'s confirmed once the last bills arrive and your administrator approves it.</p>'+
+      '<div class="field-list">'+rows+'</div></div>';
+  }
+
   function renderTenantMyBondHtml(t){
     var bond = bondOf(t.id);
     var settlement = moveOutSettlementOf(t.id);
@@ -11138,6 +11185,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (bond ? '<div class="field-row"><span class="k" style="font-weight:650;">Final refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>' : '')+ // same basis as computeSettlementTotals (subtracts amount already returned)
         '<div class="field-row"><span class="k">Approved</span><span class="v">'+fullDate(settlement.approvedAt)+'</span></div></div>';
     }
+    // In progress → the live estimate card (tenantMoveOutEstimateHtml) already covers it.
+    if (settlement.status === 'in_progress') return '';
     var candidates = computeCandidateDeductions(t.id);
     // Only in_progress recomputes live; a pending_approval proposal shows the FROZEN totals
     // stored on the settlement row at Calculate time (same as the admin card).
@@ -11319,6 +11368,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
       '</div>'+
+      tenantMoveOutEstimateHtml(t) +
       wifiCardHtml(p) +
       welcomeGuideCardHtml(t) +
       tenantRentHistoryHtml(t.id) +
