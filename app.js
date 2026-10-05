@@ -2326,7 +2326,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill (Unpaid)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('');
     var estimatedRowsHtml = (candidates.estimatedLines || []).map(function(l){
       return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill <span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
-        '<br><span style="font-size:10.5px;color:var(--text-faint);">'+(l.includedInRent ? 'Included in rent' : l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet')+'</span></span><span class="v">'+money(l.amount)+'</span></div>';
+        '<br><span style="font-size:10.5px;color:var(--text-faint);">'+(l.includedInRent ? 'Included in rent' : gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo)+' (not billed yet)')+'</span></span><span class="v">'+money(l.amount)+'</span></div>';
     }).join('');
     var summaryHtml = '<div class="field-row"><span class="k">Original bond</span><span class="v">'+(bond?money(bond.amountPaid):'No bond on file')+'</span></div>'+
       '<div class="field-row"><span class="k">Total deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(totals.totalDeductions)+'</span></div>'+
@@ -2540,10 +2540,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     recent.forEach(function(b){ amt += b.amount; days += daysBetween(b.billingPeriodStart, b.billingPeriodEnd) + 1; });
     var houseDaily = days > 0 ? amt / days : 0;
     var propTenants = tenantsOfProperty(t.propertyId);
-    var total = 0, n = 0;
+    var total = 0, n = 0, first = null, last = null;
     for (var d = gapStart; d <= moveOutDate; d = stepDateIso(d, 1)){
       if (!tenantOccupiesDay(t, d)) continue;
-      n++;
+      n++; if (!first) first = d; last = d;
       if (houseDaily > 0){
         var present = propTenants.filter(function(x){ return tenantOccupiesDay(x, d); });
         var totalFactor = present.reduce(function(s,x){ return s + (x.billOccupancyFactor || 1); }, 0) || 1;
@@ -2552,7 +2552,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         total += personalDailyRate;
       }
     }
-    return { amount: total, days: n, dailyRate: n ? total / n : 0 };
+    return { amount: total, days: n, dailyRate: n ? total / n : 0, from: first, to: last };
+  }
+  /** "40 days · 5 Sep – 14 Oct" — the not-yet-billed days being charged for an estimated bill. */
+  function gapDaysLabel(days, from, to){
+    if (!days) return '';
+    var txt = days + ' day' + (days === 1 ? '' : 's');
+    if (from && to) txt += ' · ' + shortDate(from) + (from === to ? '' : ' – ' + shortDate(to));
+    return txt;
   }
   function computeMoveOutEstimate(t, opts){
     opts = opts || {};
@@ -2592,7 +2599,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       // rent) are never estimated — only what's already charged (if anything) counts.
       var includedInRent = isTenantExcludedFromBillType(t, bt);
       var estimate = estimateTenantBillGap(t, bt, gapStart, moveOutDate, hasHistory ? g.billedAmount / g.billedDays : 0);
-      if (includedInRent) estimate = { amount:0, days:estimate.days, dailyRate:0 };
+      if (includedInRent) estimate = { amount:0, days:estimate.days, dailyRate:0, from:estimate.from, to:estimate.to };
       var gapDays = estimate.days;
       // Projection plus a safety margin (MOVE_OUT_BILL_BUFFER) for variable services, in case the
       // bill that hasn't arrived yet comes in higher (winter heating, price rises…). Never shown.
@@ -2605,7 +2612,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       totalEstimatedGap += estimatedGapAmount;
       lines.push({
         billType: bt, unpaid: unpaid, includedInRent: includedInRent && gapDays > 0, hasHistory: hasHistory || estimate.dailyRate > 0,
-        dailyRate: round2(estimate.dailyRate), gapDays: gapDays, estimatedGapAmount: estimatedGapAmount,
+        dailyRate: round2(estimate.dailyRate), gapDays: gapDays, gapFrom: estimate.from, gapTo: estimate.to, estimatedGapAmount: estimatedGapAmount,
         baseGapAmount: baseGapAmount, bufferAmount: round2(estimatedGapAmount - baseGapAmount), fixedAmount: fixed
       });
     });
@@ -2663,7 +2670,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var estRows = '';
     est.lines.forEach(function(l){
       if (l.estimatedGapAmount > 0) estRows += '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+
-        sub(l.gapDays+' day'+(l.gapDays===1?'':'s')+' not billed yet')+'</span>'+neg(l.estimatedGapAmount)+'</div>';
+        sub(gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo)+' (not billed yet)')+'</span>'+neg(l.estimatedGapAmount)+'</div>';
       else if (l.includedInRent) estRows += '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+
         sub('Included in rent')+'</span><span class="v">'+money(0)+'</span></div>';
     });
@@ -2761,7 +2768,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var t = tenantOf(tenantId);
     var est = t ? computeMoveOutEstimate(t) : null;
     if (est) est.lines.forEach(function(l){
-      if (l.estimatedGapAmount > 0) estimatedLines.push({ billType: l.billType, amount: round2(l.estimatedGapAmount), gapDays: l.gapDays });
+      if (l.estimatedGapAmount > 0) estimatedLines.push({ billType: l.billType, amount: round2(l.estimatedGapAmount), gapDays: l.gapDays, gapFrom: l.gapFrom, gapTo: l.gapTo });
       else if (l.includedInRent) estimatedLines.push({ billType: l.billType, amount: 0, gapDays: l.gapDays, includedInRent: true });
     });
     return { rentAmount: rentAmount, billLines: billLines, estimatedLines: estimatedLines };
@@ -3015,9 +3022,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var fOwed = group(mine.filter(function(x){ return x.sourceType !== 'estimate'; }).map(function(x){
         return { label: x.sourceType === 'rent' ? 'Rent' : (x.sourceType === 'bill' ? String(x.label || 'Bill').replace(/ bill$/,'') + ' (charged)' : (x.label || 'Deduction')), amount: x.amount };
       }));
-      var fEst = group(mine.filter(function(x){ return x.sourceType === 'estimate'; }).map(function(x){
-        return { label: x.includedInRent ? String(x.label || 'Bill').replace(/ bill.*$/,'') + ' (in rent)' : String(x.label || 'Bill').replace(/ bill \(estimated\)$/,''), amount: x.amount };
-      }));
+      var fEst = mine.filter(function(x){ return x.sourceType === 'estimate'; }).map(function(x){
+        return { label: x.includedInRent ? String(x.label || 'Bill').replace(/ bill.*$/,'') + ' (in rent)' : String(x.label || 'Bill').replace(/ bill \(estimated\)$/,''),
+          sub: x.includedInRent ? '' : gapDaysLabel(x.gapDays, x.gapFrom, x.gapTo), amount: round2(x.amount || 0) };
+      });
       var other = round2((finalBond.deduction || 0) - mine.reduce(function(s2,x){ return s2 + (x.amount || 0); }, 0));
       if (other > 0.004) fOwed.push({ label:'Other deductions', amount: other });
       if ((finalBond.amountReturned || 0) > 0) fOwed.push({ label:'Bond already returned', amount: round2(finalBond.amountReturned) });
@@ -3045,7 +3053,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (est.rentCredit > 0) owed.push({ label:'Rent paid in advance', amount:-est.rentCredit });
     var estimated = [];
     est.lines.forEach(function(l){
-      if (l.estimatedGapAmount > 0) estimated.push({ label:billTypeLabel(l.billType)+' ('+l.gapDays+' day'+(l.gapDays===1?'':'s')+')', amount:l.estimatedGapAmount });
+      if (l.estimatedGapAmount > 0) estimated.push({ label:billTypeLabel(l.billType), sub: gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo), amount:l.estimatedGapAmount });
       else if (l.includedInRent) estimated.push({ label:billTypeLabel(l.billType)+' (in rent)', amount:0 });
     });
     var owedTotal = round2(owed.reduce(function(s,x){ return s + x.amount; }, 0));
@@ -3082,8 +3090,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     T.push(row('Subtotal', d.owedTotal));
     T.push(line);
     T.push('ESTIMATED BILLS');
-    T.push('(days not billed yet)');
-    if (d.estimated.length) d.estimated.forEach(function(x){ T.push(row(x.label, x.amount)); });
+    T.push('(days not billed yet, up to');
+    T.push(' your last day in the house)');
+    if (d.estimated.length) d.estimated.forEach(function(x){ T.push(row(x.label, x.amount)); if (x.sub) T.push('  ' + x.sub); });
     else T.push(row('None', 0));
     T.push(row('Subtotal', d.estimatedTotal));
     T.push(line);
@@ -3135,12 +3144,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     rows.push({ kind:'head', label:'Already owed', color:'#c0392b' });
     (d.owed.length ? d.owed : [{ label:'Nothing owed', amount:0 }]).forEach(function(x){ rows.push({ kind:'kv', label:x.label, amount:x.amount }); });
     rows.push({ kind:'sub', label:'Subtotal', amount:d.owedTotal });
-    rows.push({ kind:'head', label:'Estimated bills · not billed yet', color:'#b7791f' });
-    (d.estimated.length ? d.estimated : [{ label:'None', amount:0 }]).forEach(function(x){ rows.push({ kind:'kv', label:x.label, amount:x.amount }); });
+    rows.push({ kind:'head', label:'Estimated bills · days until you leave', color:'#b7791f' });
+    (d.estimated.length ? d.estimated : [{ label:'None', amount:0 }]).forEach(function(x){ rows.push({ kind:'kv', label:x.label, sub:x.sub, amount:x.amount }); });
     rows.push({ kind:'sub', label:'Subtotal', amount:d.estimatedTotal });
     rows.push({ kind:'gap' });
     rows.push({ kind:'kv', label:'Total owed + estimated', amount:d.total, bold:true });
-    var heights = rows.map(function(r){ return r.kind === 'head' ? 86 : r.kind === 'gap' ? 20 : rowH; });
+    var heights = rows.map(function(r){ return r.kind === 'head' ? 86 : r.kind === 'gap' ? 20 : (r.sub ? rowH + 34 : rowH); });
     var Hd = 230 + heights.reduce(function(s,h){ return s + h; }, 0) + 190 + 170;
     var c = document.createElement('canvas'); c.width = Wd; c.height = Hd;
     var g = c.getContext('2d');
@@ -3166,7 +3175,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var mid = y + 40;
       g.font = (r.bold || r.kind === 'sub' ? '600 ' : '400 ') + '34px ' + font;
       g.fillStyle = r.kind === 'sub' ? '#6b7280' : '#1d2433';
-      g.textAlign = 'left'; g.fillText(r.label, L + (r.kind === 'sub' ? 0 : 0), mid);
+      g.textAlign = 'left'; g.fillText(r.label, L, mid);
+      if (r.sub){ g.save(); g.font = '400 27px ' + font; g.fillStyle = '#6b7280'; g.fillText(r.sub, L, mid + 38); g.restore(); }
       g.textAlign = 'right'; g.fillText((r.amount < 0 ? '-' : '') + money(Math.abs(r.amount)), R, mid);
       g.textAlign = 'left';
       y += h;
@@ -3499,7 +3509,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return { kind:'bill', label: billTypeLabel(l.billType) + ' bill', amount: l.amount, billId: l.billId, billType: l.billType, allocationId: l.allocationId };
     });
     (candidates.estimatedLines || []).forEach(function(l){
-      billsSnapshot.push({ kind:'estimated', label: l.includedInRent ? billTypeLabel(l.billType) + ' bill — included in rent' : billTypeLabel(l.billType) + ' bill (estimated, ' + l.gapDays + ' day' + (l.gapDays===1?'':'s') + ' not billed yet)', amount: l.amount, billType: l.billType, gapDays: l.gapDays, includedInRent: !!l.includedInRent });
+      billsSnapshot.push({ kind:'estimated', label: l.includedInRent ? billTypeLabel(l.billType) + ' bill — included in rent' : billTypeLabel(l.billType) + ' bill (estimated, ' + gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo) + ')', amount: l.amount, billType: l.billType, gapDays: l.gapDays, gapFrom: l.gapFrom || null, gapTo: l.gapTo || null, includedInRent: !!l.includedInRent });
     });
     if (candidates.rentAmount > 0){
       billsSnapshot.unshift({ kind:'rent', label:'Outstanding rent', amount: candidates.rentAmount });
@@ -3580,7 +3590,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (line.kind === 'estimated'){
         // Not a real bill yet — nothing to mark paid; it's simply deducted from the bond, flagged
         // as an estimate so it can be squared up once the real bill arrives.
-        newDiscountLines.push({ label: billTypeLabel(line.billType) + ' bill (estimated)' + (line.includedInRent ? ' — included in rent' : ''), amount: line.amount, category:'bill', sourceType:'estimate', sourceId:'estimate-' + line.billType, billType: line.billType, includedInRent: !!line.includedInRent, settlementId:settlement.id });
+        newDiscountLines.push({ label: billTypeLabel(line.billType) + ' bill (estimated)' + (line.includedInRent ? ' — included in rent' : ''), amount: line.amount, category:'bill', sourceType:'estimate', sourceId:'estimate-' + line.billType, billType: line.billType, includedInRent: !!line.includedInRent, gapDays: line.gapDays || null, gapFrom: line.gapFrom || null, gapTo: line.gapTo || null, settlementId:settlement.id });
         timelineEntries.push({ at:new Date().toISOString(), action: billTypeLabel(line.billType) + ' bill (estimated) deducted from bond.', amount: line.amount });
         continue;
       }
