@@ -2974,9 +2974,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** "Change date" / "Cancel move-out" buttons for staff, shown wherever a move-out is pending. */
   function moveOutAdminActionsHtml(t, stop){
     var s = moveOutSettlementOf(t.id);
-    if (isTenantRole() || tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
-    if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
+    if (isTenantRole()) return '';
     var st = stop ? 'event.stopPropagation();event.preventDefault();' : '';
+    // Settlement approved: dates can't change any more, but the final figures can still be sent.
+    if (s && s.status === 'completed' && bondOf(t.id)){
+      return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
+        '<button type="button" class="mini-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')">💬 Send settlement (text)</button>'+
+        '<button type="button" class="mini-btn" onclick="'+st+'shareMoveOutEstimateImage(\''+t.id+'\')">🖼️ Send settlement (image)</button></div>';
+    }
+    if (tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
+    if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
     return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
       '<button type="button" class="mini-btn" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Change date</button>'+
       '<button type="button" class="mini-btn danger" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel move-out</button>'+
@@ -2991,6 +2998,34 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  mentioned). Shared by the WhatsApp text and the shareable image. */
   function moveOutEstimateData(t){
     var settlement = moveOutSettlementOf(t.id);
+    var finalBond = bondOf(t.id);
+    if (settlement && settlement.status === 'completed' && finalBond){
+      var mine = (finalBond.discounts || []).filter(function(x){ return x.settlementId === settlement.id; });
+      var group = function(list){
+        var by = {}, order = [];
+        list.forEach(function(x){ if (!(x.label in by)){ by[x.label] = 0; order.push(x.label); } by[x.label] += (x.amount || 0); });
+        return order.map(function(k){ return { label:k, amount: round2(by[k]) }; });
+      };
+      var fOwed = group(mine.filter(function(x){ return x.sourceType !== 'estimate'; }).map(function(x){
+        return { label: x.sourceType === 'rent' ? 'Rent' : (x.sourceType === 'bill' ? String(x.label || 'Bill').replace(/ bill$/,'') + ' (charged)' : (x.label || 'Deduction')), amount: x.amount };
+      }));
+      var fEst = group(mine.filter(function(x){ return x.sourceType === 'estimate'; }).map(function(x){
+        return { label: String(x.label || 'Bill').replace(/ bill \(estimated\)$/,''), amount: x.amount };
+      }));
+      var other = round2((finalBond.deduction || 0) - mine.reduce(function(s2,x){ return s2 + (x.amount || 0); }, 0));
+      if (other > 0.004) fOwed.push({ label:'Other deductions', amount: other });
+      if ((finalBond.amountReturned || 0) > 0) fOwed.push({ label:'Bond already returned', amount: round2(finalBond.amountReturned) });
+      var fOwedTotal = round2(fOwed.reduce(function(s2,x){ return s2 + x.amount; }, 0));
+      var fEstTotal = round2(fEst.reduce(function(s2,x){ return s2 + x.amount; }, 0));
+      var fTotal = round2(fOwedTotal + fEstTotal);
+      var fLeft = round2(finalBond.amountPaid - fTotal);
+      return {
+        final: true, first: (t.fullName || '').split(' ')[0] || 'there', fullName: t.fullName || '',
+        moveOutDate: t.actualMoveOutDate || t.expectedMoveOutDate || settlement.approvedAt, hasBond: true, bondPaid: finalBond.amountPaid,
+        owed: fOwed, owedTotal: fOwedTotal, estimated: fEst, estimatedTotal: fEstTotal,
+        total: fTotal, bondBack: Math.max(0, fLeft), beyond: fLeft < 0 ? round2(-fLeft) : 0
+      };
+    }
     var est = computeMoveOutEstimate(t, { tenantView:true });
     if (!est) return null;
     var manual = (settlement && settlement.status === 'in_progress') ? (settlement.manualDeductions || []) : [];
@@ -3049,12 +3084,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var L = [];
     L.push('Hi '+d.first+' 👋');
     L.push('');
-    L.push('Here is the estimate for your move-out on *'+fullDate(d.moveOutDate)+'*:');
+    L.push(d.final ? 'Here is the final settlement of your bond for your move-out on *'+fullDate(d.moveOutDate)+'*:'
+                   : 'Here is the estimate for your move-out on *'+fullDate(d.moveOutDate)+'*:');
     L.push('');
     L.push('```');
     L = L.concat(T);
     L.push('```');
     L.push('');
+    if (d.final){
+      L.push(d.beyond > 0 ? '⚠️ *Amount to pay beyond your bond: '+money(d.beyond)+'*' : '✅ *Bond back to you: '+money(d.bondBack)+'*');
+      L.push('');
+      L.push('The estimated bills cover the days not billed yet, based on the house\'s usual cost shared among the people living there. Thank you for staying with us!');
+      return L.join('\n');
+    }
     if (d.hasBond) L.push(d.beyond > 0 ? '⚠️ *You would still need to pay '+money(d.beyond)+' beyond your bond.*' : '✅ *Estimated bond back to you: '+money(d.bondBack)+'*');
     L.push('');
     L.push('What you owe is taken from your bond — anything you pay before you leave lowers that amount. The bills not billed yet are an estimate based on your average; the final figure is confirmed once the last bills arrive. You can also see this anytime in your app.');
@@ -3098,7 +3140,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     rr(32, 32, Wd - 64, Hd - 64, 36, '#ffffff');
     var y = 32 + pad + 20;
     g.fillStyle = '#1d2433'; g.font = '700 50px ' + font; g.textBaseline = 'alphabetic';
-    g.fillText('Move-out estimate', pad + 32, y + 24);
+    g.fillText(d.final ? 'Move-out settlement' : 'Move-out estimate', pad + 32, y + 24);
     g.fillStyle = '#6b7280'; g.font = '400 32px ' + font;
     g.fillText(d.fullName + ' · moving out ' + fullDate(d.moveOutDate), pad + 32, y + 78);
     y += 130;
@@ -3125,35 +3167,68 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var good = d.hasBond && d.beyond === 0;
     rr(L - 12, y, R - L + 24, 150, 24, good ? '#e7f6ee' : '#fdecea');
     g.fillStyle = good ? '#137a45' : '#b42318'; g.font = '600 32px ' + font;
-    g.fillText(!d.hasBond ? 'No bond on file' : (good ? 'Estimated bond back to you' : 'To pay beyond your bond'), L + 20, y + 62);
+    g.fillText(!d.hasBond ? 'No bond on file' : (good ? (d.final ? 'Bond back to you' : 'Estimated bond back to you') : 'To pay beyond your bond'), L + 20, y + 62);
     g.font = '800 58px ' + font; g.textAlign = 'right';
     g.fillText(!d.hasBond ? '—' : money(good ? d.bondBack : d.beyond), R - 8, y + 116);
     g.textAlign = 'left';
     y += 190;
     g.fillStyle = '#9aa1ad'; g.font = '400 26px ' + font;
-    g.fillText('Estimate only — confirmed once the last bills arrive.', L, y + 10);
-    g.fillText('Paying before you leave lowers what\'s taken from the bond.', L, y + 48);
+    if (d.final){
+      g.fillText('Final settlement approved by your administrator.', L, y + 10);
+      g.fillText('Estimated bills cover the days not billed yet.', L, y + 48);
+    } else {
+      g.fillText('Estimate only — confirmed once the last bills arrive.', L, y + 10);
+      g.fillText('Paying before you leave lowers what\'s taken from the bond.', L, y + 48);
+    }
     return new Promise(function(res){ c.toBlob(function(b){ res(b); }, 'image/png'); });
   }
-  async function shareMoveOutEstimateImage(tenantId){
+  function shareMoveOutEstimateImage(tenantId){
     var t = tenantOf(tenantId); if (!t) return;
-    var blob = await moveOutEstimateImageBlob(t);
-    if (!blob){ showToast('Set a move-out date first.', 'error'); return; }
-    var name = 'move-out-estimate-' + ((t.fullName || 'tenant').split(' ')[0] || 'tenant').toLowerCase() + '.png';
-    var file = new File([blob], name, { type:'image/png' });
     var d = moveOutEstimateData(t);
-    var caption = 'Hi ' + d.first + ', here is the estimate for your move-out on ' + fullDate(d.moveOutDate) + '. You can also see it anytime in your app.';
-    // Best path: the system share sheet (phone, and Chrome/Edge on Windows) — pick WhatsApp Business and the tenant's chat.
-    if (navigator.canShare && navigator.canShare({ files:[file] })){
-      try { await navigator.share({ files:[file], text: caption }); return; }
-      catch(err){ if (err && err.name === 'AbortError') return; }
+    if (!d){ showToast('Set a move-out date first.', 'error'); return; }
+    var name = 'move-out-' + (d.final ? 'settlement' : 'estimate') + '-' + (d.first || 'tenant').toLowerCase() + '.png';
+    var caption = 'Hi ' + d.first + ', here is ' + (d.final ? 'the final settlement of your bond' : 'the estimate') + ' for your move-out on ' + fullDate(d.moveOutDate) + '.';
+    var digits = phoneDigitsForWhatsApp(t.phone);
+    var blobPromise = moveOutEstimateImageBlob(t);
+    var isPhone = isAppleMobile() || /Android/i.test(navigator.userAgent || '');
+
+    if (isPhone){
+      // Phone: the system share sheet lists WhatsApp / WhatsApp Business — pick the tenant's chat.
+      blobPromise.then(function(blob){
+        var file = new File([blob], name, { type:'image/png' });
+        if (navigator.canShare && navigator.canShare({ files:[file] })){
+          return navigator.share({ files:[file], text: caption }).catch(function(err){
+            if (!err || err.name !== 'AbortError') downloadEstimateImage(blob, name, digits, caption);
+          });
+        }
+        downloadEstimateImage(blob, name, digits, caption);
+      });
+      return;
     }
-    // Fallback: download the image and open the tenant's chat so it can be attached there.
+    // Computer: WhatsApp isn't offered by Windows' share menu, so copy the picture to the
+    // clipboard (started right away, inside the click, so the browser allows it) and open the
+    // tenant's chat — the admin just pastes it with Ctrl+V.
+    var copied = (navigator.clipboard && window.ClipboardItem)
+      ? navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]).then(function(){ return true; }, function(){ return false; })
+      : Promise.resolve(false);
+    copied.then(function(ok){
+      if (ok){
+        if (digits){
+          showToast('Image copied — in the WhatsApp chat that opens, press Ctrl+V to paste it, then send.', 'success');
+          openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(caption));
+        } else {
+          showToast('Image copied — no phone on file for this tenant, paste it (Ctrl+V) in their chat.', 'info');
+        }
+        return;
+      }
+      blobPromise.then(function(blob){ downloadEstimateImage(blob, name, digits, caption); });
+    });
+  }
+  function downloadEstimateImage(blob, name, digits, caption){
     var url = URL.createObjectURL(blob);
     var aEl = document.createElement('a'); aEl.href = url; aEl.download = name; document.body.appendChild(aEl); aEl.click(); aEl.remove();
     setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
-    var digits = phoneDigitsForWhatsApp(t.phone);
-    showToast('Image saved' + (digits ? ' — attach it in the WhatsApp chat that just opened.' : '. No phone on file for this tenant.'), 'info');
+    showToast('Image saved to your downloads' + (digits ? ' — attach it in the WhatsApp chat that just opened.' : '.'), 'info');
     if (digits) openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(caption));
   }
   window.shareMoveOutEstimateImage = shareMoveOutEstimateImage;
