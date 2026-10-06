@@ -1361,6 +1361,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       billsFilter = 'pending';
       billsViewTab = 'list';
       billsPropertyFilter = 'all';
+      billsTypeFilter = 'all';
       location.hash = '#/bills';
       render();
       return;
@@ -1619,7 +1620,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       location.hash = '#/payments'; render(); window.scrollTo(0, 0); return;
     }
     if (what === 'bills'){
-      billsViewTab = 'list'; billsFilter = 'overdue'; billsPropertyFilter = propertyId;
+      billsViewTab = 'list'; billsFilter = 'overdue'; billsPropertyFilter = propertyId; billsTypeFilter = 'all';
       location.hash = '#/bills'; render(); window.scrollTo(0, 0); return;
     }
     if (what === 'profits'){ location.hash = '#/profits'; return; }
@@ -4428,7 +4429,38 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var billsPropertyFilter = 'all';
   var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['partially_paid','Partially Paid'], ['paid','Paid']];
   function setBillsFilter(f){ billsFilter = f; renderPreservingScroll(); }
-  function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; renderPreservingScroll(); }
+  function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; billsTypeFilter = 'all'; renderPreservingScroll(); }
+  /** Service type picked from the Invoice timeline (together with its property). 'all' = every type. */
+  var billsTypeFilter = 'all';
+  /** Tapping a property (or one of its service rows) in the Invoice timeline filters the bills
+   *  list below to it and scrolls down there. Tapping the same thing again shows everything. */
+  function selectBillsTimelineFilter(propertyId, billType){
+    var type = billType || 'all';
+    if (billsPropertyFilter === propertyId && billsTypeFilter === type){ clearBillsSelection(); return; }
+    billsPropertyFilter = propertyId;
+    billsTypeFilter = type;
+    renderPreservingScroll();
+    var anchor = document.getElementById('bills-list-anchor');
+    if (anchor) anchor.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+  function clearBillsSelection(){
+    billsPropertyFilter = 'all';
+    billsTypeFilter = 'all';
+    renderPreservingScroll();
+  }
+  window.selectBillsTimelineFilter = selectBillsTimelineFilter;
+  window.clearBillsSelection = clearBillsSelection;
+  /** What replaces the property picker on the Bills list: the current selection (made in the
+   *  timeline) with a ✕ to go back to all properties. Nothing shows when nothing is selected. */
+  function billsSelectionHtml(){
+    if (billsPropertyFilter === 'all') return '';
+    var p = properties.find(function(x){ return x.id === billsPropertyFilter; });
+    var label = (p ? p.name : 'Property') + (billsTypeFilter !== 'all' ? ' · ' + billTypeLabel(billsTypeFilter) : '');
+    return '<div class="bills-toolbar" style="align-items:center;gap:8px;">'+
+      '<button type="button" class="pill-btn" onclick="clearBillsSelection()" title="Show all properties">'+
+        '<span aria-hidden="true">🏠</span>'+esc(label)+'<span aria-hidden="true" style="margin-left:4px;opacity:.7;">✕</span></button>'+
+      '<span style="font-size:12px;color:var(--text-faint);">Showing only this — tap ✕ for all properties</span></div>';
+  }
   /** A bill some tenants have paid and others haven't (whatever its due date). */
   function billIsPartiallyPaid(b){
     if (b.status === 'paid') return false;
@@ -6910,6 +6942,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // and the stats are computed AFTER applying this, so each tab shows its own
     // numbers instead of the whole portfolio's.
     var propertyScoped = billsPropertyFilter==='all' ? bills : bills.filter(function(b){ return b.propertyId===billsPropertyFilter; });
+    if (billsTypeFilter !== 'all') propertyScoped = propertyScoped.filter(function(b){ return b.billType === billsTypeFilter; });
 
     // "Pending" and "Paid" use the ACTUALLY collected amount (billPaidAmount),
     // not an all-or-nothing cut by bill.status: a partially paid bill
@@ -6935,7 +6968,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           ? emptyState('receipt', 'No bills yet',
               billsPropertyFilter==='all'
                 ? 'Add your first electricity, water, gas or internet bill to start tracking what\'s owed.'
-                : 'No bills recorded for this property yet.',
+                : (billsTypeFilter !== 'all' ? 'No ' + billTypeLabel(billsTypeFilter).toLowerCase() + ' bills recorded for this property yet.' : 'No bills recorded for this property yet.'),
               '<button class="mini-btn primary" onclick="openImportModal()">+ Add bill</button>')
           : emptyState('receipt', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every bill.', ''))
       : billsTableHtml(filtered, billsPropertyFilter==='all');
@@ -6949,7 +6982,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button class="mini-btn primary" onclick="openImportModal()">+ Add bill</button>'+
       '</div></div>'+
       billsTimelineHtml() +
-      '<div class="bills-toolbar">'+billsPropertySelectHtml()+'</div>'+
+      '<div id="bills-list-anchor" style="scroll-margin-top:72px;"></div>'+
+      billsSelectionHtml()+
       billsMissingAlertHtml() +
       importQueueCard() + statHtml + chipsHtml + rows +
       pendingBillsByTenantHtml(propertyScoped);
@@ -7124,9 +7158,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  pending, overdue). The striped background left visible between bars is a gap — a
    *  stretch of dates with no bill loaded. Respects the tab's property filter. */
   function billsTimelineHtml(){
-    // Respects the same property chip ("All properties / Belmont / ...") that filters the table.
-    var scopedProperties = billsPropertyFilter==='all' ? properties : properties.filter(function(p){ return p.id===billsPropertyFilter; });
+    // Always shows every property: it's also how a property / service is picked to filter the
+    // list below (tap its name). The current selection is highlighted, the rest dimmed.
+    var scopedProperties = properties;
     if (!scopedProperties.length) return '';
+    var hasSelection = billsPropertyFilter !== 'all';
     // Date range: the last 6 months by default (every time the app opens), or the months the
     // admin picked in the From / To selectors.
     var range = billsTimelineMonths();
@@ -7181,9 +7217,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var todayLeft = pct(TODAY);
     var todayInWindow = TODAY >= rangeStart && TODAY <= rangeEnd;
     var todayLineHtml = !todayInWindow ? '' : '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
-    function timelineTrackRowHtml(label, faint, list){
-      return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+
-        '<span style="font-size:'+(faint?'10px':'11.5px')+';color:'+(faint?'var(--text-faint)':'var(--text-dim)')+';width:72px;flex-shrink:0;'+(faint?'padding-left:8px;':'')+'">'+esc(label)+'</span>'+
+    function timelineTrackRowHtml(label, faint, list, propertyId, billType){
+      var picked = billsPropertyFilter === propertyId && billsTypeFilter === billType;
+      var labelStyle = 'font-size:'+(faint?'10px':'11.5px')+';color:'+(picked?'var(--accent)':faint?'var(--text-faint)':'var(--text-dim)')+';'+
+        (picked?'font-weight:700;':'')+'width:72px;flex-shrink:0;'+(faint?'padding-left:8px;':'');
+      var labelHtml = faint
+        ? '<span style="'+labelStyle+'">'+esc(label)+'</span>'
+        : '<button type="button" class="timeline-label" title="Show only '+esc(label)+' bills for this property" onclick="selectBillsTimelineFilter(\''+propertyId+'\',\''+billType+'\')" '+
+          'style="'+labelStyle+'background:none;border:0;padding:0;text-align:left;cursor:pointer;font-family:inherit;text-decoration:'+(picked?'underline':'none')+';">'+esc(label)+'</button>';
+      return '<div style="display:flex;align-items:center;gap:8px;margin:5px 0;">'+labelHtml+
         '<div class="timeline-track" style="position:relative;flex:1;height:18px;border-radius:4px;overflow:hidden;">'+list.map(timelineSegmentHtml).join('')+todayLineHtml+'</div></div>';
     }
 
@@ -7207,11 +7249,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         // other service — internet in particular — is the same service every month, so all its
         // bills stay on one line even if one amount differs.
         var split = bt === 'gas' ? splitByModalAmount(typeBills) : { regular: typeBills, adjustments: [] };
-        var html = timelineTrackRowHtml(billTypeLabel(bt), false, split.regular);
-        if (split.adjustments.length) html += timelineTrackRowHtml('↳ rate change', true, split.adjustments);
+        var html = timelineTrackRowHtml(billTypeLabel(bt), false, split.regular, p.id, bt);
+        if (split.adjustments.length) html += timelineTrackRowHtml('↳ rate change', true, split.adjustments, p.id, bt);
         return html;
       }).join('');
-      rows.push('<div style="margin-bottom:12px;"><div style="font-size:12.5px;font-weight:650;margin-bottom:4px;">'+esc(p.name)+'</div>'+typeRows+'</div>');
+      var propPicked = billsPropertyFilter === p.id;
+      var dim = hasSelection && !propPicked;
+      rows.push('<div style="margin-bottom:12px;'+(dim?'opacity:.45;':'')+'">'+
+        '<button type="button" class="timeline-label" title="Show only '+esc(p.name)+'\'s bills" onclick="selectBillsTimelineFilter(\''+p.id+'\', null)" '+
+        'style="font-size:12.5px;font-weight:650;margin-bottom:4px;background:none;border:0;padding:0;cursor:pointer;font-family:inherit;color:'+(propPicked && billsTypeFilter==='all'?'var(--accent)':'var(--text)')+';'+
+        'display:inline-flex;align-items:center;gap:4px;">'+esc(p.name)+' <span aria-hidden="true" style="font-weight:400;color:var(--text-faint);">›</span></button>'+typeRows+'</div>');
     });
     if (!rows.length) return '';
 
@@ -7240,7 +7287,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     };
     var openNow = billsTimelineOpen !== null ? billsTimelineOpen : true; // first thing on the page, open by default
     return '<details class="card collapsible-card"'+(openNow?' open':'')+' ontoggle="__setBillsTimelineOpen(this.open)">'+
-      '<summary><span>Invoice timeline</span><span class="cc-hint">'+esc(rangeLabel)+' · tap a bar to open the bill</span></summary>'+
+      '<summary><span>Invoice timeline</span><span class="cc-hint">'+esc(rangeLabel)+' · tap a property or service to filter · tap a bar to open the bill</span></summary>'+
       rangeControls+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 10px;">Each bar is a bill across its billing period. Striped = no bill loaded. Gas gets a separate "rate change" line when its price changes.</p>'+
       '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+

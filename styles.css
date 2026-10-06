@@ -2173,3 +2173,7 @@ body.viewas-on .topbar{box-shadow:inset 0 -2px 0 var(--status-move);}
 body:not(.view-only) #view-only-banner{ display:none; }
 /* Destructive buttons are never usable by a viewer — hide them outright. */
 body.view-only .mini-btn.danger, body.view-only .icon-mini-btn.danger, body.view-only .rcpt-btn.rm{ display:none !important; }
+
+/* Invoice timeline: property / service names are tappable filters */
+.timeline-label:hover{text-decoration:underline !important;color:var(--accent) !important;}
+.timeline-label:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px;}
