@@ -8136,7 +8136,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   async function sendTenantStatement(t, rent, billItems, title){
     var property = propertyOf(t.propertyId);
     var digits = phoneDigitsForWhatsApp(t.phone);
-    var m = groupSendModalShell(title, 'Preparing the statement' + (billItems.length ? ' and the bills…' : '…'));
+    var m = groupSendModalShell(title, 'Preparing the statement…');
     var ref = tenantPaymentRef(t);
     var rentTotal = round2(rent.reduce(function(s,c){ return s + c.remaining; }, 0));
     var billsTotal = round2(billItems.reduce(function(s,o){ return s + o.alloc.amount; }, 0));
@@ -8155,22 +8155,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     lines.push('Total: ' + money(total));
     if (ref) lines.push('Please use your reference ' + ref + ' in the transfer description.');
+    if (billItems.length) lines.push('If you have any questions, you can see each bill in the app — it\'s attached to its charge.');
     lines.push('Reply with your receipt once paid. Thank you!');
     var message = lines.join('\n');
 
-    var docFiles = [], docCanvases = [], missingDocs = 0;
-    var withDocs = billItems.filter(function(o){ return o.bill.receiptPath; }).slice(0, 4);
-    for (var i = 0; i < withDocs.length; i++){
-      var b = withDocs[i].bill;
-      var f = await fetchBillReceiptFile(b);
-      if (!f){ missingDocs++; continue; }
-      docFiles.push(f);
-      try {
-        var r = await renderBillDocCanvas(f, 1000);
-        if (r.canvas) docCanvases.push({ canvas: r.canvas, label: billTypeLabel(b.billType) + ' · ' + b.provider + (r.pages > 1 ? ' · page 1 of ' + r.pages : '') });
-      } catch(err){ console.warn('bill render', err); }
-    }
-    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, docCanvases);
+    // Only the amounts go out — the bills themselves stay in the app, attached to each charge,
+    // so the image stays short and easy to read.
+    var docFiles = [], missingDocs = 0;
+    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, []);
     if (m.hidden) return;
     groupSendState = { message: message, imageBlob: imageBlob,
       imageName: ('owed-' + first + '-' + TODAY).toLowerCase().replace(/[^a-z0-9-]+/g, '-') + '.png',
@@ -8186,7 +8178,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var W = 1080, pad = 64, font = 'Segoe UI, Roboto, Helvetica, Arial, sans-serif';
     var rowH = 86, L = pad + 32, R = W - pad - 32, dw = R - L + 24;
     var docsH = docCanvases.reduce(function(s, d){ return s + Math.round(d.canvas.height * dw / d.canvas.width) + 80; }, 0);
-    var H = 32 + 230 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + docsH + 50;
+    var H = 32 + 230 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + (billItems.length ? 40 : 0) + docsH + 30;
     var c = document.createElement('canvas'); c.width = W; c.height = H;
     var g = c.getContext('2d');
     function rr(x, y, w, h, r, fill){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); g.fillStyle = fill; g.fill(); }
@@ -8231,6 +8223,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     y += 96 + 50;
     g.fillStyle = '#9aa1ad'; g.font = '400 25px ' + font;
     g.fillText('Use your reference in the transfer description and reply with your receipt.', L, y);
+    if (billItems.length){
+      y += 40;
+      g.fillText('Questions about a bill? See it in the app — it\'s attached to its charge.', L, y);
+    }
     y += 30;
     docCanvases.forEach(function(d){
       var dh = Math.round(d.canvas.height * dw / d.canvas.width);
