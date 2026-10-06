@@ -2996,8 +2996,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Settlement approved: dates can't change any more, but the final figures can still be sent.
     if (s && s.status === 'completed' && bondOf(t.id)){
       return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
-        '<button type="button" class="mini-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')">💬 Send settlement (text)</button>'+
-        '<button type="button" class="mini-btn" onclick="'+st+'shareMoveOutEstimateImage(\''+t.id+'\')">🖼️ Send settlement (image)</button></div>';
+        '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.chat+'</svg>Send settlement (text)</button>'+
+        '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'shareMoveOutEstimateImage(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send settlement (image)</button></div>';
     }
     if (tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
     if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
@@ -3005,8 +3005,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button type="button" class="mini-btn" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Change date</button>'+
       '<button type="button" class="mini-btn danger" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel move-out</button>'+
       ((!s || s.status === 'in_progress') && (t.actualMoveOutDate || t.expectedMoveOutDate)
-        ? '<button type="button" class="mini-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')">💬 Send estimate (text)</button>'+
-          '<button type="button" class="mini-btn" onclick="'+st+'shareMoveOutEstimateImage(\''+t.id+'\')">🖼️ Send estimate (image)</button>' : '')+
+        ? '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.chat+'</svg>Send estimate (text)</button>'+
+          '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'shareMoveOutEstimateImage(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send estimate (image)</button>' : '')+
       '</div>';
   }
 
@@ -3239,18 +3239,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="modal-actions" style="justify-content:space-between;align-items:center;margin:0 0 10px;">'+
           '<h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:15px;">Send to '+esc(d.first)+' on WhatsApp</h2>'+
           btn('Close', 'closeEstimateImageModal()')+'</div>'+
-        '<img src="'+estimateImageState.url+'" alt="Move-out summary" draggable="true" style="display:block;width:100%;max-height:55vh;object-fit:contain;border-radius:12px;border:1px solid var(--border, rgba(127,127,127,.25));background:#f4f5f8;">'+
-        '<p style="font-size:12px;color:var(--text-dim);margin:10px 0 0;">'+
-          (phone
-            ? 'Tap <b>Share</b> and choose WhatsApp Business → '+esc(d.first)+'\'s chat.'
-            : '<b>1.</b> Copy image &nbsp; <b>2.</b> Open chat &nbsp; <b>3.</b> Press <b>Ctrl+V</b> in the chat and send. You can also drag the image into WhatsApp.')+
-        '</p>'+
-        '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;margin-top:12px;">'+
-          (canShareFile ? btn('📤 Share', 'estimateImageShare()', phone) : '')+
-          (canCopy ? btn('📋 Copy image', 'estimateImageCopy(this)', !phone) : '')+
-          (estimateImageState.digits ? btn('💬 Open chat', 'estimateImageOpenChat()') : '')+
-          btn('⬇️ Download', 'estimateImageDownload()')+
-        '</div></div>';
+        '<img src="'+estimateImageState.url+'" alt="Move-out summary" draggable="true" class="send-preview">'+
+        '<div class="action-tiles">'+
+          (canCopy ? actionTile('copyImage', 'Copy image', 'estimateImageCopy(this)', true) : '')+
+          (estimateImageState.digits ? actionTile('chat', 'Open chat', 'estimateImageOpenChat()', !canCopy) : '')+
+          (canShareFile ? actionTile('share', 'Share image', 'estimateImageShare(this)') : '')+
+          actionTile('download', 'Save image', 'estimateImageDownload()')+
+        '</div>'+
+        '<p class="send-howto"><b>Straight to '+esc(d.first)+'\'s chat:</b> Copy image → Open chat → '+(phone ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+' → send.'+
+          (canShareFile ? '<br><span style="color:var(--text-faint);">Or tap Share image → WhatsApp Business and pick the chat yourself.</span>' : '')+'</p>'+
+        '</div>';
       m.hidden = false;
     }, function(err){ console.error('estimate image', err); showToast('Could not create the image.', 'error'); });
   }
@@ -3258,15 +3256,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function estimateImageCopy(b){
     var st = estimateImageState; if (!st) return;
     navigator.clipboard.write([new ClipboardItem({ 'image/png': st.blob })]).then(function(){
-      if (b){ b.textContent = 'Copied ✓'; setTimeout(function(){ b.textContent = '📋 Copy image'; }, 2000); }
-      showToast('Image copied — open the chat and press Ctrl+V.', 'success');
+      flashTileDone(b, 'Copied');
+      showToast('Image copied — now open the chat and paste it.', 'success');
     }, function(err){
       console.error('copy image', err);
       showToast('Couldn\'t copy here — use Download (or drag the image) instead.', 'error');
     });
   }
-  function estimateImageShare(){
+  function estimateImageShare(el){
     var st = estimateImageState; if (!st) return;
+    if (el && el.focus) el.focus(); // iPad anchors the share popover to the focused button
     var file = new File([st.blob], st.name, { type:'image/png' });
     navigator.share({ files:[file], text: st.caption }).catch(function(err){
       if (!err || err.name !== 'AbortError') showToast('Couldn\'t share — use Download instead.', 'error');
@@ -4409,7 +4408,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             billsOverdueSummaryHtml(owedBills)+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
             '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:10px;">'+
-              ((pendingTotal > 0 || billsTotal > 0 || tenantRentOwed(t).length) ? '<button type="button" class="mini-btn" onclick="sendTenantOwedStatement(\''+t.id+'\')">🖼️ Send what they owe</button>' : '')+
+              ((pendingTotal > 0 || billsTotal > 0 || tenantRentOwed(t).length) ? '<button type="button" class="mini-btn icon-label-btn" onclick="sendTenantOwedStatement(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send what they owe</button>' : '')+
               '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button></div>'+
             '</details>';
         }).join('');
@@ -7995,6 +7994,35 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.sendBillToWhatsAppGroup = sendBillToWhatsAppGroup;
 
+
+  /* ---------- iOS-style action tiles for the WhatsApp send windows ----------
+   * Line icons in the style of SF Symbols, drawn in a round tile with the label underneath —
+   * like the action row of the iOS share sheet. */
+  var ACTION_ICONS = {
+    share: '<path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M6 11H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1"/>',
+    copyImage: '<rect x="8" y="8" width="13" height="13" rx="2.5"/><path d="M16 8V5.5A2.5 2.5 0 0 0 13.5 3h-8A2.5 2.5 0 0 0 3 5.5v8A2.5 2.5 0 0 0 5.5 16H8"/><circle cx="12.5" cy="12.5" r="1.3"/><path d="m21 18-3.5-3.5L11 21"/>',
+    copyText: '<rect x="8" y="8" width="13" height="13" rx="2.5"/><path d="M16 8V5.5A2.5 2.5 0 0 0 13.5 3h-8A2.5 2.5 0 0 0 3 5.5v8A2.5 2.5 0 0 0 5.5 16H8"/><path d="M11.5 12.5h6M11.5 16h4"/>',
+    chat: '<path d="M20.5 11.6a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.5-4.3A8.5 8.5 0 1 1 20.5 11.6z"/><path d="M9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.4-1.6-.9-.9.8c-1-.4-2-1.4-2.4-2.4l.8-.9-.9-1.6z"/>',
+    download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+    pdf: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
+    check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>'
+  };
+  function actionTile(icon, label, onclick, primary){
+    return '<button type="button" class="action-tile'+(primary?' primary':'')+'" onclick="'+onclick+'">'+
+      '<span class="at-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS[icon]+'</svg></span>'+
+      '<span class="at-lb">'+label+'</span></button>';
+  }
+  /** Briefly shows a tick on a tile after it did its job (copied, etc.). */
+  function flashTileDone(el, text){
+    if (!el || !el.querySelector) return;
+    var lb = el.querySelector('.at-lb'), ic = el.querySelector('.at-ic');
+    if (!lb || !ic) return;
+    var oldLb = lb.innerHTML, oldIc = ic.innerHTML;
+    lb.textContent = text || 'Copied';
+    ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.check+'</svg>';
+    el.classList.add('done');
+    setTimeout(function(){ lb.innerHTML = oldLb; ic.innerHTML = oldIc; el.classList.remove('done'); }, 1800);
+  }
   var groupSendState = null;
   function groupSendModalShell(title, loadingText){
     var m = document.getElementById('group-send-modal');
@@ -8021,30 +8049,40 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.closeGroupSendModal = closeGroupSendModal;
   function renderGroupSendModal(note){
     var st = groupSendState; if (!st) return;
-    var phone = isAppleMobile() || /Android/i.test(navigator.userAgent || '');
+    var touch = isAppleMobile() || /Android/i.test(navigator.userAgent || '') || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent || ''));
     var canCopyImage = !!(navigator.clipboard && window.ClipboardItem && st.imageBlob);
-    var files = groupSendShareFiles();
-    var canShare = !!(navigator.share && files.length && navigator.canShare && navigator.canShare({ files: files }));
-    var btn = function(label, fn, primary){ return '<button type="button" class="mini-btn'+(primary?' primary':'')+'" onclick="'+fn+'">'+label+'</button>'; };
-    var step = function(n, text){ return '<div style="font-size:12.5px;margin:10px 0 6px;">'+(n ? '<b>'+n+'.</b> ' : '')+text+'</div>'; };
-    var row = function(inner){ return '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;justify-content:flex-start;">'+inner+'</div>'; };
-    var openLabel = st.chatLabel === 'group' ? '💬 Open group' : '💬 Open chat';
-    var docBtn = st.docFiles.length ? btn(st.docFiles.length === 1 ? '📄 Download bill PDF' : '📄 Download bills', 'groupSendDownloadBill()') : '';
-    var desktop = st.chatPrefilled
-      ? step(1, 'Copy the image:') + row((canCopyImage ? btn('🖼️ Copy image', 'groupSendCopyImage(this)', true) : '') + btn('⬇️ Download image', 'groupSendDownloadImage()') + docBtn) +
-        step(2, 'Open the chat — the message is already typed. Press <b>Ctrl+V</b> to add the image, then send.') + row(btn(openLabel, 'groupSendOpenGroup()', true))
-      : step(1, 'Open the ' + st.chatLabel + ':') + row(btn(openLabel, 'groupSendOpenGroup()', true)) +
-        step(2, 'Copy the image, press <b>Ctrl+V</b> in the chat and send. You can also drag it in, or attach the PDF.') +
-        row((canCopyImage ? btn('🖼️ Copy image', 'groupSendCopyImage(this)', true) : '') + btn('⬇️ Download image', 'groupSendDownloadImage()') + docBtn) +
-        step(3, 'Copy the message, press <b>Ctrl+V</b> and send.') + row(btn('📋 Copy message', 'groupSendCopyMessage(this)', true));
+    var imgFile = groupSendImageFile();
+    var canShareImage = !!(imgFile && navigator.share && navigator.canShare && navigator.canShare({ files: [imgFile] }));
+    var pdf = (st.docFiles || [])[0];
+    var canSharePdf = !!(pdf && navigator.share && navigator.canShare && navigator.canShare({ files: [pdf] }));
+    var isGroup = st.chatLabel === 'group';
+    var target = isGroup ? 'the group' : (st.recipientName || 'the tenant') + '\'s chat';
+    var tiles = '';
+    if (canCopyImage) tiles += actionTile('copyImage', 'Copy image', 'groupSendCopyImage(this)', true);
+    if (st.chatUrl) tiles += actionTile('chat', isGroup ? 'Open group' : 'Open chat', 'groupSendOpenGroup()', !canCopyImage);
+    tiles += actionTile('copyText', 'Copy message', 'groupSendCopyMessage(this)');
+    if (canShareImage) tiles += actionTile('share', 'Share image', 'groupSendShare(this)');
+    if (pdf) tiles += canSharePdf && touch ? actionTile('pdf', 'Share PDF', 'groupSendSharePdf(this)') : actionTile('pdf', 'Bill PDF', 'groupSendDownloadBill()');
+    if (!touch || !canShareImage) tiles += actionTile('download', 'Save image', 'groupSendDownloadImage()');
+    var paste = touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>';
+    var howTo = st.chatPrefilled
+      ? '<b>Straight to ' + esc(target) + ':</b> Copy image → Open chat (the message is already typed) → ' + paste + ' → send.'
+      : '<b>Straight to ' + esc(target) + ':</b> Copy image → Open group → ' + paste + ' → send. Then Copy message → paste → send.';
+    if (!canCopyImage){
+      howTo = canShareImage
+        ? 'Tap <b>Share image</b> → WhatsApp Business → pick ' + esc(target) + ' and send.' + (st.chatPrefilled ? ' Then <b>Open chat</b> to send the message (already typed).' : ' Then Copy message → paste → send.')
+        : 'Save the image, then attach it in ' + esc(target) + '. ' + (st.chatPrefilled ? '<b>Open chat</b> has the message already typed.' : 'Copy message → paste → send.');
+    } else if (canShareImage) howTo += '<br><span style="color:var(--text-faint);">Or tap Share image → WhatsApp Business and pick ' + esc(target) + ' yourself.</span>';
     document.getElementById('group-send-body').innerHTML =
-      (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="What is owed" draggable="true" style="display:block;width:100%;max-height:46vh;object-fit:contain;border-radius:10px;border:1px solid var(--border, rgba(127,127,127,.25));background:#f4f5f8;">' : '')+
+      (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="Summary image" draggable="true" class="send-preview">' : '')+
       (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
-      '<textarea readonly style="width:100%;margin-top:10px;min-height:110px;font-size:12px;line-height:1.4;resize:vertical;">'+esc(st.message)+'</textarea>'+
-      (phone && canShare
-        ? step('', 'Tap <b>Share</b> → WhatsApp Business → ' + (st.chatLabel === 'group' ? 'the house group' : 'the tenant\'s chat') + '. The image' + (st.docFiles.length ? ', the bill PDF' : '') + ' and the message go together.') +
-          row(btn('📤 Share', 'groupSendShare()', true) + btn('📋 Copy message', 'groupSendCopyMessage(this)') + btn(openLabel, 'groupSendOpenGroup()'))
-        : desktop);
+      '<details class="send-msg"><summary>Message</summary><textarea readonly>'+esc(st.message)+'</textarea></details>'+
+      '<div class="action-tiles">'+tiles+'</div>'+
+      '<p class="send-howto">'+howTo+'</p>';
+  }
+  function groupSendImageFile(){
+    var st = groupSendState; if (!st || !st.imageBlob) return null;
+    try { return new File([st.imageBlob], st.imageName, { type:'image/png' }); } catch(_e){ return null; }
   }
   function groupSendShareFiles(){
     var st = groupSendState; if (!st) return [];
@@ -8066,8 +8104,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function groupSendCopyImage(b){
     var st = groupSendState; if (!st || !st.imageBlob) return;
     navigator.clipboard.write([new ClipboardItem({ 'image/png': st.imageBlob })]).then(function(){
-      if (b){ b.textContent = 'Copied ✓'; setTimeout(function(){ b.textContent = '🖼️ Copy image'; }, 2000); }
-      showToast('Image copied — press Ctrl+V in the chat and send.', 'success');
+      flashTileDone(b, 'Copied');
+      showToast('Image copied — now open the chat and paste it.', 'success');
     }, function(err){
       console.error('copy image', err);
       showToast('Couldn\'t copy the image here — use Download image (or drag it) instead.', 'error');
@@ -8076,8 +8114,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function groupSendCopyMessage(b){
     var st = groupSendState; if (!st) return;
     copyTextReliably(st.message).then(function(ok){
-      if (ok && b){ b.textContent = 'Copied ✓'; setTimeout(function(){ b.textContent = '📋 Copy message'; }, 2000); }
-      showToast(ok ? 'Message copied — press Ctrl+V in the chat and send.' : 'Couldn\'t copy — select the message above and copy it by hand.', ok ? 'success' : 'error');
+      if (ok) flashTileDone(b, 'Copied');
+      showToast(ok ? 'Message copied — paste it in the chat and send.' : 'Couldn\'t copy — open "Message" above and copy it by hand.', ok ? 'success' : 'error');
     });
   }
   function groupSendDownloadImage(){
@@ -8094,21 +8132,27 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }, i * 400);
     });
   }
-  function groupSendShare(){
-    var st = groupSendState; if (!st) return;
-    var files = groupSendShareFiles();
-    navigator.share({ files: files, text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
+  // WhatsApp only shows up in the share sheet when everything shared is something it accepts
+  // together — a PNG plus a PDF plus text hides it. So the image is shared on its own (with the
+  // message as its caption where WhatsApp keeps it), and the PDF has its own button.
+  function groupSendShare(el){
+    var st = groupSendState; var f = groupSendImageFile(); if (!st || !f) return;
+    if (el && el.focus) el.focus(); // iPad anchors the share popover to the focused button
+    navigator.share({ files: [f], text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
       if (err && err.name === 'AbortError') return;
-      // Some apps refuse several files at once — retry with just the image.
-      if (files.length > 1){
-        navigator.share({ files: files.slice(0, 1), text: st.message }).then(function(){ groupSendMarkSent(); }, function(e2){
-          if (!e2 || e2.name !== 'AbortError') showToast('Couldn\'t share — use Copy message and Open chat instead.', 'error');
-        });
-        return;
-      }
-      showToast('Couldn\'t share — use Copy message and Open chat instead.', 'error');
+      navigator.share({ files: [f] }).then(function(){ groupSendMarkSent(); }, function(e2){
+        if (!e2 || e2.name !== 'AbortError') showToast('Couldn\'t share — use Copy image and Open chat instead.', 'error');
+      });
     });
   }
+  function groupSendSharePdf(el){
+    var st = groupSendState; var pdf = st && (st.docFiles || [])[0]; if (!pdf) return;
+    if (el && el.focus) el.focus();
+    navigator.share({ files: [pdf] }).then(function(){ groupSendMarkSent(); }, function(err){
+      if (!err || err.name !== 'AbortError') groupSendDownloadBill();
+    });
+  }
+  window.groupSendSharePdf = groupSendSharePdf;
   window.groupSendOpenGroup = groupSendOpenGroup;
   window.groupSendCopyImage = groupSendCopyImage;
   window.groupSendCopyMessage = groupSendCopyMessage;
@@ -8168,7 +8212,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       imageName: ('owed-' + first + '-' + TODAY).toLowerCase().replace(/[^a-z0-9-]+/g, '-') + '.png',
       imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null, docFiles: docFiles,
       chatUrl: digits ? 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message) : null,
-      chatPrefilled: !!digits, chatLabel: 'chat', onSent: null, marked: false };
+      chatPrefilled: !!digits, chatLabel: 'chat', recipientName: first, onSent: null, marked: false };
     renderGroupSendModal(!digits ? 'No phone number on file for ' + t.fullName + ' — copy the image and message and send them yourself.'
       : missingDocs ? 'Some bill documents couldn\'t be loaded — they\'re not included.' : '');
   }
@@ -8514,8 +8558,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<h2 style="margin:0;">Allocation</h2>'+
         '<div style="display:flex;gap:8px;">'+
         (isTenantHiddenProvider(b.provider) ? '' : (prefetchBillReceiptFile(b), prefetchBillInvoiceLink(b), '')+
-          waButton('sendBillToWhatsAppGroup(\''+b.id+'\')', 'Send to the WhatsApp group')+
-          (b.receiptPath ? '<button class="mini-btn" title="Pick a chat from the share menu and send the bill file itself" onclick="shareBillToWhatsAppGroup(\''+b.id+'\')">Share bill file…</button>' : ''))+
+          waButton('sendBillToWhatsAppGroup(\''+b.id+'\')', 'Send to the WhatsApp group'))+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
         '</div></div>'+
         (isTenantHiddenProvider(b.provider) ? '' : billWhatsAppGroupStatusHtml(b))+
