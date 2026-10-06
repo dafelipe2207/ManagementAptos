@@ -1040,7 +1040,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
     { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:false },
-    { hash:'#/view-as', label:'Tenant view', icon:'eye', primary:false },
+    { hash:'#/view-as', label:'Tenant view', icon:'eye', primary:false, superAdminOnly:true },
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
     { hash:'#/profits', label:'Profits', icon:'chart', primary:false },
     { header:true, label:'Property Operations' },
@@ -2435,7 +2435,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<p class="page-sub">'+esc(p?p.name:'')+(room?' • '+esc(room.name):'')+'</p></div>'+
       (tenancyBadge?'<div>'+tenancyBadge+'</div>':'')+'</div>'+
       '<div class="actions-row">'+
-      '<button class="mini-btn" onclick="startViewAs(\''+t.id+'\')">👁 View as tenant</button>'+
+      (isSuperAdmin() ? '<button class="mini-btn" onclick="startViewAs(\''+t.id+'\')">👁 View as tenant</button>' : '')+
       '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
       '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
       '<button class="mini-btn" onclick="toggleTenantActiveConfirm(\''+t.id+'\')">'+(t.isActive===false?'Reactivate tenant':'Deactivate tenant')+'</button>'+
@@ -14398,7 +14398,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   async function startViewAs(tenantId){
-    if (!isStaff() && !viewAs) return;
+    // Tenant view is a Super Admin tool (while viewing, the real profile is kept in viewAs).
+    var realIsSuper = viewAs ? !!(viewAs.realProfile && viewAs.realProfile.role === 'super_admin') : isSuperAdmin();
+    if (!realIsSuper) return;
     if (anyModalOpen()){ showToast('Close the open form first.', 'info'); return; }
     var base = viewAs ? viewAs.snapshot : viewAsSnapshot();
     var target = base.tenants.find(function(t){ return t.id === tenantId; });
@@ -14476,7 +14478,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var viewAsLastTenantId = null;
   var viewAsSearch = '';
   function renderViewAsPicker(){
-    if (!isStaff()) return accessDeniedPage();
+    if (!isSuperAdmin()) return accessDeniedPage();
     var header = pageHeader('Tenant view', 'Open the app exactly as a tenant sees it — their real balance, bills, rules and tasks. Read-only: nothing can be changed while you look.');
     var list = tenants.filter(function(t){ return t.rentAmount > 0 || t.authUserId; });
     if (list.length === 0) return header + emptyState('tenants', 'No tenants yet', 'Add a tenant first, then you can preview their app here.', '');
