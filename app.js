@@ -6,6 +6,8 @@
 import * as auth from './lib/auth.js?v=3';
 import { friendlyErrorMessage } from './lib/errors.js';
 import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
+  // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
+  function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
 import * as propertyService from './services/propertyService.js?v=2';
 import * as roomService from './services/roomService.js';
 import * as tenantService from './services/tenantService.js?v=8';
@@ -4406,7 +4408,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             (!showBills ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
             billsOverdueSummaryHtml(owedBills)+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
-            '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button>'+
+            '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:10px;">'+
+              ((pendingTotal > 0 || billsTotal > 0 || tenantRentOwed(t).length) ? '<button type="button" class="mini-btn" onclick="sendTenantOwedStatement(\''+t.id+'\')">🖼️ Send what they owe</button>' : '')+
+              '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button></div>'+
             '</details>';
         }).join('');
 
@@ -7846,26 +7850,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function sendBillsWhatsAppToTenant(tenantId, billIds){
     var tenant = tenantOf(tenantId);
     if (!tenant) return;
-    var property = propertyOf(tenant.propertyId);
     var items = billIds.map(function(id){
       var b = billOf(id);
       var a = b && (b.allocations||[]).find(function(x){ return x.tenantId===tenantId; });
       return (b && a && !isTenantHiddenProvider(b.provider)) ? { bill:b, alloc:a } : null;
     }).filter(Boolean);
     if (!items.length) return;
-    var message = items.length === 1
-      ? billAllocationWhatsAppMessage(items[0].bill, property, tenant, items[0].alloc.amount)
-      : pendingBillsWhatsAppMessage(tenant, items, property);
-    // The bill document goes in as a link (a chat link can only carry text), so the tenant can
-    // open exactly the bill they're being charged for. Links are prepared when the button is drawn.
-    var links = items.map(function(it){
-      var url = it.bill.receiptPath ? billInvoiceLinkCache[it.bill.receiptPath] : null;
-      return url ? '📄 ' + billTypeLabel(it.bill.billType) + ' bill: ' + url : null;
-    }).filter(Boolean);
-    if (links.length) message += '\n\n' + links.join('\n');
-    var digits = phoneDigitsForWhatsApp(tenant.phone);
-    if (!digits){ showToast('No phone number on file for this tenant.', 'error'); return; }
-    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(message));
+    sendTenantStatement(tenant, [], items, items.length === 1 ? 'Send the bill to ' + tenant.fullName : 'Send pending bills to ' + tenant.fullName);
   }
   window.sendBillsWhatsAppToTenant = sendBillsWhatsAppToTenant;
 
@@ -7985,19 +7976,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         catch(_e){ invoiceUrl = null; }
       }
     }
-    if (invoiceUrl) message += '\n\n📄 Full bill: ' + invoiceUrl;
     var docFile = bill.receiptPath ? await fetchBillReceiptFile(bill) : null;
     var docCanvas = null, docNote = '';
     if (docFile){
-      try { var r = await renderBillDocCanvas(docFile, 1000); docCanvas = r.canvas; docNote = r.note; }
+      try { var r = await renderBillDocCanvas(docFile, 1000); docCanvas = r.canvas; docNote = r.pages > 1 ? 'page 1 of ' + r.pages + ' — full bill attached' : ''; }
       catch(err){ console.warn('bill document render', err); }
     }
+    // The bill goes as a file/image, not a link. A link is added only if it couldn't be loaded.
+    if (!docCanvas && invoiceUrl) message += '\n\n📄 Bill: ' + invoiceUrl;
     var imageBlob = await billSplitImageBlob(bill, property, rows, docCanvas, docNote);
     var imageName = (billTypeLabel(bill.billType) + '-' + (bill.billingPeriodEnd || TODAY)).toLowerCase().replace(/[^a-z0-9-]+/g, '-') + '.png';
     if (m.hidden) return; // closed while preparing
-    groupSendState = { bill: bill, property: property, message: message, imageBlob: imageBlob, imageName: imageName,
-      imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null, docFile: docFile, marked: false };
-    renderGroupSendModal(!docFile && bill.receiptPath ? 'Couldn\'t load the bill document — the message still includes its link.' : (!bill.receiptPath ? 'This bill has no document attached — only the split is shown.' : ''));
+    groupSendState = { message: message, imageBlob: imageBlob, imageName: imageName,
+      imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null, docFiles: docFile ? [docFile] : [],
+      chatUrl: property.whatsappGroupLink, chatPrefilled: false, chatLabel: 'group',
+      onSent: function(){ markBillSharedToGroup(bill, true); }, marked: false };
+    renderGroupSendModal(!docFile && bill.receiptPath ? 'Couldn\'t load the bill document — the message includes a link to it instead.' : (!bill.receiptPath ? 'This bill has no document attached — only the split is shown.' : ''));
   }
   window.sendBillToWhatsAppGroup = sendBillToWhatsAppGroup;
 
@@ -8032,40 +8026,48 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var files = groupSendShareFiles();
     var canShare = !!(navigator.share && files.length && navigator.canShare && navigator.canShare({ files: files }));
     var btn = function(label, fn, primary){ return '<button type="button" class="mini-btn'+(primary?' primary':'')+'" onclick="'+fn+'">'+label+'</button>'; };
-    var step = function(n, text){ return '<div style="font-size:12.5px;margin:10px 0 6px;"><b>'+n+'.</b> '+text+'</div>'; };
+    var step = function(n, text){ return '<div style="font-size:12.5px;margin:10px 0 6px;">'+(n ? '<b>'+n+'.</b> ' : '')+text+'</div>'; };
+    var row = function(inner){ return '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;justify-content:flex-start;">'+inner+'</div>'; };
+    var openLabel = st.chatLabel === 'group' ? '💬 Open group' : '💬 Open chat';
+    var docBtn = st.docFiles.length ? btn(st.docFiles.length === 1 ? '📄 Download bill PDF' : '📄 Download bills', 'groupSendDownloadBill()') : '';
+    var desktop = st.chatPrefilled
+      ? step(1, 'Copy the image:') + row((canCopyImage ? btn('🖼️ Copy image', 'groupSendCopyImage(this)', true) : '') + btn('⬇️ Download image', 'groupSendDownloadImage()') + docBtn) +
+        step(2, 'Open the chat — the message is already typed. Press <b>Ctrl+V</b> to add the image, then send.') + row(btn(openLabel, 'groupSendOpenGroup()', true))
+      : step(1, 'Open the ' + st.chatLabel + ':') + row(btn(openLabel, 'groupSendOpenGroup()', true)) +
+        step(2, 'Copy the image, press <b>Ctrl+V</b> in the chat and send. You can also drag it in, or attach the PDF.') +
+        row((canCopyImage ? btn('🖼️ Copy image', 'groupSendCopyImage(this)', true) : '') + btn('⬇️ Download image', 'groupSendDownloadImage()') + docBtn) +
+        step(3, 'Copy the message, press <b>Ctrl+V</b> and send.') + row(btn('📋 Copy message', 'groupSendCopyMessage(this)', true));
     document.getElementById('group-send-body').innerHTML =
-      (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="Bill split and bill" draggable="true" style="display:block;width:100%;max-height:46vh;object-fit:contain;border-radius:10px;border:1px solid var(--border, rgba(127,127,127,.25));background:#f4f5f8;">' : '')+
+      (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="What is owed" draggable="true" style="display:block;width:100%;max-height:46vh;object-fit:contain;border-radius:10px;border:1px solid var(--border, rgba(127,127,127,.25));background:#f4f5f8;">' : '')+
       (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
-      '<textarea readonly style="width:100%;margin-top:10px;min-height:120px;font-size:12px;line-height:1.4;resize:vertical;">'+esc(st.message)+'</textarea>'+
+      '<textarea readonly style="width:100%;margin-top:10px;min-height:110px;font-size:12px;line-height:1.4;resize:vertical;">'+esc(st.message)+'</textarea>'+
       (phone && canShare
-        ? step('', 'Tap <b>Share</b>, pick WhatsApp Business → the house group. The image and message go together.') +
-          '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;">'+btn('📤 Share', 'groupSendShare()', true)+btn('📋 Copy message', 'groupSendCopyMessage(this)')+btn('💬 Open group', 'groupSendOpenGroup()')+'</div>'
-        : step(1, 'Open the group:') + '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;">'+btn('💬 Open group', 'groupSendOpenGroup()', true)+'</div>'+
-          step(2, 'Copy the image (bill + each tenant\'s share), then press <b>Ctrl+V</b> in the group and send. You can also drag the image into WhatsApp.') +
-          '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;">'+(canCopyImage ? btn('🖼️ Copy image', 'groupSendCopyImage(this)', true) : '')+btn('⬇️ Download image', 'groupSendDownloadImage()')+
-            (st.docFile ? btn('📄 Download bill', 'groupSendDownloadBill()') : '')+'</div>'+
-          step(3, 'Copy the message, then <b>Ctrl+V</b> in the group and send.') +
-          '<div class="modal-actions" style="flex-wrap:wrap;gap:8px;">'+btn('📋 Copy message', 'groupSendCopyMessage(this)', true)+'</div>');
+        ? step('', 'Tap <b>Share</b> → WhatsApp Business → ' + (st.chatLabel === 'group' ? 'the house group' : 'the tenant\'s chat') + '. The image' + (st.docFiles.length ? ', the bill PDF' : '') + ' and the message go together.') +
+          row(btn('📤 Share', 'groupSendShare()', true) + btn('📋 Copy message', 'groupSendCopyMessage(this)') + btn(openLabel, 'groupSendOpenGroup()'))
+        : desktop);
   }
   function groupSendShareFiles(){
-    var st = groupSendState; if (!st || !st.imageBlob) return [];
-    try { return [new File([st.imageBlob], st.imageName, { type:'image/png' })]; } catch(_e){ return []; }
+    var st = groupSendState; if (!st) return [];
+    var out = [];
+    try { if (st.imageBlob) out.push(new File([st.imageBlob], st.imageName, { type:'image/png' })); } catch(_e){}
+    (st.docFiles || []).forEach(function(f){ out.push(f); });
+    return out;
   }
   function groupSendMarkSent(){
     var st = groupSendState; if (!st || st.marked) return;
     st.marked = true;
-    markBillSharedToGroup(st.bill, true);
+    if (st.onSent) st.onSent();
   }
   function groupSendOpenGroup(){
-    var st = groupSendState; if (!st) return;
-    openWhatsApp(st.property.whatsappGroupLink);
+    var st = groupSendState; if (!st || !st.chatUrl) return;
+    openWhatsApp(st.chatUrl);
     groupSendMarkSent();
   }
   function groupSendCopyImage(b){
     var st = groupSendState; if (!st || !st.imageBlob) return;
     navigator.clipboard.write([new ClipboardItem({ 'image/png': st.imageBlob })]).then(function(){
       if (b){ b.textContent = 'Copied ✓'; setTimeout(function(){ b.textContent = '🖼️ Copy image'; }, 2000); }
-      showToast('Image copied — press Ctrl+V in the group and send.', 'success');
+      showToast('Image copied — press Ctrl+V in the chat and send.', 'success');
     }, function(err){
       console.error('copy image', err);
       showToast('Couldn\'t copy the image here — use Download image (or drag it) instead.', 'error');
@@ -8075,7 +8077,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var st = groupSendState; if (!st) return;
     copyTextReliably(st.message).then(function(ok){
       if (ok && b){ b.textContent = 'Copied ✓'; setTimeout(function(){ b.textContent = '📋 Copy message'; }, 2000); }
-      showToast(ok ? 'Message copied — press Ctrl+V in the group and send.' : 'Couldn\'t copy — select the message above and copy it by hand.', ok ? 'success' : 'error');
+      showToast(ok ? 'Message copied — press Ctrl+V in the chat and send.' : 'Couldn\'t copy — select the message above and copy it by hand.', ok ? 'success' : 'error');
     });
   }
   function groupSendDownloadImage(){
@@ -8083,16 +8085,28 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var a = document.createElement('a'); a.href = st.imageUrl; a.download = st.imageName; document.body.appendChild(a); a.click(); a.remove();
   }
   function groupSendDownloadBill(){
-    var st = groupSendState; if (!st || !st.docFile) return;
-    var url = URL.createObjectURL(st.docFile);
-    var a = document.createElement('a'); a.href = url; a.download = st.docFile.name || 'bill'; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+    var st = groupSendState; if (!st) return;
+    (st.docFiles || []).forEach(function(f, i){
+      setTimeout(function(){
+        var url = URL.createObjectURL(f);
+        var a = document.createElement('a'); a.href = url; a.download = f.name || 'bill'; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+      }, i * 400);
+    });
   }
   function groupSendShare(){
     var st = groupSendState; if (!st) return;
-    navigator.share({ files: groupSendShareFiles(), text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
+    var files = groupSendShareFiles();
+    navigator.share({ files: files, text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
       if (err && err.name === 'AbortError') return;
-      showToast('Couldn\'t share — use Copy message and Open group instead.', 'error');
+      // Some apps refuse several files at once — retry with just the image.
+      if (files.length > 1){
+        navigator.share({ files: files.slice(0, 1), text: st.message }).then(function(){ groupSendMarkSent(); }, function(e2){
+          if (!e2 || e2.name !== 'AbortError') showToast('Couldn\'t share — use Copy message and Open chat instead.', 'error');
+        });
+        return;
+      }
+      showToast('Couldn\'t share — use Copy message and Open chat instead.', 'error');
     });
   }
   window.groupSendOpenGroup = groupSendOpenGroup;
@@ -8102,13 +8116,140 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.groupSendDownloadBill = groupSendDownloadBill;
   window.groupSendShare = groupSendShare;
 
+  /** "What you owe" for one tenant — rent periods still owed (already started, or already due
+   *  because rent is paid in advance) and/or unpaid bill shares — sent as an image (with the
+   *  bills themselves underneath) plus a short message, through the same send window as the
+   *  group. On a phone the bill PDFs go along as files. */
+  function tenantRentOwed(t){
+    return rentCharges.filter(function(c){
+      return c.tenantId === t.id && c.remaining > 0.004 && (c.periodStart <= TODAY || (c.dueDate && c.dueDate <= TODAY));
+    }).sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
+  }
+  function sendTenantOwedStatement(tenantId){
+    var t = tenantOf(tenantId); if (!t) return;
+    var rent = tenantRentOwed(t);
+    var billItems = unpaidBillAllocationsFor(t.id).filter(function(o){ return !isTenantHiddenProvider(o.bill.provider); });
+    if (!rent.length && !billItems.length){ showToast(t.fullName + ' doesn\'t owe anything right now.', 'info'); return; }
+    sendTenantStatement(t, rent, billItems, 'Send ' + t.fullName + ' what they owe');
+  }
+  window.sendTenantOwedStatement = sendTenantOwedStatement;
+  async function sendTenantStatement(t, rent, billItems, title){
+    var property = propertyOf(t.propertyId);
+    var digits = phoneDigitsForWhatsApp(t.phone);
+    var m = groupSendModalShell(title, 'Preparing the statement' + (billItems.length ? ' and the bills…' : '…'));
+    var ref = tenantPaymentRef(t);
+    var rentTotal = round2(rent.reduce(function(s,c){ return s + c.remaining; }, 0));
+    var billsTotal = round2(billItems.reduce(function(s,o){ return s + o.alloc.amount; }, 0));
+    var total = round2(rentTotal + billsTotal);
+    var first = (t.fullName || '').split(' ')[0] || 'there';
+    var lines = ['Hi ' + first + ', here is what you owe' + (property ? ' for ' + (property.address || property.name) : '') + ':', ''];
+    if (rent.length){
+      lines.push('Rent:');
+      rent.forEach(function(c){ lines.push('• ' + shortDate(c.periodStart) + ' – ' + shortDate(c.periodEnd) + ': ' + money(c.remaining) + (c.amountPaid > 0 ? ' (rest of ' + money(c.amountDue) + ')' : '')); });
+      lines.push('');
+    }
+    if (billItems.length){
+      lines.push('Bills:');
+      billItems.forEach(function(o){ lines.push('• ' + billTypeLabel(o.bill.billType) + ' (' + o.bill.provider + ')' + (o.bill.dueDate ? ', due ' + shortDate(o.bill.dueDate) : '') + ': ' + money(o.alloc.amount)); });
+      lines.push('');
+    }
+    lines.push('Total: ' + money(total));
+    if (ref) lines.push('Please use your reference ' + ref + ' in the transfer description.');
+    lines.push('Reply with your receipt once paid. Thank you!');
+    var message = lines.join('\n');
+
+    var docFiles = [], docCanvases = [], missingDocs = 0;
+    var withDocs = billItems.filter(function(o){ return o.bill.receiptPath; }).slice(0, 4);
+    for (var i = 0; i < withDocs.length; i++){
+      var b = withDocs[i].bill;
+      var f = await fetchBillReceiptFile(b);
+      if (!f){ missingDocs++; continue; }
+      docFiles.push(f);
+      try {
+        var r = await renderBillDocCanvas(f, 1000);
+        if (r.canvas) docCanvases.push({ canvas: r.canvas, label: billTypeLabel(b.billType) + ' · ' + b.provider + (r.pages > 1 ? ' · page 1 of ' + r.pages : '') });
+      } catch(err){ console.warn('bill render', err); }
+    }
+    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, docCanvases);
+    if (m.hidden) return;
+    groupSendState = { message: message, imageBlob: imageBlob,
+      imageName: ('owed-' + first + '-' + TODAY).toLowerCase().replace(/[^a-z0-9-]+/g, '-') + '.png',
+      imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null, docFiles: docFiles,
+      chatUrl: digits ? 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message) : null,
+      chatPrefilled: !!digits, chatLabel: 'chat', onSent: null, marked: false };
+    renderGroupSendModal(!digits ? 'No phone number on file for ' + t.fullName + ' — copy the image and message and send them yourself.'
+      : missingDocs ? 'Some bill documents couldn\'t be loaded — they\'re not included.' : '');
+  }
+
+  /** Image: the tenant's rent and bills owed, the total, and each bill underneath. */
+  function tenantStatementImageBlob(t, property, rent, billItems, total, docCanvases){
+    var W = 1080, pad = 64, font = 'Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+    var rowH = 86, L = pad + 32, R = W - pad - 32, dw = R - L + 24;
+    var docsH = docCanvases.reduce(function(s, d){ return s + Math.round(d.canvas.height * dw / d.canvas.width) + 80; }, 0);
+    var H = 32 + 230 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + docsH + 50;
+    var c = document.createElement('canvas'); c.width = W; c.height = H;
+    var g = c.getContext('2d');
+    function rr(x, y, w, h, r, fill){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); g.fillStyle = fill; g.fill(); }
+    g.fillStyle = '#f4f5f8'; g.fillRect(0, 0, W, H);
+    rr(32, 32, W - 64, H - 64, 36, '#ffffff');
+    var y = 32 + 82; g.textBaseline = 'alphabetic';
+    g.fillStyle = '#1d2433'; g.font = '700 48px ' + font; g.fillText('What you owe', L, y);
+    g.fillStyle = '#6b7280'; g.font = '400 30px ' + font;
+    g.fillText(t.fullName + (property ? ' · ' + property.name : '') + ' · as of ' + fullDate(TODAY), L, y + 50);
+    var ref = tenantPaymentRef(t);
+    if (ref){ g.fillStyle = '#1d2433'; g.font = '600 30px ' + font; g.fillText('Payment reference: ' + ref, L, y + 96); }
+    y += 150;
+    function section(title, color){ g.fillStyle = color; g.font = '700 26px ' + font; g.fillText(title, L, y + 30); g.fillStyle = '#e5e7eb'; g.fillRect(L, y + 46, R - L, 2); y += 60; }
+    function line(label, sub, amount, red){
+      var mid = y + 34;
+      g.fillStyle = '#1d2433'; g.font = '500 32px ' + font; g.fillText(label, L, mid);
+      if (sub){ g.fillStyle = red ? '#b42318' : '#6b7280'; g.font = '400 24px ' + font; g.fillText(sub, L, mid + 30); }
+      g.textAlign = 'right'; g.fillStyle = '#1d2433'; g.font = '700 32px ' + font; g.fillText(money(amount), R, mid); g.textAlign = 'left';
+      y += rowH;
+    }
+    if (rent.length){
+      section('RENT', '#c0392b');
+      rent.forEach(function(cg){
+        var late = cg.periodStart <= TODAY;
+        line(shortDate(cg.periodStart) + ' – ' + shortDate(cg.periodEnd),
+          (late ? 'Overdue since ' + shortDate(cg.periodStart) : 'Due ' + shortDate(cg.dueDate)) + (cg.amountPaid > 0 ? ' · ' + money(cg.amountPaid) + ' already paid' : ''), cg.remaining, late);
+      });
+      y += 20;
+    }
+    if (billItems.length){
+      section('BILLS', '#b7791f');
+      billItems.forEach(function(o){
+        var late = o.bill.dueDate && o.bill.dueDate < TODAY;
+        line(billTypeLabel(o.bill.billType) + ' · ' + o.bill.provider,
+          (o.bill.billingPeriodStart ? shortDate(o.bill.billingPeriodStart) + ' – ' + shortDate(o.bill.billingPeriodEnd) : '') + (o.bill.dueDate ? ' · ' + (late ? 'overdue since ' : 'due ') + shortDate(o.bill.dueDate) : ''), o.alloc.amount, late);
+      });
+      y += 20;
+    }
+    rr(L - 12, y, R - L + 24, 96, 20, '#fdecea');
+    g.fillStyle = '#b42318'; g.font = '600 32px ' + font; g.fillText('Total to pay', L + 14, y + 60);
+    g.textAlign = 'right'; g.font = '800 48px ' + font; g.fillText(money(total), R - 6, y + 66); g.textAlign = 'left';
+    y += 96 + 50;
+    g.fillStyle = '#9aa1ad'; g.font = '400 25px ' + font;
+    g.fillText('Use your reference in the transfer description and reply with your receipt.', L, y);
+    y += 30;
+    docCanvases.forEach(function(d){
+      var dh = Math.round(d.canvas.height * dw / d.canvas.width);
+      g.fillStyle = '#6b7280'; g.font = '600 24px ' + font; g.fillText(d.label.toUpperCase(), L, y + 40);
+      y += 56;
+      g.fillStyle = '#e5e7eb'; g.fillRect(L - 13, y - 1, dw + 2, dh + 2);
+      g.drawImage(d.canvas, L - 12, y, dw, dh);
+      y += dh + 24;
+    });
+    return new Promise(function(res){ c.toBlob(function(b){ res(b); }, 'image/png'); });
+  }
+
   /** Draws the bill's document (photo, or page 1 of the PDF via pdf.js) onto a canvas `width`
    *  pixels wide, so it can go into the image sent to the group. */
   async function renderBillDocCanvas(file, width){
     var type = file.type || '';
     var isPdf = /pdf/i.test(type) || /\.pdf$/i.test(file.name || '');
     if (isPdf){
-      if (typeof pdfjsLib === 'undefined') return { canvas:null, note:'' };
+      if (typeof pdfjsLib === 'undefined') return { canvas:null, pages:0, note:'' };
       var doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
       var page = await doc.getPage(1);
       var base = page.getViewport({ scale: 1 });
@@ -8117,7 +8258,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       c.width = Math.round(viewport.width); c.height = Math.round(viewport.height);
       var ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
       await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-      return { canvas: c, note: doc.numPages > 1 ? 'Page 1 of ' + doc.numPages + ' — full bill in the link' : '' };
+      return { canvas: c, pages: doc.numPages, note: doc.numPages > 1 ? 'Page 1 of ' + doc.numPages : '' };
     }
     if (/^image\//.test(type)){
       var url = URL.createObjectURL(file);
@@ -8126,10 +8267,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var c2 = document.createElement('canvas');
         c2.width = width; c2.height = Math.round(img.naturalHeight * width / img.naturalWidth);
         c2.getContext('2d').drawImage(img, 0, 0, c2.width, c2.height);
-        return { canvas: c2, note: '' };
+        return { canvas: c2, pages: 1, note: '' };
       } finally { URL.revokeObjectURL(url); }
     }
-    return { canvas:null, note:'' };
+    return { canvas:null, pages:0, note:'' };
   }
 
   /** The image for the group: a card with the bill's details and each tenant's share (with their
@@ -15523,6 +15664,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       realEstateInspectionService.getAll().catch(function(e){ console.error('real estate inspections', e); return []; }),
       (isTenantRole() ? Promise.resolve([]) : leasePaymentService.getAll().catch(function(e){ console.error('lease payments', e); return []; }))
     ]);
+    // Fingerprint of everything just loaded — a background refresh that brings back exactly the
+    // same data doesn't redraw the page (no flicker, no lost scroll, no swallowed taps).
+    try { lastDataFingerprint = TODAY + '|' + JSON.stringify(results); } catch(_e){ lastDataFingerprint = null; }
     properties = results[0];
     rooms = results[1];
     tenants = results[2];
@@ -15683,6 +15827,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   var isRefreshingData = false;
+  var lastDataFingerprint = null;
   /** Fetches ALL data from Supabase again and re-renders — so two administrators
    *  working at the same time (e.g. the Super Admin and Geraldine) always see the same thing,
    *  without relying on someone closing the tab entirely. Skips the refresh if a modal is
@@ -15705,8 +15850,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     isRefreshingData = true;
     try {
+      var before = lastDataFingerprint;
       await bootstrapData({ skipMaintenance: Date.now() - lastMaintenanceAt < 15*60*1000 });
-      render(true); // preserves scroll position — this is a silent refresh, not a navigation
+      // Only redraw when something actually changed (another device, or the date rolled over).
+      if (!before || before !== lastDataFingerprint) render(true); // preserves scroll — a silent refresh, not a navigation
     } catch(err){
       console.error('refreshAllData failed', err);
     } finally {
@@ -15829,10 +15976,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var realtimeRefreshTimer = null;
   function scheduleRealtimeRefresh(){
     clearTimeout(realtimeRefreshTimer);
+    // A save made on THIS device already updated the screen; its own change comes back through
+    // realtime a moment later. Wait until this device has been quiet for a few seconds so that
+    // echo (and any burst of related writes) folds into one refresh after the save finishes.
+    var sinceWrite = Date.now() - getLastLocalWriteAt();
+    var wait = Math.max(1200, 4000 - sinceWrite);
     realtimeRefreshTimer = setTimeout(function tryRefresh(){
       if (isRefreshingData || anyModalOpen()){ realtimeRefreshTimer = setTimeout(tryRefresh, 3000); return; }
+      if (Date.now() - getLastLocalWriteAt() < 3000){ realtimeRefreshTimer = setTimeout(tryRefresh, 3000); return; }
       refreshAllData();
-    }, 1200);
+    }, wait);
   }
   function setupRealtimeSync(){
     try {
