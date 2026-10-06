@@ -8,13 +8,13 @@ import { friendlyErrorMessage } from './lib/errors.js';
 import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
   // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
-import * as propertyService from './services/propertyService.js?v=2';
-import * as roomService from './services/roomService.js';
-import * as tenantService from './services/tenantService.js?v=8';
+import * as propertyService from './services/propertyService.js?v=3';
+import * as roomService from './services/roomService.js?v=2';
+import * as tenantService from './services/tenantService.js?v=9';
 import * as bondService from './services/bondService.js?v=2';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
-import * as billService from './services/billService.js?v=4';
+import * as billService from './services/billService.js?v=5';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=2';
@@ -31,7 +31,7 @@ import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
 import * as leasePaymentService from './services/leasePaymentService.js?v=1';
 import * as auditService from './services/auditService.js?v=2';
-import * as recurringBillService from './services/recurringBillService.js';
+import * as recurringBillService from './services/recurringBillService.js?v=2';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
 import * as inspectionService from './services/inspectionService.js';
@@ -97,6 +97,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
   function phoneDigitsOnly(raw){ return (raw || '').replace(/[^0-9]/g, ''); }
   function isSuperAdmin(){ return !!currentProfile && currentProfile.role === 'super_admin'; }
+  /** Administrators can do everything the Super Admin can on their assigned properties —
+   *  deleting included. Only managing users / assigning properties and the Audit log stay
+   *  Super Admin-only. (The database enforces the property scope.) */
+  function canDeleteRecords(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator'); }
   // A Viewer sees the staff app (for their assigned properties) but can't change anything.
   function isViewer(){ return !!currentProfile && currentProfile.role === 'viewer'; }
   function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator' || currentProfile.role === 'viewer'); }
@@ -2017,7 +2021,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (p.whatsappGroupLink ? waButton('openWhatsApp(\''+esc(p.whatsappGroupLink)+'\')', 'Open the WhatsApp group') : '')+
       '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
       '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">🏢 Schedule inspection</button>'+
-      (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
+      (canDeleteRecords() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
       '</div>'+
       '<div class="card">'+ppHead('building','Property','Details')+'<div class="field-list">'+
       '<div class="field-row"><span class="k">Bedrooms</span><span class="v">'+p.bedrooms+'</span></div>'+
@@ -2435,7 +2439,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
       '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
       '<button class="mini-btn" onclick="toggleTenantActiveConfirm(\''+t.id+'\')">'+(t.isActive===false?'Reactivate tenant':'Deactivate tenant')+'</button>'+
-      (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>' : '')+
+      (canDeleteRecords() ? '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>' : '')+
       '</div>'+
       '<div class="card"><h2>Contact</h2><div class="field-list">'+contactRows+'</div></div>'+
       tenantAppAccessCardHtml(t) +
@@ -7573,7 +7577,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">'+
       (b.receiptPath ? '<button class="mini-btn" onclick="openBillDocumentPreview(\''+b.id+'\')">View bill</button>' : '')+
       '<button class="mini-btn" onclick="openEditBillModal(\''+b.id+'\')">Edit bill</button>'+
-      (isSuperAdmin() ? '<button class="mini-btn danger" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
+      (canDeleteRecords() ? '<button class="mini-btn danger" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
       '</div>'+
       billAllocationCard(b);
   }
@@ -13766,7 +13770,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       'onclick="event.preventDefault();event.stopPropagation();openRoomActivityModal(\''+r.id+'\')">🕘</button>'+
       '<button type="button" class="icon-mini-btn" title="Edit room" '+
       'onclick="event.preventDefault();event.stopPropagation();openRoomModal(\''+propertyId+'\',\''+r.id+'\')">✎</button>'+
-      (isSuperAdmin() ? '<button type="button" class="icon-mini-btn danger" title="Delete room"'+(hasAnyTenant?' disabled':'')+' '+
+      (canDeleteRecords() ? '<button type="button" class="icon-mini-btn danger" title="Delete room"'+(hasAnyTenant?' disabled':'')+' '+
       'onclick="event.preventDefault();event.stopPropagation();deleteRoomConfirm(\''+r.id+'\')">✕</button>' : '')+
       '</div>';
   }
@@ -13975,15 +13979,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var t = tenantOf(tenantId);
     if (!t) return;
     openConfirmModal('Delete tenant', 'Delete "'+t.fullName+'" and their bond/rent schedule? This cannot be undone.', async function(){
-      // Dependents must go first: bonds/rent_schedules/payments/bill_allocations all
-      // reference tenants.id, and the tenant row can't be deleted while they still do.
-      await bondService.removeByTenant(tenantId);
-      bonds = bonds.filter(function(x){ return x.tenantId!==tenantId; });
-      await rentScheduleService.removeByTenant(tenantId);
-      rentSchedules = rentSchedules.filter(function(x){ return x.tenantId!==tenantId; });
-      await paymentService.removeByTenant(tenantId);
-      paymentRecords = paymentRecords.filter(function(x){ return x.tenantId!==tenantId; });
+      // The tenant row goes FIRST: its bond, rent schedule, payments, bill shares, reports and
+      // settlements are removed with it by the database (ON DELETE CASCADE). If the delete is
+      // refused (no permission for that property), nothing else has been touched.
       await tenantService.remove(tenantId);
+      bonds = bonds.filter(function(x){ return x.tenantId!==tenantId; });
+      rentSchedules = rentSchedules.filter(function(x){ return x.tenantId!==tenantId; });
+      paymentRecords = paymentRecords.filter(function(x){ return x.tenantId!==tenantId; });
+      bills.forEach(function(b){ if (b.allocations) b.allocations = b.allocations.filter(function(a){ return a.tenantId!==tenantId; }); });
       tenants = tenants.filter(function(x){ return x.id!==tenantId; });
       recomputeRentCharges();
       refreshStaticSelects();
