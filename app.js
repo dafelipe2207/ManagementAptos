@@ -4118,11 +4118,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function togglePaymentsDateSort(){ paymentsDateSort = paymentsDateSort==='desc' ? 'asc' : 'desc'; renderPreservingScroll(); }
   window.setPaymentsPropertyFilter = setPaymentsPropertyFilter;
   window.togglePaymentsDateSort = togglePaymentsDateSort;
+  // Rent charge statuses are only 'paid' | 'partially_paid' | 'overdue' | 'upcoming' (see
+  // computeStatus) — there is no 'due' status, which is why the Due chip used to show nothing.
+  //   Overdue = still owing on a period that has already started (a part-paid one too).
+  //   Due     = everything still owing: overdue + part-paid + the next periods not yet started.
   function chargeMatchesFilter(c, filter){
+    var owing = c.status !== 'paid' && c.remaining > 0.004;
     if (filter==='paid') return c.status==='paid';
-    if (filter==='overdue') return c.status==='overdue';
-    if (filter==='due') return c.status==='due' || c.status==='partially_paid';
-    return true; // 'all' — also includes 'upcoming', which has no chip of its own
+    if (filter==='overdue') return owing && c.periodStart <= TODAY;
+    if (filter==='due') return owing;
+    return true;
+  }
+  /** Same chips for a tenant's unpaid bill shares (Paid never lists them — paid shares aren't owed). */
+  function billOwedMatchesFilter(o, filter){
+    if (filter==='paid') return false;
+    if (filter==='overdue') return !!(o.bill.dueDate && o.bill.dueDate < TODAY);
+    return true;
   }
 
   /** True if the tenant owes nothing: no pending/overdue rent and no unpaid share of any
@@ -4344,24 +4355,40 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // A status chip (Paid / Due / Overdue) shows only the tenants that actually have a charge in
     // that status — not every tenant with empty sections.
     if (paymentsFilter !== 'all'){
-      groupTenants = groupTenants.filter(function(t){ return filtered.some(function(c){ return c.tenantId===t.id; }); });
+      groupTenants = groupTenants.filter(function(t){
+        return filtered.some(function(c){ return c.tenantId===t.id; }) ||
+          unpaidBillAllocationsFor(t.id).some(function(o){ return billOwedMatchesFilter(o, paymentsFilter); });
+      });
     }
     var showDue = paymentsFilter !== 'paid', showPaid = paymentsFilter === 'all' || paymentsFilter === 'paid';
-    var showUpcoming = paymentsFilter === 'all', showBills = paymentsFilter === 'all';
+    var showUpcoming = paymentsFilter === 'all' || paymentsFilter === 'due', showBills = paymentsFilter !== 'paid';
+    var CHIP_LABEL = { paid:'paid', due:'due', overdue:'overdue' };
+    var scopeLabel = monthChosen ? 'that month' : (paymentsTenantStatusFilter==='moved_out' ? 'among moved-out tenants' : 'among active tenants');
+    var emptyTitle = paymentsFilter==='all' ? 'Nothing in this filter'
+      : paymentsFilter==='paid' ? 'No payments '+scopeLabel
+      : 'Nothing '+CHIP_LABEL[paymentsFilter]+' '+scopeLabel;
+    var emptyText = (paymentsFilter==='overdue' || paymentsFilter==='due') && outstanding <= 0.004
+      ? 'No rent or bill is owed here — Outstanding is '+money(0)+'.'
+      : 'Try a different filter, or choose "All" to see every charge.';
+    var emptyAction = '';
+    if (paymentsFilter !== 'all') emptyAction += '<button type="button" class="mini-btn" onclick="setPaymentsFilter(\'all\')">Show all</button> ';
+    if (!monthChosen && paymentsTenantStatusFilter==='moved_out') emptyAction += '<button type="button" class="mini-btn" onclick="setPaymentsTenantStatusFilter(\'active\')">Active tenants</button>';
 
     var rows = groupTenants.length===0
       ? (rentCharges.length===0
           ? emptyState('payments', 'No rent charges yet',
               'Add a tenant with a rent amount and charges will show up here automatically.',
               '<a class="mini-btn primary" href="#/tenants" style="display:inline-block;">Go to tenants</a>')
-          : emptyState('payments', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every charge.', ''))
+          : emptyState('payments', emptyTitle, emptyText, emptyAction))
       : groupTenants.map(function(t){
           var tCharges = filtered.filter(function(c){ return c.tenantId===t.id; });
           // Periods that haven't started yet live in their own "Upcoming" block (below), so Due
           // only lists what's owed now.
           var pending = sortByDate(tCharges.filter(function(c){ return c.status!=='paid' && c.periodStart <= TODAY; }));
           var paid = sortByDate(tCharges.filter(function(c){ return c.status==='paid'; }));
-          var owedBills = unpaidBillAllocationsFor(t.id).map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; });
+          var owedBills = unpaidBillAllocationsFor(t.id)
+            .filter(function(o){ return billOwedMatchesFilter(o, paymentsFilter); })
+            .map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; });
           var prop = properties.find(function(p){ return p.id===t.propertyId; });
           var pendingTotal = pending.reduce(function(s,c){ return s+c.remaining; }, 0);
           var billsTotal = owedBills.reduce(function(s,o){ return s+o.alloc.amount; }, 0);
