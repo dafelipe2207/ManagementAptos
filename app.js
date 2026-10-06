@@ -7127,15 +7127,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Respects the same property chip ("All properties / Belmont / ...") that filters the table.
     var scopedProperties = billsPropertyFilter==='all' ? properties : properties.filter(function(p){ return p.id===billsPropertyFilter; });
     if (!scopedProperties.length) return '';
+    // Date range: the last 6 months by default (every time the app opens), or the months the
+    // admin picked in the From / To selectors.
+    var range = billsTimelineMonths();
     var months = [];
-    for (var i=5; i>=0; i--) months.push(addMonthsIso(TODAY.slice(0,7)+'-01', -i).slice(0,7));
+    for (var cur = range.from; cur <= range.to; cur = addMonthsIso(cur + '-01', 1).slice(0,7)) months.push(cur);
     var rangeStart = months[0] + '-01';
-    var rangeEnd = stepDateIso(addMonthsIso(months[5] + '-01', 1), -1); // last day of the most recent month
+    var rangeEnd = stepDateIso(addMonthsIso(months[months.length-1] + '-01', 1), -1); // last day of the last month
     var totalDays = daysBetween(rangeStart, rangeEnd) + 1;
     function pct(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); }
-    function monthLabel(ym){
+    var tickEvery = Math.ceil(months.length / 12); // keep the month labels readable on long ranges
+    var spansYears = months[0].slice(0,4) !== months[months.length-1].slice(0,4);
+    function monthLabel(ym, i){
       var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return names[parseInt(ym.slice(5,7),10)-1];
+      var m = names[parseInt(ym.slice(5,7),10)-1];
+      return (spansYears && (i === 0 || ym.slice(5,7) === '01')) ? m + ' ' + ym.slice(2,4) : m;
     }
 
     /** A bill from a row to draw as a bar: the position/size already comes resolved in %, with
@@ -7210,16 +7216,32 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!rows.length) return '';
 
     var monthTicks = months.map(function(ym, i){
+      if (i % tickEvery !== 0) return '';
       var left = pct(ym + '-01');
-      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);'+(i===0?'':'transform:translateX(-1px);')+'">'+monthLabel(ym)+'</span>';
+      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);white-space:nowrap;'+(i===0?'':'transform:translateX(-1px);')+'">'+monthLabel(ym, i)+'</span>';
     }).join('');
+    var isDefault = !billsTimelineRange;
+    var preset = function(n, label){
+      var d = billsTimelineDefault(n);
+      var active = range.from === d.from && range.to === d.to;
+      return '<button type="button" class="chip'+(active?' active':'')+'" style="min-height:30px;padding:4px 10px;font-size:11.5px;" onclick="setBillsTimelinePreset('+n+')">'+label+'</button>';
+    };
+    var rangeLabel = isDefault ? 'Last 6 months' : (monthLabelLong(range.from) + ' – ' + monthLabelLong(range.to));
+    var rangeControls = '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:4px;margin-bottom:10px;">'+
+      '<label style="display:flex;flex-direction:column;font-size:11px;color:var(--text-dim);gap:2px;">From'+
+        '<input type="month" value="'+range.from+'" max="'+range.to+'" onchange="setBillsTimelineRange(\'from\', this.value)" style="min-height:32px;padding:4px 8px;font-size:12.5px;"></label>'+
+      '<label style="display:flex;flex-direction:column;font-size:11px;color:var(--text-dim);gap:2px;">To'+
+        '<input type="month" value="'+range.to+'" min="'+range.from+'" onchange="setBillsTimelineRange(\'to\', this.value)" style="min-height:32px;padding:4px 8px;font-size:12.5px;"></label>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+preset(6,'6 months')+preset(12,'12 months')+preset(24,'2 years')+'</div>'+
+      '</div>';
     var legendItem = function(colorVar, label){
       return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
         '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
     };
     var openNow = billsTimelineOpen !== null ? billsTimelineOpen : true; // first thing on the page, open by default
     return '<details class="card collapsible-card"'+(openNow?' open':'')+' ontoggle="__setBillsTimelineOpen(this.open)">'+
-      '<summary><span>Invoice timeline</span><span class="cc-hint">Last 6 months · tap a bar to open the bill</span></summary>'+
+      '<summary><span>Invoice timeline</span><span class="cc-hint">'+esc(rangeLabel)+' · tap a bar to open the bill</span></summary>'+
+      rangeControls+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 10px;">Each bar is a bill across its billing period. Striped = no bill loaded. Gas gets a separate "rate change" line when its price changes.</p>'+
       '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+
       rows.join('')+
@@ -7233,6 +7255,40 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>'+
       '</details>';
   }
+  /** Months shown in the Invoice timeline. null = the default, the last 6 months (current month
+   *  included). It isn't saved, so the app always opens on the last 6 months. */
+  var billsTimelineRange = null; // { from:'YYYY-MM', to:'YYYY-MM' }
+  var BILLS_TIMELINE_MAX_MONTHS = 36;
+  function billsTimelineDefault(n){
+    var to = TODAY.slice(0,7);
+    return { from: addMonthsIso(to + '-01', -(n - 1)).slice(0,7), to: to };
+  }
+  function billsTimelineMonths(){ return billsTimelineRange || billsTimelineDefault(6); }
+  function monthLabelLong(ym){
+    var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return names[parseInt(ym.slice(5,7),10)-1] + ' ' + ym.slice(0,4);
+  }
+  function monthsBetween(a, b){ return (parseInt(b.slice(0,4),10) - parseInt(a.slice(0,4),10)) * 12 + parseInt(b.slice(5,7),10) - parseInt(a.slice(5,7),10); }
+  function setBillsTimelineRange(which, value){
+    if (!/^\d{4}-\d{2}$/.test(value || '')) return;
+    var r = Object.assign({}, billsTimelineMonths());
+    r[which] = value;
+    if (r.from > r.to){ if (which === 'from') r.to = r.from; else r.from = r.to; }
+    if (monthsBetween(r.from, r.to) + 1 > BILLS_TIMELINE_MAX_MONTHS){
+      if (which === 'from') r.to = addMonthsIso(r.from + '-01', BILLS_TIMELINE_MAX_MONTHS - 1).slice(0,7);
+      else r.from = addMonthsIso(r.to + '-01', -(BILLS_TIMELINE_MAX_MONTHS - 1)).slice(0,7);
+      showToast('The timeline shows up to ' + BILLS_TIMELINE_MAX_MONTHS + ' months at a time.', 'info');
+    }
+    var d = billsTimelineDefault(6);
+    billsTimelineRange = (r.from === d.from && r.to === d.to) ? null : r;
+    renderPreservingScroll();
+  }
+  function setBillsTimelinePreset(n){
+    billsTimelineRange = n === 6 ? null : billsTimelineDefault(n);
+    renderPreservingScroll();
+  }
+  window.setBillsTimelineRange = setBillsTimelineRange;
+  window.setBillsTimelinePreset = setBillsTimelinePreset;
   var billsTimelineOpen = null; // null = default (open on wide screens, folded on phones); then whatever the user chose
   window.__setBillsTimelineOpen = function(v){ billsTimelineOpen = v; };
 
