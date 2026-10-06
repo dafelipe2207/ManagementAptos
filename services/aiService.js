@@ -1,8 +1,9 @@
 // services/aiService.js
-// Sends a bill photo/PDF to the `analyze-bill` Supabase Edge Function, which calls Gemini
-// (Google's vision-capable AI) server-side to read the actual document — provider, bill type,
-// dates, amount, and a best-guess property match against this account's properties. The AI
-// API key lives only as an Edge Function secret; nothing secret ever reaches the browser.
+// Sends a bill photo/PDF to the `analyze-bill` Supabase Edge Function, which reads it server-side
+// with Azure AI Document Intelligence (prebuilt invoice model) and falls back to Gemini only for
+// what Azure couldn't read reliably. It returns the bill's details plus `extraction` (every field
+// with its confidence and source, line items, and validation issues). The API keys live only as
+// Edge Function secrets; nothing secret ever reaches the browser.
 import { supabase } from '../lib/supabaseClient.js';
 
 function readFileAsBase64(file) {

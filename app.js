@@ -17,6 +17,7 @@ import * as billAllocationService from './services/billAllocationService.js?v=4'
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=2';
 import * as aiService from './services/aiService.js?v=3';
+import * as billExtractionService from './services/billExtractionService.js?v=1';
 import * as migrationService from './services/migrationService.js';
 import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
@@ -4517,18 +4518,28 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       previewUrl: pendingImportFile.previewUrl,
       file: pendingImportFile.file,
       addedAt: TODAY,
+      mimeType: pendingImportFile.file ? pendingImportFile.file.type : '',
       accountNumberHint: accountNumber, // used if the photo needs to be sent for analysis (see analyzeImportedFile)
       billTypeHint: billTypeHint,
       status: 'processing', // 'processing' -> 'ready' (with the data the AI returned, or blank if the analysis failed)
-      extracted: null,
+      extracted: null,      // values that pre-fill the review form
+      detected: null,       // full extraction detail from analyze-bill (fields, confidence, line items, issues)
+      extractor: null,      // 'azure' | 'gemini' | 'azure+gemini' | 'known_account' | 'failed'
+      reviewStatus: null,   // 'needs_review' | 'ready'
+      extractionId: null,   // bill_extractions row
+      storagePath: null,    // original document in the `receipts` bucket (uploaded right away)
       aiError: null
     };
+    // Keep the original document straight away — it's part of the bill's record from the start.
+    item.uploadPromise = uploadImportDocument(item);
     if (knownAccount){
       // Account (+ service type) already known — no need to spend an AI call: the
       // property/type/provider fill in on their own and the user only has to enter the amount
       // and dates for this particular bill (those do change every time).
       item.status = 'ready';
       item.skippedAi = true;
+      item.extractor = 'known_account';
+      item.reviewStatus = 'needs_review';
       item.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, {
         propertyId: knownAccount.propertyId,
         billType: knownAccount.billType,
@@ -4540,6 +4551,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     pendingImportFile = null;
     document.getElementById('import-modal').hidden = true;
     if (knownAccount){
+      persistExtraction(item, item.extracted);
       render();
       showToast('Recognized account — skipped the AI step. Just fill in the amount and dates.', 'success');
       openReviewModal(item.id);
@@ -4734,55 +4746,146 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function closeBillActions(){ document.getElementById('bill-actions-modal').hidden = true; }
   window.openBillActions = openBillActions;
   window.closeBillActions = closeBillActions;
-  /** Sends the photo/PDF to the AI (Gemini, via the analyze-bill Edge Function) to extract
-   *  provider, service type, dates, amount and a suggested property. If the analysis
-   *  fails (no network, no API key configured server-side, unclear photo, etc.) the
-   *  item still ends up ready to review with blank fields, to be filled in by hand
-   *  instead of getting stuck. */
+  /** Sends the photo/PDF to the analyze-bill Edge Function, which reads it with Azure AI
+   *  Document Intelligence (prebuilt invoice model) and only falls back to Gemini for what Azure
+   *  couldn't read reliably. The result comes back validated: `extraction.status` is
+   *  "needs_review" when something is missing or inconsistent. Nothing is guessed — e.g. a due
+   *  date that isn't on the bill stays empty for the admin to enter. If the analysis fails the
+   *  item still becomes reviewable with blank fields, to be filled in by hand. */
   async function analyzeImportedFile(item){
     try {
       var data = await aiService.analyzeBill(item.file, properties, TODAY);
       var current = importQueue.find(function(i){ return i.id===item.id; });
       if (!current) return; // it was removed from the queue while being analyzed
       current.status = 'ready';
-      var issueDate = data.issueDate || '';
-      var dueDate = data.dueDate || '';
-      var dueDateWasGuessed = false;
-      if (!dueDate && issueDate){
-        // The receipt didn't have (or the AI couldn't find) a legible payment due date —
-        // it's assumed to be 10 business days after the issue date instead of leaving it blank.
-        dueDate = addBusinessDays(issueDate, 10);
-        dueDateWasGuessed = true;
+      current.extracted = extractedFormValues(data, current);
+      current.detected = data.extraction || null;
+      current.extractor = (data.extraction && data.extraction.extractor) || 'gemini';
+      current.reviewStatus = (data.extraction && data.extraction.status) || 'needs_review';
+      if (!current.extracted.propertyId && data.propertyGuessText){
+        showToast('Couldn\'t confidently match a property — the bill says "'+data.propertyGuessText+'". Pick the property when reviewing.', 'info');
       }
-      current.extracted = {
-        propertyId: data.propertyId || '',
-        billType: item.billTypeHint || (BILL_TYPES.indexOf(data.billType) >= 0 ? data.billType : 'other'),
-        provider: data.provider || '',
-        accountNumber: (item.accountNumberHint || data.accountNumber || '').trim(),
-        invoiceNumber: data.invoiceNumber || '',
-        issueDate: issueDate,
-        dueDate: dueDate,
-        billingPeriodStart: data.billingPeriodStart || '',
-        billingPeriodEnd: data.billingPeriodEnd || '',
-        amount: isFinite(parseFloat(data.amount)) ? parseFloat(data.amount) : ''
-      };
-      if (!data.propertyId && data.propertyGuessText){
-        showToast('AI couldn\'t confidently match a property — it found "'+data.propertyGuessText+'" on the bill. Pick the property manually when reviewing.', 'info');
-      }
-      if (dueDateWasGuessed){
-        showToast('No due date found on the bill — set to 10 business days after the issue date. Check it before saving.', 'info');
-      }
+      persistExtraction(current, data);
       render();
     } catch(err){
       var current2 = importQueue.find(function(i){ return i.id===item.id; });
       if (!current2) return; // it was removed from the queue while being analyzed
       current2.status = 'ready';
       current2.aiError = friendlyErrorMessage(err);
+      current2.extractor = 'failed';
+      current2.reviewStatus = 'needs_review';
       current2.extracted = Object.assign({}, BLANK_EXTRACTED_BILL, { accountNumber: item.accountNumberHint || '', billType: item.billTypeHint || 'other' });
-      showToast('AI analysis failed — you can still fill in the details by hand. ' + current2.aiError, 'error');
+      persistExtraction(current2, { error: current2.aiError });
+      showToast('Couldn\'t read the bill automatically — you can still fill in the details by hand. ' + current2.aiError, 'error');
       render();
     }
   }
+  /** Values that pre-fill the review form, from analyze-bill's answer. */
+  function extractedFormValues(data, item){
+    data = data || {};
+    var x = data.extraction;
+    var f = (x && x.fields) || {};
+    var amount = x ? f.total : data.amount;
+    return {
+      propertyId: data.propertyId || '',
+      billType: (item && item.billTypeHint) || (BILL_TYPES.indexOf(data.billType) >= 0 ? data.billType : 'other'),
+      provider: (x ? f.vendorName : data.provider) || '',
+      accountNumber: ((item && item.accountNumberHint) || (x ? f.accountNumber : data.accountNumber) || '').trim(),
+      invoiceNumber: (x ? f.invoiceNumber : data.invoiceNumber) || '',
+      issueDate: (x ? f.invoiceDate : data.issueDate) || '',
+      dueDate: (x ? f.dueDate : data.dueDate) || '',           // never guessed
+      billingPeriodStart: (x ? f.periodStart : data.billingPeriodStart) || '',
+      billingPeriodEnd: (x ? f.periodEnd : data.billingPeriodEnd) || '',
+      amount: (amount != null && amount !== '' && isFinite(parseFloat(amount))) ? parseFloat(amount) : ''
+    };
+  }
+  /** Uploads the original document to the private `receipts` bucket as soon as it's picked, so
+   *  it's kept with the extraction record (and reused when the bill is saved). */
+  async function uploadImportDocument(item){
+    if (!item.file) return null;
+    try {
+      item.storagePath = await storageService.uploadReceipt('import', item.file);
+      return item.storagePath;
+    } catch(err){
+      console.warn('import document upload failed — it will be uploaded again when the bill is saved', err);
+      return null;
+    }
+  }
+  /** Saves what was extracted (bill_extractions) — the original document, the reader used, its
+   *  confidence and the validation issues. Best-effort: the import works without it. */
+  async function persistExtraction(item, data){
+    try {
+      if (item.uploadPromise) await item.uploadPromise;
+      var x = data && data.extraction;
+      var row = await billExtractionService.create({
+        propertyId: (item.extracted && item.extracted.propertyId) || null,
+        storagePath: item.storagePath,
+        fileName: item.fileName,
+        mimeType: item.mimeType || (item.file && item.file.type) || null,
+        extractor: item.extractor || 'failed',
+        extracted: data || null,
+        confidence: x ? x.confidence : null,
+        status: item.reviewStatus || 'needs_review',
+        issues: x ? (x.issues || []) : (item.aiError ? [{ code:'read_failed', severity:'error', message:item.aiError }] : [])
+      });
+      if (row) item.extractionId = row.id;
+    } catch(err){
+      console.warn('Could not save the extraction record', err);
+    }
+  }
+  /** Brings back bills that were read but not yet confirmed (after a reload, or from another
+   *  device) into the "Pending review" queue. */
+  async function restoreExtractionQueue(){
+    if (!isStaff() || isViewer()) return;
+    var rows;
+    try { rows = await billExtractionService.listOpen(); } catch(err){ console.warn('pending bill extractions', err); return; }
+    var added = 0;
+    rows.forEach(function(r){
+      if (importQueue.some(function(i){ return i.extractionId === r.id; })) return;
+      var data = r.extracted || {};
+      var item = {
+        id: 'ext-' + r.id,
+        extractionId: r.id,
+        fileName: r.fileName || 'Bill document',
+        kind: (r.mimeType || '').indexOf('image/') === 0 ? 'image' : 'pdf',
+        mimeType: r.mimeType || '',
+        previewUrl: null,
+        file: null,
+        storagePath: r.storagePath,
+        addedAt: (r.createdAt || TODAY).slice(0, 10),
+        status: 'ready',
+        detected: data.extraction || null,
+        extractor: r.extractor,
+        reviewStatus: r.status,
+        skippedAi: r.extractor === 'known_account',
+        aiError: r.extractor === 'failed' ? (data.error || 'Couldn\'t read the bill automatically.') : null
+      };
+      item.extracted = data.extraction ? extractedFormValues(data, null)
+        : r.extractor === 'failed' ? Object.assign({}, BLANK_EXTRACTED_BILL)
+        : Object.assign({}, BLANK_EXTRACTED_BILL, data); // known account: the values typed/recognized
+      importQueue.push(item);
+      added++;
+    });
+    if (added) render();
+  }
+  function openImportDocument(itemId){
+    var item = importQueue.find(function(i){ return i.id===itemId; });
+    if (!item) return;
+    if (item.previewUrl){ window.open(item.previewUrl, '_blank', 'noopener'); return; }
+    if (!item.storagePath) return;
+    storageService.getSignedUrl('receipts', item.storagePath, 600).then(function(url){ window.open(url, '_blank', 'noopener'); },
+      function(err){ showToast('Couldn\'t open the document. ' + friendlyErrorMessage(err), 'error'); });
+  }
+  window.openImportDocument = openImportDocument;
+  /** Removing an item from the queue without saving it marks its record as discarded. */
+  function discardImportQueueItem(id){
+    var item = importQueue.find(function(i){ return i.id===id; });
+    if (item && item.extractionId){
+      billExtractionService.update(item.extractionId, { status:'discarded' }).catch(function(err){ console.warn('discard extraction', err); });
+    }
+    removeImportQueueItem(id);
+  }
+  window.discardImportQueueItem = discardImportQueueItem;
   function removeImportQueueItem(id){
     var item = importQueue.find(function(i){ return i.id===id; });
     if (item && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
@@ -4793,19 +4896,24 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (importQueue.length === 0) return '';
     var rows = importQueue.map(function(item){
       var statusBit = item.status === 'ready'
-        ? (item.aiError ? badge('due', 'Needs manual entry') : item.skippedAi ? badge('paid', 'Recognized — no AI needed') : badge('upcoming', 'Ready to review'))
-        : badge('neutral', 'Analyzing with AI…');
+        ? (item.aiError ? badge('due', 'Needs manual entry')
+          : item.skippedAi ? badge('paid', 'Recognized — no AI needed')
+          : item.reviewStatus === 'needs_review' ? badge('due', 'Needs review')
+          : badge('upcoming', 'Ready to review'))
+        : badge('neutral', 'Reading the bill…');
+      var readBy = item.extractor && EXTRACTOR_LABEL[item.extractor] ? ' • ' + EXTRACTOR_LABEL[item.extractor] +
+        (item.detected && item.detected.confidence != null ? ' (' + Math.round(item.detected.confidence * 100) + '%)' : '') : '';
       var actionBtn = item.status === 'ready'
         ? '<button class="mini-btn primary" onclick="openReviewModal(\''+item.id+'\')">Review</button>'
         : '';
       return '<div class="row" style="border:none;padding:8px 0;">'+
         '<div class="who"><div class="name">'+esc(item.fileName)+'</div>'+
-        '<div class="meta">added '+shortDate(item.addedAt)+(item.aiError?(' • '+esc(item.aiError)):'')+'</div></div>'+
+        '<div class="meta">added '+shortDate(item.addedAt)+esc(readBy)+(item.aiError?(' • '+esc(item.aiError)):'')+'</div></div>'+
         '<div style="display:flex;align-items:center;gap:8px;">'+statusBit+actionBtn+
-        '<button class="del" title="Remove" onclick="removeImportQueueItem(\''+item.id+'\')">✕</button></div></div>';
+        '<button class="del" title="Remove" onclick="discardImportQueueItem(\''+item.id+'\')">✕</button></div></div>';
     }).join('');
     return '<div class="card"><h2>Pending review ('+importQueue.length+')</h2>'+
-      '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 4px;">AI reads the provider, property, dates and amount from each bill automatically — check them before saving.</p>'+
+      '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 4px;">Each bill is read automatically (Azure, with Gemini as backup). Nothing is split among tenants until you review and save it — bills marked "Needs review" have missing or inconsistent details to check first.</p>'+
       rows+'</div>';
   }
 
@@ -4832,6 +4940,154 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var reviewItemId = null;
   var reviewDuplicateOverride = false; // true once the user confirms "Save anyway" on a possible duplicate
   var editingBillId = null; // set while #review-modal is being reused to EDIT an existing bill instead of importing a new one
+
+  /* ---------- Review: what was detected on the bill, and the checks before saving ----------
+   * The review window shows everything the readers found (with how sure they were) next to the
+   * editable form. Before a bill can be saved — and therefore split among tenants — the form
+   * values are validated: "errors" block saving; "warnings" need the admin to tick "I've checked
+   * these against the bill". */
+  var EXTRACTOR_LABEL = { azure:'Read by Azure', gemini:'Read by Gemini (backup)', 'azure+gemini':'Read by Azure + Gemini', known_account:'Recognized account', failed:'Not read' };
+  var REVIEW_FIELD_OF = { vendorName:'provider', invoiceDate:'issueDate', dueDate:'dueDate', periodStart:'billingPeriodStart',
+    periodEnd:'billingPeriodEnd', total:'amount', propertyId:'propertyId', billType:'billType', accountNumber:'accountNumber', invoiceNumber:'invoiceNumber' };
+  var reviewDueAssumed = false;
+  function reviewFormValues(){
+    var amt = parseFloat(document.getElementById('review-amount').value);
+    return {
+      propertyId: document.getElementById('review-property').value,
+      billType: document.getElementById('review-billtype').value,
+      provider: document.getElementById('review-provider').value.trim(),
+      accountNumber: document.getElementById('review-account').value.trim(),
+      invoiceNumber: document.getElementById('review-invoice').value.trim(),
+      issueDate: document.getElementById('review-issue').value,
+      dueDate: document.getElementById('review-due').value,
+      billingPeriodStart: document.getElementById('review-period-start').value,
+      billingPeriodEnd: document.getElementById('review-period-end').value,
+      amount: isFinite(amt) ? Math.round(amt*100)/100 : null
+    };
+  }
+  /** Checks the values about to be saved. Uses the extraction's own findings, dropping the ones
+   *  about a field the admin has since corrected, and re-checks the edited values. */
+  function validateReviewValues(v, item){
+    var issues = [];
+    var add = function(severity, code, message){ issues.push({ severity:severity, code:code, message:message }); };
+    if (!v.propertyId) add('error', 'property', 'Pick the property this bill is for.');
+    if (!v.provider) add('error', 'provider', 'Enter the provider.');
+    if (!v.billingPeriodStart || !v.billingPeriodEnd) add('error', 'period', 'Enter the billing period (start and end) from the bill.');
+    if (!v.dueDate) add('error', 'due', 'Enter the due date from the bill.');
+    if (v.amount == null || v.amount <= 0) add('error', 'amount', 'Enter the amount to split (more than $0).');
+    if (v.billingPeriodStart && v.billingPeriodEnd && v.billingPeriodEnd < v.billingPeriodStart) add('error', 'period_reversed', 'The period ends before it starts.');
+    if (v.billingPeriodStart && v.billingPeriodEnd && v.billingPeriodEnd >= v.billingPeriodStart && daysBetween(v.billingPeriodStart, v.billingPeriodEnd) + 1 > 190)
+      add('warning', 'period_long', 'The period is ' + (daysBetween(v.billingPeriodStart, v.billingPeriodEnd) + 1) + ' days long — check the dates.');
+    if (v.issueDate && v.dueDate && v.dueDate < v.issueDate) add('warning', 'due_before_issue', 'The due date is before the invoice date.');
+    if (v.issueDate && daysBetween(TODAY, v.issueDate) > 7) add('warning', 'future_invoice', 'The invoice date is in the future.');
+    if (v.billingPeriodEnd && daysBetween(TODAY, v.billingPeriodEnd) > 45) add('warning', 'future_period', 'The period ends well in the future — check the year.');
+    if (v.billingPeriodStart && daysBetween(v.billingPeriodStart, TODAY) > 730) add('warning', 'old_period', 'The period started more than 2 years ago — check the year.');
+    if (reviewDueAssumed) add('warning', 'due_assumed', 'The due date was set to invoice date + 10 business days — it isn\'t from the bill.');
+    var x = item && item.detected;
+    if (x){
+      var f = x.fields || {};
+      var orig = item.extracted || {};
+      var RECHECKED = ['missing','property_unmatched','amount_not_positive','period_reversed','period_long','due_before_issue','future_invoice','future_period','old_period'];
+      (x.issues || []).forEach(function(i){
+        if (RECHECKED.indexOf(i.code) >= 0) return;
+        var formKey = i.field && REVIEW_FIELD_OF[i.field];
+        if (formKey && String(v[formKey] == null ? '' : v[formKey]) !== String(orig[formKey] == null ? '' : orig[formKey])) return; // corrected by the admin
+        add(i.severity, i.code, i.message);
+      });
+      if (f.total != null && v.amount != null && Math.abs(v.amount - f.total) > 0.009){
+        add('warning', 'amount_vs_total', 'The amount to split (' + money(v.amount) + ') is different from the bill\'s total of new charges (' + money(f.total) + ').');
+      }
+      if (f.previousBalance && f.amountDue != null && v.amount != null && Math.abs(v.amount - f.amountDue) < 0.01 && f.total != null && Math.abs(f.amountDue - f.total) > 0.01){
+        add('warning', 'amount_includes_balance', 'The amount to split equals the amount due, which includes a previous balance of ' + money(f.previousBalance) + '.');
+      }
+    }
+    var order = { error:0, warning:1, info:2 };
+    var seen = {};
+    return issues.filter(function(i){ var k = i.severity + i.message; if (seen[k]) return false; seen[k] = true; return true; })
+      .sort(function(a,b){ return order[a.severity] - order[b.severity]; });
+  }
+  function currentReviewItem(){ return reviewItemId ? importQueue.find(function(i){ return i.id===reviewItemId; }) : null; }
+  function refreshReviewIssues(){
+    var box = document.getElementById('review-issues');
+    var ackRow = document.getElementById('review-ack-row');
+    if (!box) return [];
+    if (editingBillId){ box.innerHTML = ''; ackRow.hidden = true; return []; }
+    var issues = validateReviewValues(reviewFormValues(), currentReviewItem());
+    var ICON = { error:'⛔', warning:'⚠️', info:'ℹ️' };
+    var COLOR = { error:'var(--status-overdue)', warning:'var(--status-due)', info:'var(--text-dim)' };
+    box.innerHTML = issues.length
+      ? '<div style="font-size:12px;font-weight:600;margin:10px 0 4px;">Checks before splitting this bill</div>' + issues.map(function(i){
+          return '<div style="display:flex;gap:6px;font-size:12px;line-height:1.35;margin:3px 0;color:' + COLOR[i.severity] + ';"><span>' + ICON[i.severity] + '</span><span>' + esc(i.message) + '</span></div>';
+        }).join('')
+      : '<div style="font-size:12px;color:var(--status-paid);margin:10px 0 0;">✓ All checks passed.</div>';
+    ackRow.hidden = !issues.some(function(i){ return i.severity === 'warning'; });
+    return issues;
+  }
+  window.refreshReviewIssues = refreshReviewIssues;
+  function reviewConfidenceDot(x, key){
+    var src = x.fieldSource && x.fieldSource[key];
+    var c = x.fieldConfidence ? x.fieldConfidence[key] : null;
+    if (src === 'gemini') return '<span title="Read by the backup reader (no confidence score)" style="color:var(--status-due);">●</span>';
+    if (typeof c !== 'number') return '';
+    var color = c >= 0.9 ? 'var(--status-paid)' : c >= 0.8 ? 'var(--status-due)' : 'var(--status-overdue)';
+    return '<span title="Confidence ' + Math.round(c*100) + '%" style="color:' + color + ';">●</span>';
+  }
+  function renderReviewDetected(item){
+    var el = document.getElementById('review-detected');
+    if (!el) return;
+    var x = item && item.detected;
+    var docLink = item && (item.previewUrl || item.storagePath)
+      ? '<button type="button" class="text-link" style="font-size:12px;" onclick="openImportDocument(\'' + item.id + '\')">Open bill ↗</button>' : '';
+    if (!x){
+      el.innerHTML = item && item.extractor ? '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-dim);margin:8px 0 0;">' +
+        '<span>' + esc(EXTRACTOR_LABEL[item.extractor] || '') + (item.aiError ? ' — ' + esc(item.aiError) : '') + '</span>' + docLink + '</div>' : '';
+      el.hidden = !el.innerHTML;
+      return;
+    }
+    var f = x.fields || {};
+    var row = function(label, key, value){
+      if (value == null || value === '') value = '<span style="color:var(--text-faint);">not found</span>';
+      return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:2px 0;">' +
+        '<span style="color:var(--text-dim);">' + label + '</span><span style="text-align:right;">' + value + ' ' + (key ? reviewConfidenceDot(x, key) : '') + '</span></div>';
+    };
+    var m = function(n){ return n == null ? null : esc(money(n)); };
+    var d = function(iso){ return iso ? esc(shortDate(iso) + ' ' + iso.slice(0,4)) : null; };
+    var items = (x.lineItems || []);
+    var conf = x.confidence != null ? ' · confidence ' + Math.round(x.confidence * 100) + '%' : '';
+    el.innerHTML = '<div style="border:1px solid var(--border, rgba(127,127,127,.25));border-radius:10px;padding:8px 10px;margin:10px 0 0;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px;">' +
+        '<span style="font-size:12px;font-weight:600;">Detected on the bill <span style="font-weight:400;color:var(--text-dim);">· ' + esc(EXTRACTOR_LABEL[x.extractor] || x.extractor) + conf + '</span></span>' + docLink + '</div>' +
+      row('Provider', 'vendorName', f.vendorName ? esc(f.vendorName) : null) +
+      row('Invoice no.', 'invoiceNumber', f.invoiceNumber ? esc(f.invoiceNumber) : null) +
+      row('Invoice date', 'invoiceDate', d(f.invoiceDate)) +
+      row('Due date', 'dueDate', d(f.dueDate)) +
+      row('Period', 'periodStart', f.periodStart || f.periodEnd ? (d(f.periodStart) || '?') + ' – ' + (d(f.periodEnd) || '?') : null) +
+      row('Account no.', 'accountNumber', f.accountNumber ? esc(f.accountNumber) : null) +
+      row('Service address', 'serviceAddress', f.serviceAddress ? esc(f.serviceAddress) : null) +
+      row('Subtotal', 'subtotal', m(f.subtotal)) +
+      row('GST', 'gst', m(f.gst)) +
+      row('<b>Total (new charges)</b>', 'total', f.total != null ? '<b>' + m(f.total) + '</b>' : null) +
+      (f.previousBalance != null ? row('Previous balance', 'previousBalance', m(f.previousBalance)) : '') +
+      row('Amount due', 'amountDue', m(f.amountDue)) +
+      (items.length ? '<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:12px;color:var(--text-dim);">Line items (' + items.length + ')</summary>' +
+        items.map(function(it){
+          return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;padding:2px 0 2px 8px;"><span>' + esc(it.description || '—') +
+            (it.quantity != null && it.unitPrice != null ? ' <span style="color:var(--text-faint);">(' + it.quantity + ' × ' + esc(money(it.unitPrice)) + ')</span>' : '') +
+            '</span><span>' + (it.amount != null ? esc(money(it.amount)) : '') + '</span></div>';
+        }).join('') + '</details>' : '') +
+      '<div style="font-size:10.5px;color:var(--text-faint);margin-top:4px;">● green = sure · amber = check · red = low confidence. The form below is what gets saved.</div>' +
+      '</div>';
+    el.hidden = false;
+  }
+  function useAssumedDueDate(){
+    var issue = document.getElementById('review-issue').value;
+    if (!issue){ showToast('Enter the invoice date first.', 'info'); return; }
+    document.getElementById('review-due').value = addBusinessDays(issue, 10);
+    reviewDueAssumed = true;
+    refreshReviewIssues();
+  }
+  window.useAssumedDueDate = useAssumedDueDate;
+
   function openReviewModal(itemId){
     var item = importQueue.find(function(i){ return i.id===itemId; });
     if (!item || !item.extracted) return;
@@ -4858,7 +5114,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('review-modal-error').hidden = true;
     refreshKnownAccountsDatalist();
     refreshReviewProviderDatalist();
+    reviewDueAssumed = false;
+    document.getElementById('review-ack').checked = false;
+    renderReviewDetected(item);
+    document.getElementById('review-due-assume').hidden = false;
     document.getElementById('review-modal').hidden = false;
+    refreshReviewIssues();
   }
   function closeReviewModal(){
     reviewItemId = null;
@@ -4870,6 +5131,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('review-recurring-row').hidden = false;
     document.getElementById('review-recurring').disabled = false;
     document.getElementById('review-recurring-existing-hint').textContent = 'This provider already repeats automatically every month for this property — that won\'t be duplicated.';
+    document.getElementById('review-detected').innerHTML = ''; document.getElementById('review-detected').hidden = true;
+    document.getElementById('review-issues').innerHTML = '';
+    document.getElementById('review-ack-row').hidden = true;
     document.getElementById('review-modal').hidden = true;
   }
   /** Reopens the same "Review extracted data" modal but pre-loaded with an already saved bill,
@@ -4886,6 +5150,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var saveBtnEl = document.querySelector('#review-modal .mini-btn.primary');
     if (saveBtnEl) saveBtnEl.textContent = 'Save changes';
     document.getElementById('review-modal-title').textContent = 'Edit bill';
+    document.getElementById('review-detected').innerHTML = ''; document.getElementById('review-detected').hidden = true;
+    document.getElementById('review-issues').innerHTML = '';
+    document.getElementById('review-ack-row').hidden = true;
+    document.getElementById('review-due-assume').hidden = true;
     document.getElementById('review-modal-sub').textContent = 'Update the details for this bill.';
     document.getElementById('review-discard-btn').hidden = true;
     document.getElementById('review-property').value = b.propertyId;
@@ -5119,7 +5387,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.submitReviewModal = submitReviewModal;
   function discardReviewItem(){
-    if (reviewItemId) removeImportQueueItem(reviewItemId);
+    if (reviewItemId) discardImportQueueItem(reviewItemId);
     closeReviewModal();
   }
   /** Looks for an already existing ACTIVE recurring bill template for that property + provider +
@@ -5201,8 +5469,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var amount = parseFloat(document.getElementById('review-amount').value);
     var errorEl = document.getElementById('review-modal-error');
 
-    if (!provider || !issueDate || !dueDate || !periodStart || !periodEnd || !isFinite(amount) || amount <= 0){
-      errorEl.textContent = 'Add a provider, both dates and a valid amount before saving.';
+    // Validate before anything is saved or split among tenants: errors block, warnings must be
+    // confirmed against the bill (checkbox). Nothing is filled in by guessing.
+    var reviewIssues = refreshReviewIssues();
+    var blocking = reviewIssues.filter(function(i){ return i.severity === 'error'; });
+    if (blocking.length){
+      errorEl.textContent = blocking.map(function(i){ return i.message; }).join(' ');
+      errorEl.hidden = false;
+      return;
+    }
+    if (!issueDate){
+      errorEl.textContent = 'Enter the invoice date from the bill.';
+      errorEl.hidden = false;
+      return;
+    }
+    var reviewWarnings = reviewIssues.filter(function(i){ return i.severity === 'warning'; });
+    if (reviewWarnings.length && !document.getElementById('review-ack').checked){
+      errorEl.textContent = 'Check the points marked ⚠️ against the bill, then tick "I\'ve checked these" to save.';
       errorEl.hidden = false;
       return;
     }
@@ -5235,7 +5518,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       status: 'pending',
       notes: queueItem.skippedAi
         ? 'Imported — recognized account, entered by hand without using AI.'
-        : 'Imported from ' + (queueItem.fileName || 'a photo/PDF') + ' (details extracted automatically and reviewed before saving).'
+        : queueItem.kind === 'manual' ? 'Entered by hand.'
+        : 'Imported from ' + (queueItem.fileName || 'a photo/PDF') + ' — ' + (EXTRACTOR_LABEL[queueItem.extractor] || 'read automatically').toLowerCase() +
+          (queueItem.detected && queueItem.detected.confidence != null ? ' (confidence ' + Math.round(queueItem.detected.confidence * 100) + '%)' : '') +
+          ', reviewed and confirmed before splitting' + (reviewWarnings.length ? ' (' + reviewWarnings.length + ' check' + (reviewWarnings.length === 1 ? '' : 's') + ' confirmed against the bill).' : '.')
     };
 
     var saveBtn = document.querySelector('#review-modal .mini-btn.primary');
@@ -5247,7 +5533,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
       // Actually keep the imported photo/PDF this time (the mock-OCR flow used to discard it):
       // upload it to the private `receipts` bucket and store the path on the bill.
-      if (queueItem.file){
+      if (queueItem.uploadPromise) await queueItem.uploadPromise;
+      if (queueItem.storagePath){
+        // The original document was already uploaded when it was picked — just link it.
+        try { newBill = await billService.update(newBill.id, Object.assign({}, newBill, { receiptPath: queueItem.storagePath })); }
+        catch(linkErr){ showToast('Bill saved, but the document couldn\'t be linked. ' + friendlyErrorMessage(linkErr), 'error'); }
+      } else if (queueItem.file){
         try {
           var path = await storageService.uploadReceipt(newBill.id, queueItem.file);
           newBill = await billService.update(newBill.id, Object.assign({}, newBill, { receiptPath: path }));
@@ -5294,6 +5585,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
 
       bills.push(newBill);
+      if (queueItem.extractionId){
+        var finalValues = reviewFormValues();
+        billExtractionService.update(queueItem.extractionId, {
+          status: 'confirmed', billId: newBill.id, propertyId: newBill.propertyId,
+          confirmedAt: new Date().toISOString(), confirmedBy: currentProfile ? currentProfile.id : null,
+          confirmed: {
+            values: finalValues,
+            amountSplit: newBill.amount,
+            detectedTotal: queueItem.detected && queueItem.detected.fields ? queueItem.detected.fields.total : null,
+            extractor: queueItem.extractor, confidence: queueItem.detected ? queueItem.detected.confidence : null,
+            dueDateAssumed: reviewDueAssumed,
+            acknowledged: reviewWarnings.map(function(i){ return { code:i.code, message:i.message }; })
+          }
+        }).catch(function(err){ console.warn('Could not record the confirmed values', err); });
+      }
       removeImportQueueItem(reviewItemId);
       closeReviewModal();
       if (!makeRecurring && !skippedDuplicateRecurring) showToast('Bill saved successfully.', 'success');
@@ -15432,6 +15738,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     auditService.logLogin(deviceLabel()).catch(function(){}); // sign-in entry for the Audit log
     // Upkeep (recurring bills, duties, automatic notifications) runs after the app is on screen,
     // then the page quietly redraws with anything it created.
+    restoreExtractionQueue();
     if (!isViewer()) runMaintenanceTasks().then(function(){ if (!anyModalOpen()) render(true); })
       .catch(function(e){ console.error('maintenance failed', e); });
     if (getAppPin()){

@@ -337,9 +337,10 @@
   </div>
 
   <div class="modal-overlay" id="review-modal" hidden>
-    <div class="card modal-card" style="max-width:360px;">
+    <div class="card modal-card" style="max-width:420px;" oninput="refreshReviewIssues()" onchange="refreshReviewIssues()">
       <h2 id="review-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Review extracted data</h2>
       <p id="review-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;">Check and correct what the automatic analysis detected before saving this bill.</p>
+      <div id="review-detected" hidden></div>
       <div class="form-row">
         <label for="review-property">Property</label>
         <select id="review-property" onchange="onReviewPropertyChange()"></select>
@@ -373,13 +374,15 @@
         <div><label for="review-issue">Issue date</label><input id="review-issue" type="date" /></div>
         <div><label for="review-due">Due date</label><input id="review-due" type="date" /></div>
       </div>
+      <p id="review-due-assume" class="form-hint" style="margin:-4px 0 0;">Due date not on the bill? <button type="button" class="text-link" style="display:inline;font-size:inherit;" onclick="useAssumedDueDate()">Use invoice date + 10 business days</button></p>
       <div class="form-row form-row-2">
         <div><label for="review-period-start">Period start</label><input id="review-period-start" type="date" /></div>
         <div><label for="review-period-end">Period end</label><input id="review-period-end" type="date" /></div>
       </div>
       <div class="form-row">
-        <label for="review-amount">Amount</label>
+        <label for="review-amount">Amount to split among tenants</label>
         <input id="review-amount" type="number" min="0" step="0.01" />
+        <p class="form-hint" style="margin:2px 0 0;">This bill's new charges — not any previous balance.</p>
       </div>
       <div class="form-row" id="review-recurring-row">
         <label style="display:flex;align-items:center;gap:8px;font-weight:500;">
@@ -391,6 +394,13 @@
       <div class="form-row" id="review-recurring-day-row" hidden>
         <label for="review-recurring-day">Billing day of month</label>
         <input id="review-recurring-day" type="number" min="1" max="28" placeholder="e.g. 5" />
+      </div>
+      <div id="review-issues"></div>
+      <div class="form-row" id="review-ack-row" hidden>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-weight:500;font-size:12.5px;">
+          <input id="review-ack" type="checkbox" style="width:auto;margin-top:2px;" />
+          I've checked the points marked ⚠️ against the bill and the values above are correct.
+        </label>
       </div>
       <p id="review-modal-error" class="form-error" hidden></p>
       <div class="modal-actions" style="justify-content:space-between;">
@@ -1292,6 +1302,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=229"></script>
+<script type="module" src="app.js?v=230"></script>
 </body>
 </html>
