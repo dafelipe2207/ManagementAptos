@@ -1,6 +1,7 @@
 // services/binOutTaskService.js
-// One row per pickup date that lands inside a room's bin_duty period (see binDutyService.js) —
-// the tenant's Bin OUT responsibility for that date, fully independent from Cleaning's
+// One row per trash pickup date (grouped under a fortnightly bin_duty container, see
+// services/dutyService.js). Its room always follows the weekly roster (weekly_duties) — the tenant's
+// Bin OUT responsibility for that date, fully independent from Cleaning's
 // cleaning_tasks (see the spec's binding "no combined status" rule). pickup_date/bin_types are
 // always derived from trash_schedule at generation time and are never hand-edited here — only
 // status/evidence are ever written after creation, and only
@@ -78,33 +79,11 @@ export async function markNotCompleted(id) {
   return fromRow(data);
 }
 
-/** Admin override from the Cleaning calendar: keeps every pickup task in this bin_duty's 2-week
- *  block in step with it after a reassignment (see binDutyService.updateRoom) — called right
- *  after it, never on its own. There can be more than one pickup date per block, so this updates
- *  all of them in one call. */
-export async function updateTasksRoom(binDutyId, roomId) {
-  const { data, error } = await supabase.from('bin_out_tasks').update({ room_id: roomId }).eq('bin_duty_id', binDutyId).select();
+/** Moves the given (open) tasks to the room the weekly roster has on duty for their pickup date —
+ *  see syncBinOutRoomsWithRoster in app.js. */
+export async function updateRoomForTasks(ids, roomId) {
+  if (!ids || !ids.length) return [];
+  const { data, error } = await supabase.from('bin_out_tasks').update({ room_id: roomId }).in('id', ids).select();
   if (error) throw error;
   return data.map(fromRow);
-}
-
-/** Admin override from the Cleaning calendar's date field: shifts every pickup date in this
- *  bin_duty's block by the same number of days as the block's own date edit (see
- *  binDutyService.updatePeriod), so a task originally due on day N of the block is still due on
- *  day N after the move. Each row can land on a different new date, so this updates them one at a
- *  time rather than in a single bulk write. */
-export async function shiftTasksByDays(binDutyId, deltaDays) {
-  const { data: existing, error: getErr } = await supabase.from('bin_out_tasks').select('id, pickup_date').eq('bin_duty_id', binDutyId);
-  if (getErr) throw getErr;
-  const results = [];
-  for (const row of existing) {
-    const d = new Date(row.pickup_date + 'T00:00:00');
-    d.setDate(d.getDate() + deltaDays);
-    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-    const newDate = y + '-' + m + '-' + day;
-    const { data, error } = await supabase.from('bin_out_tasks').update({ pickup_date: newDate }).eq('id', row.id).select().single();
-    if (error) throw error;
-    results.push(data);
-  }
-  return results.map(fromRow);
 }

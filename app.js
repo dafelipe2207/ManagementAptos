@@ -35,9 +35,8 @@ import * as recurringBillService from './services/recurringBillService.js?v=2';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
 import * as inspectionService from './services/inspectionService.js';
-import * as weeklyDutyService from './services/weeklyDutyService.js?v=3';
-import * as binDutyService from './services/binDutyService.js';
-import * as binOutTaskService from './services/binOutTaskService.js?v=4';
+import { weeklyDutyService, binDutyService } from './services/dutyService.js?v=1';
+import * as binOutTaskService from './services/binOutTaskService.js?v=5';
 import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=2';
 import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
@@ -81,9 +80,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var cleaningSubmissions = [];
   var cleaningComments = [];
   var trashSchedule = [];
-  var weeklyDuties = []; // Cleaning's own (room, period) container, weekly cadence; see weeklyDutyService.js
-  var binDuties = []; // Bin OUT's own (room, period) container, fortnightly cadence; see binDutyService.js
-  var binOutTasks = []; // independent Bin OUT sub-tasks, one per pickup date landing in a bin_duty's period; see binOutTaskService.js
+  var weeklyDuties = []; // weekly roster: room on duty for Cleaning + Bin OUT; see services/dutyService.js
+  var binDuties = []; // fortnightly containers bin_out_tasks hang off; see services/dutyService.js
+  var binOutTasks = []; // one per trash pickup date; room follows the weekly roster (syncBinOutRoomsWithRoster)
   var taskIndexRows = []; // task_index — current-state read model, see taskIndexService.js
   var activityLogRows = []; // activity_log — historical event feed, see activityLogService.js
   var inspectionSubmissions = [];
@@ -745,13 +744,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   /* ============ dashboardService (same logic as src/services/dashboardService.ts) ============ */
+  /** The tenant living in this room TODAY (moved in, not moved out), or null. The one
+   *  definition every screen uses — Dashboard, Properties, profit, notifications. */
+  function roomOccupantToday(roomId){
+    var now = tenants.filter(function(t){ return t.roomId===roomId && !tenantHasMovedOut(t) && (t.moveInDate||'') <= TODAY; });
+    if (!now.length) return null;
+    return now.sort(function(a,b){ return (b.moveInDate||'').localeCompare(a.moveInDate||''); })[0];
+  }
+  /** Occupied = someone paying rent lives there today (owner/admin rows with no rent don't count). */
   function isRoomOccupied(room){
-    return tenants.some(function(t){
-      if (t.roomId !== room.id || t.rentAmount <= 0) return false;
-      var movedIn = t.moveInDate <= TODAY;
-      var movedOut = t.actualMoveOutDate ? t.actualMoveOutDate <= TODAY : false;
-      return movedIn && !movedOut;
-    });
+    var t = roomOccupantToday(room.id);
+    return !!(t && t.rentAmount > 0);
   }
   /** The date this (currently vacant) room has been empty since — the most recent move-out
    *  date among tenants who used to live there, or null if it's never had a tenant (in which
@@ -1398,6 +1401,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.viewTenantPayments = viewTenantPayments;
 
+  /** The tenant's tenancy status as one badge — the same wording on the Tenants list and the
+   *  tenant's own page. */
+  function tenantLifecycleBadge(t){
+    if (tenantHasMovedOut(t)) return badge('neutral', 'Moved out' + (t.actualMoveOutDate ? ' '+shortDate(t.actualMoveOutDate) : ''));
+    if (t.moveInDate && t.moveInDate > TODAY) return badge('upcoming', 'Moves in '+shortDate(t.moveInDate));
+    if (t.expectedMoveOutDate && t.expectedMoveOutDate >= TODAY) return badge('due', 'Leaving '+shortDate(t.expectedMoveOutDate));
+    return badge('paid', 'Active');
+  }
+
   function roomsOf(propertyId){ return rooms.filter(function(r){ return r.propertyId===propertyId; }); }
   /** Who is in this room: the tenant living there today; else the next one moving in; else the
    *  most recent one. (It used to return the FIRST tenant ever recorded for the room — after a
@@ -1405,17 +1417,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function currentTenantOf(roomId){
     var list = tenants.filter(function(t){ return t.roomId===roomId; });
     if (!list.length) return undefined;
-    var now = list.filter(function(t){ return !tenantHasMovedOut(t) && (t.moveInDate||'') <= TODAY; });
-    if (now.length) return now.sort(function(a,b){ return (b.moveInDate||'').localeCompare(a.moveInDate||''); })[0];
+    var now = roomOccupantToday(roomId);
+    if (now) return now;
     var next = list.filter(function(t){ return !tenantHasMovedOut(t); });
     if (next.length) return next.sort(function(a,b){ return (a.moveInDate||'').localeCompare(b.moveInDate||''); })[0];
     return list.sort(function(a,b){ return (b.moveInDate||'').localeCompare(a.moveInDate||''); })[0];
-  }
-  /** A room counts as occupied while ANY tenant assigned to it hasn't moved out — checks every
-   *  tenant row for the room, not just the first one ever recorded (a room that turned over has
-   *  the old, moved-out tenant listed first). */
-  function roomIsOccupied(roomId){
-    return tenants.some(function(t){ return t.roomId===roomId && !tenantHasMovedOut(t); });
   }
   /** Looks for ANOTHER tenant (different from excludeTenantId) already assigned to this room
    *  with a stay whose dates overlap [moveInDate, moveOutDate]. A null moveOutDate
@@ -1650,7 +1656,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     var cards = properties.map(function(p){
       var propRooms = roomsOf(p.id);
-      var occupied = propRooms.filter(function(r){ var t=currentTenantOf(r.id); return t && t.rentAmount>0; }).length;
+      var occupied = propRooms.filter(isRoomOccupied).length;
       var roomsHtml = propRooms.map(function(r){
         var t = currentTenantOf(r.id);
         var isPaying = t && t.rentAmount>0;
@@ -2005,7 +2011,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var p = propertyOf(id);
     if (!p){ return pageHeader('Property not found', '') + notFoundState('Property', '#/properties', 'Back to properties'); }
     var propRooms = roomsOf(p.id);
-    var occupied = propRooms.filter(function(r){ var t=currentTenantOf(r.id); return t && t.rentAmount>0; }).length;
+    var occupied = propRooms.filter(isRoomOccupied).length;
     var propBills = billsOf(p.id);
 
     var roomsHtml = propRooms.length===0
@@ -2091,12 +2097,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var currentList = paying.filter(function(t){ return !tenantHasMovedOut(t); }).sort(byPropertyThenName);
     var pastList = paying.filter(function(t){ return tenantHasMovedOut(t); })
       .sort(function(a,b){ return byPropertyThenName(a,b) || (b.actualMoveOutDate||'').localeCompare(a.actualMoveOutDate||''); });
-    function tenantStatusBadge(t){
-      if (tenantHasMovedOut(t)) return badge('neutral', 'Moved out' + (t.actualMoveOutDate ? ' '+shortDate(t.actualMoveOutDate) : ''));
-      if (t.moveInDate && t.moveInDate > TODAY) return badge('upcoming', 'Moves in '+shortDate(t.moveInDate));
-      if (t.expectedMoveOutDate && t.expectedMoveOutDate >= TODAY) return badge('due', 'Leaving '+shortDate(t.expectedMoveOutDate));
-      return badge('paid', 'Active');
-    }
     function tenantCardsHtml(list, isPast){
       var lastPropertyId = null;
       return list.map(function(t){
@@ -2115,7 +2115,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           : 'Since '+shortDate(t.moveInDate);
         return groupHeading + '<a class="card tenant-card'+(isPast?' past':'')+'" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
           '<div class="row" style="border:none;padding:0;">'+
-          '<div class="who"><div class="name" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+esc(t.fullName)+tenantStatusBadge(t)+'</div>'+
+          '<div class="who"><div class="name" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+esc(t.fullName)+tenantLifecycleBadge(t)+'</div>'+
           '<div class="meta"><strong style="color:var(--text);">'+esc(p?p.name:'—')+'</strong> • '+stay+'</div>'+
           '<div class="meta">'+bondLine+'</div></div>'+
           '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
@@ -2176,7 +2176,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var tickStep = Math.max(1, Math.ceil(months.length / 6));
 
     function tenantStatus(t){
-      if (t.isActive === false || (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY)) return { color:'var(--status-move)', label:'Moved out' };
+      if (tenantHasMovedOut(t)) return { color:'var(--status-move)', label:'Moved out' };
       if (t.moveInDate > TODAY) return { color:'var(--status-upcoming)', label:'Upcoming move-in' };
       return { color:'var(--status-paid)', label:'Current tenant' };
     }
@@ -2294,9 +2294,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (t.moveOutSettledAt) return ''; // legacy-settled tenant — bondSettlementSummaryHtml handles it
     var settlement = moveOutSettlementOf(t.id);
     if (!settlement){
+      // A move-out date without a started process: the live estimate sits inside this one card
+      // (it used to be a second "Move-out settlement" card right below it).
+      var est = computeMoveOutEstimate(t);
       return '<div class="card"><h2>Move-Out Settlement</h2>'+
-        '<p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">No move-out process has been started for this tenant.</p>'+
-        '<button class="mini-btn primary" onclick="startMoveOutProcess(\''+t.id+'\')">Start Move-Out Process</button></div>';
+        (est
+          ? '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">"Already owed" are real amounts (unpaid rent and bills already charged). "Estimated bills" are projected from the tenant\'s average for the days not billed yet — update once the real bills arrive.</p>'+
+            moveOutEstimateBodyHtml(est, [], 'admin')
+          : '<p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">No move-out process has been started for this tenant.</p>')+
+        '<button class="mini-btn primary" style="margin-top:10px;" onclick="startMoveOutProcess(\''+t.id+'\')">Start Move-Out Process</button></div>';
     }
     var bond = bondOf(t.id);
     if (settlement.status === 'completed'){
@@ -2372,11 +2378,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var bond = bondOf(t.id);
     var currentCharge = pickCurrentCharge(rentCharges.filter(function(c){ return c.tenantId===t.id; }), TODAY);
 
-    var tenancyBadge = '';
-    if (t.isActive === false) tenancyBadge = badge('neutral', 'Inactive');
-    else if (t.actualMoveOutDate && t.actualMoveOutDate <= TODAY) tenancyBadge = badge('move', 'Moved out');
-    else if (t.moveInDate > TODAY) tenancyBadge = badge('move', 'Upcoming move-in');
-    else if (t.rentAmount > 0) tenancyBadge = badge('neutral', 'Current tenant');
+    var tenancyBadge = tenantLifecycleBadge(t);
 
     var contactRows = '' +
       (tenantPaymentRef(t) ? '<div class="field-row"><span class="k">Payment reference</span><span class="v">'+esc(tenantPaymentRef(t))+'</span></div>' : '') +
@@ -2451,7 +2453,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       inspectionSectionHtml(t.id, 'move_out', false) +
       moveOutSettlementCardHtml(t) +
       bondSettlementSummaryHtml(t) +
-      moveOutSettlementHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
   }
 
@@ -2702,16 +2703,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     else html += '<div class="field-row"><span class="k" style="font-weight:650;">'+label+'</span><span class="v" style="font-weight:650;">'+money(0)+'</span></div>'+
       '<div class="field-row"><span class="k" style="font-weight:650;">'+(who==='tenant' ? 'Still to pay beyond the bond' : 'Tenant owes beyond the bond')+'</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(-left)+'</span></div>';
     return '<div class="field-list">'+html+'</div>';
-  }
-
-  function moveOutSettlementHtml(t){
-    if (t.moveOutSettledAt) return ''; // already settled for real — see bondSettlementSummaryHtml
-    if (moveOutSettlementOf(t.id)) return ''; // the staged move-out settlement flow has taken over — see moveOutSettlementCardHtml
-    var est = computeMoveOutEstimate(t);
-    if (!est) return '';
-    return '<div class="card"><h2>Move-out settlement</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">"Already owed" are real amounts (unpaid rent and bills already charged). "Estimated bills" are projected from the tenant\'s average for the days not billed yet — update once the real bills arrive.</p>'+
-      moveOutEstimateBodyHtml(est, [], 'admin')+'</div>';
   }
 
   /* ============ Move-out bond settlement ============
@@ -7146,36 +7137,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return header + predictions.map(missingInvoiceRowHtml).join('');
   }
 
-  /** Detects "recurring" bills (electricity, water, hot water, gas, internet — not "other") that
-   *  have gone more than ~45 days without a new one loaded, compared to the last one that did
-   *  arrive, for that property + type. Only applies once there are at least 2 bills of that
-   *  type for that property (otherwise there isn't yet a pattern to say anything is "missing"). */
+  /** Bill types that arrive on a regular cycle ("other" doesn't) — see computeMissingInvoicePredictions. */
   var BILL_RECURRING_TYPES = ['electricity','water','hot_water','gas','internet'];
-  function detectMissingBills(){
-    var byKey = {};
-    var countByKey = {};
-    bills.forEach(function(b){
-      if (BILL_RECURRING_TYPES.indexOf(b.billType) === -1) return;
-      var key = b.propertyId + '|' + b.billType;
-      countByKey[key] = (countByKey[key] || 0) + 1;
-      var latestDate = b.billingPeriodEnd || b.dueDate || b.issueDate || '';
-      var existingDate = byKey[key] ? (byKey[key].billingPeriodEnd || byKey[key].dueDate || byKey[key].issueDate || '') : '';
-      if (!byKey[key] || latestDate > existingDate) byKey[key] = b;
-    });
-    var gaps = [];
-    Object.keys(byKey).forEach(function(key){
-      if (countByKey[key] < 2) return;
-      var last = byKey[key];
-      var lastDate = last.billingPeriodEnd || last.dueDate || last.issueDate;
-      if (!lastDate) return;
-      var daysSince = Math.round((new Date(TODAY) - new Date(lastDate)) / 86400000);
-      if (daysSince > 45){
-        var prop = properties.find(function(p){ return p.id===last.propertyId; });
-        gaps.push({ propertyId:last.propertyId, propertyName: prop ? prop.name : '—', billType:last.billType, lastDate:lastDate, daysSince:daysSince });
-      }
-    });
-    return gaps;
-  }
 
   /** Which status color a bill maps to, reusing the same criteria as
    *  billStatusBadge (see below) — so the timeline bar and the table badge
@@ -7266,7 +7229,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rows = [];
     scopedProperties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).forEach(function(p){
       var propBills = bills.filter(function(b){ return b.propertyId===p.id; });
-      // Unlike detectMissingBills (which only looks at the truly "recurring" types),
+      // Unlike the Missing-invoices check (which only looks at the truly "recurring" types),
       // the diagram has to reflect ALL payments — including "Other", where there might be
       // one-off charges or adjustments the admin classified separately from the main recurring
       // service (e.g. a rate adjustment from the same gas provider, saved as "Other" so it
@@ -7476,15 +7439,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
 
     // Cleaning: notify the current occupant of a room whose turn is today/tomorrow, or whose
-    // turn has just become overdue. Stops once the task is completed (or closed not_completed) —
-    // currentTenantOf() isn't right here — it returns the FIRST tenant ever recorded for the
-    // room (tenants load oldest-first), which is often someone who has since moved out. Look up
-    // the actual current occupant instead (same predicate roomIsOccupied() uses).
+    // turn has just become overdue. Stops once the task is completed (or closed not_completed).
     for (var n=0; n<cleaningTasks.length; n++){
       var task = cleaningTasks[n];
       var effStatus = cleaningTaskEffectiveStatus(task);
       if (effStatus === 'completed' || effStatus === 'not_completed') continue;
-      var occupant = tenants.find(function(x){ return x.roomId===task.roomId && !tenantHasMovedOut(x); });
+      var occupant = roomOccupantToday(task.roomId);
       if (!occupant || !occupant.authUserId) continue;
       var room = roomOf(task.roomId);
       if (effStatus === 'overdue'){
@@ -7511,7 +7471,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var binTask = binOutTasks[q];
       var binEffStatus = binOutTaskEffectiveStatus(binTask);
       if (binEffStatus === 'completed' || binEffStatus === 'not_completed') continue;
-      var binOccupant = tenants.find(function(x){ return x.roomId===binTask.roomId && !tenantHasMovedOut(x); });
+      var binOccupant = roomOccupantToday(binTask.roomId);
       if (!binOccupant || !binOccupant.authUserId) continue;
       var typeLabels = binTask.binTypes.map(function(bt){ return TRASH_TYPE_LABEL[bt] || bt; }).join(' & ');
       if (binEffStatus === 'overdue'){
@@ -7532,12 +7492,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
 
-  /** Sends a notification (to the current user) for each detected gap that hasn't already
-   *  been notified in the last 30 days — so the same alert isn't repeated every time the
-   *  app is opened. Runs once per load, after generating the month's recurring bills. */
+  /** Sends a notification (to the current user) for each missing invoice — the same list the
+   *  "Missing" tab shows (computeMissingInvoicePredictions, paced by each provider's own rhythm) —
+   *  that hasn't already been notified in the last 30 days, so the alert isn't repeated every time
+   *  the app is opened. Runs once per load, after generating the month's recurring bills. */
   async function checkMissingBillsNotifications(){
     if (isTenantRole() || !currentProfile) return;
-    var gaps = detectMissingBills();
+    var gaps = computeMissingInvoicePredictions();
     if (!gaps.length) return;
     var cutoff = addMonthsIso(TODAY, -1);
     for (var i=0; i<gaps.length; i++){
@@ -7547,7 +7508,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return n.relatedTable==='bills' && n.relatedId===g.propertyId && n.title===title && n.createdAt && n.createdAt.slice(0,10) >= cutoff;
       });
       if (alreadyNotified) continue;
-      var body = 'No ' + billTypeLabel(g.billType).toLowerCase() + ' bill has been loaded for ' + g.propertyName + ' since ' + shortDate(g.lastDate) + ' (' + g.daysSince + ' days ago). Add it once it arrives.';
+      var body = 'No ' + billTypeLabel(g.billType).toLowerCase() + ' bill has been loaded for ' + g.propertyName + ' since ' + shortDate(g.lastBillDate) + ' — it usually arrives every ' + g.avgInterval + ' days, so it was expected by ' + shortDate(g.predictedNextDate) + '. Add it once it arrives.';
       await notificationService.notify(currentProfile.authUserId, title, body, 'bills', g.propertyId);
       notificationsList.unshift({ id:'local-'+Date.now()+'-'+i, authUserId:currentProfile.authUserId, title:title, body:body, relatedTable:'bills', relatedId:g.propertyId, isRead:false, createdAt:new Date().toISOString() });
     }
@@ -8833,11 +8794,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function propertyProfitBreakdown(p){
     var propRooms = rooms.filter(function(r){ return r.propertyId === p.id; });
     var roomLines = propRooms.map(function(r){
-      // NOT currentTenantOf(r.id) — that helper returns the first tenant EVER
-      // assigned to this room by array order, which can be an old, moved-out
-      // tenant on a room that has turned over. Filter for the currently active
-      // tenant directly instead (same test roomIsOccupied uses internally).
-      var tenant = tenants.find(function(t){ return t.roomId === r.id && !tenantHasMovedOut(t); }) || null;
+      var tenant = roomOccupantToday(r.id);
       var weeklyRent = tenant ? normalizeToWeekly(tenant.rentAmount, tenant.rentFrequency) : 0;
       return { room:r, tenant:tenant, weeklyRent:weeklyRent };
     });
@@ -10004,22 +9961,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function cleaningTaskSubmissions(taskId){ return cleaningSubmissions.filter(function(s){ return s.taskId===taskId; }); }
   function cleaningTaskComments(taskId){ return cleaningComments.filter(function(c){ return c.taskId===taskId; }); }
 
-  /* ============ Cleaning duty (weekly) + Bin duty (fortnightly): independent containers ============
-   * weekly_duties is Cleaning's own (room, period) container; bin_duties is Bin OUT's own,
-   * separate one — they used to share one container, but Cleaning and Bin OUT now advance
-   * (independently, on different cadences) through a room order that's derived on the fly by
-   * round-robin over the property's own rooms (roomsOf, sorted by name) rather than an
-   * admin-maintained list; see ensureCleaningDutiesUpToDate/ensureBinDutiesUpToDate below. The
-   * admin can override any not-yet-past week's suggested room directly from the Cleaning calendar
-   * (renderCleaningStaff) via weeklyDutyService.updateRoom/binDutyService.updateRoom. Neither ever
-   * reads the other's status —
-   * every card/row/notification reads cleaningTaskEffectiveStatus() and binOutTaskEffectiveStatus()
-   * independently. Both are pure functions of stored status + TODAY, computed on read (same
+  /* ============ Cleaning + Bin OUT: one weekly roster ============
+   * weekly_duties is the single source of truth for WHICH ROOM is on duty in a given week, for
+   * both Cleaning and Bin OUT (round-robin over the property's rooms sorted by name, adjustable
+   * from the Cleaning calendar — reassignDutyRoom). bin_duties only remains as the fortnightly
+   * container each bin_out_tasks row hangs off (bin_duty_id is required by the schema); the room
+   * of every open bin_out_task is kept equal to the weekly duty covering its pickup date by
+   * syncBinOutRoomsWithRoster(). Statuses stay independent — every card/row/notification reads
+   * cleaningTaskEffectiveStatus() and binOutTaskEffectiveStatus() separately. Both are pure functions of stored status + TODAY, computed on read (same
    * pattern as billEffectiveStatus) — 'overdue'/'due_today'/'upcoming' are never written to the
    * DB; only 'in_progress'/'completed'/'not_completed' are ever persisted, by an explicit action. */
   function weeklyDutyOf(id){ return weeklyDuties.find(function(w){ return w.id===id; }); }
-  function binDutyOf(id){ return binDuties.find(function(w){ return w.id===id; }); }
-  function binOutTasksOfBinDuty(binDutyId){ return binOutTasks.filter(function(b){ return b.binDutyId===binDutyId; }); }
   function cleaningTaskOfWeeklyDuty(weeklyDutyId){ return cleaningTasks.find(function(t){ return t.weeklyDutyId===weeklyDutyId; }); }
 
   /** Cleaning's effective status: 'completed'/'not_completed' are terminal once set; otherwise
@@ -10071,29 +10023,20 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Read-only history row for a past (already-ended) week — no select, just what happened. */
   function cleaningDutyRow(duty){
     var r = roomOf(duty.roomId);
-    var occupant = tenants.find(function(x){ return x.roomId===duty.roomId && !tenantHasMovedOut(x); });
+    var occupant = roomOccupantToday(duty.roomId);
     var cleaningTask = cleaningTaskOfWeeklyDuty(duty.id);
+    var binTasks = binOutTasks.filter(function(b){ return b.propertyId===duty.propertyId && b.pickupDate >= duty.periodStart && b.pickupDate <= duty.periodEnd; })
+      .sort(function(a,b){ return a.pickupDate.localeCompare(b.pickupDate); });
+    var binHtml = binTasks.length ? '<div class="field-row"><span class="k">Bin OUT</span><span class="v">'+binTasks.map(function(bt){
+      return '<span style="cursor:pointer;display:inline-block;margin:2px 4px 2px 0;" onclick="event.stopPropagation();openBinOutDetailModal(\''+bt.id+'\')">'+binOutStatusBadgeHtml(bt)+'</span>';
+    }).join('')+'</span></div>' : '';
     return '<div class="card" style="cursor:pointer;" onclick="openCleaningDetailModal(\''+(cleaningTask?cleaningTask.id:'')+'\')">'+
       '<div class="detail-head" style="margin-top:0;align-items:center;">'+
       '<h2 style="margin:0;font-size:14px;">'+esc(r?r.name:'—')+' · '+esc(occupant?occupant.fullName:'Vacant')+'</h2>'+
       (cleaningTask?cleaningStatusBadgeHtml(cleaningTask):'')+
       '</div>'+
       '<p style="font-size:12.5px;color:var(--text-dim);margin:4px 0 0;">'+shortDate(duty.periodStart)+' – '+shortDate(duty.periodEnd)+'</p>'+
-      '</div>';
-  }
-
-  function binDutyRow(duty){
-    var r = roomOf(duty.roomId);
-    var occupant = tenants.find(function(x){ return x.roomId===duty.roomId && !tenantHasMovedOut(x); });
-    var binTasks = binOutTasksOfBinDuty(duty.id).sort(function(a,b){ return a.pickupDate.localeCompare(b.pickupDate); });
-    var binCellHtml = binTasks.length===0 ? '<span style="color:var(--text-faint);font-size:12.5px;">—</span>' :
-      binTasks.map(function(bt){ return '<span style="cursor:pointer;display:inline-block;margin:2px 4px 2px 0;" onclick="event.stopPropagation();openBinOutDetailModal(\''+bt.id+'\')">'+binOutStatusBadgeHtml(bt)+'</span>'; }).join('');
-    return '<div class="card">'+
-      '<div class="detail-head" style="margin-top:0;align-items:center;">'+
-      '<h2 style="margin:0;font-size:14px;">'+esc(r?r.name:'—')+' · '+esc(occupant?occupant.fullName:'Vacant')+'</h2>'+
-      '</div>'+
-      '<p style="font-size:12.5px;color:var(--text-dim);margin:4px 0;">'+shortDate(duty.periodStart)+' – '+shortDate(duty.periodEnd)+'</p>'+
-      '<div class="field-row"><span class="k">Bin OUT</span><span class="v">'+binCellHtml+'</span></div>'+
+      binHtml+
       '</div>';
   }
 
@@ -10301,11 +10244,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
       var cleaningPast = weeklyDuties.filter(function(w){ return w.propertyId===propId && w.periodEnd < TODAY; })
         .sort(function(a,b){ return b.periodEnd.localeCompare(a.periodEnd); }).slice(0, 10);
-      var binPast = binDuties.filter(function(w){ return w.propertyId===propId && w.periodEnd < TODAY; })
-        .sort(function(a,b){ return b.periodEnd.localeCompare(a.periodEnd); }).slice(0, 10);
-      var historyHtml = (cleaningPast.length===0 && binPast.length===0) ? '' :
+      var historyHtml = cleaningPast.length===0 ? '' :
         '<h3 style="margin:14px 0 8px;font-size:11.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">History</h3>'+
-        cleaningPast.map(cleaningDutyRow).join('') + binPast.map(binDutyRow).join('');
+        cleaningPast.map(cleaningDutyRow).join('');
 
       return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">'+esc(p.name)+'</h2>'+
         calendarHtml + historyHtml;
@@ -10319,15 +10260,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /** Quick-reassign popup opened from a calendar pill: one room select, scoped to whichever
    *  property the clicked duty belongs to. Saving cascades — see reassignDutyRoom. */
-  var weekReassignKind = null; // 'cleaning' | 'bin'
   var weekReassignDutyId = null;
+  /** `kind` is kept for the existing onclick strings; both pills edit the same weekly duty. */
   function openWeekReassignModal(kind, dutyId){
-    var duty = kind==='cleaning' ? weeklyDutyOf(dutyId) : binDutyOf(dutyId);
+    var duty = weeklyDutyOf(dutyId);
     if (!duty) return;
-    weekReassignKind = kind;
     weekReassignDutyId = dutyId;
     document.getElementById('week-reassign-title').textContent =
-      (kind==='cleaning' ? '🧹 Cleaning' : '🗑️ Bin OUT') + ' — ' + shortDate(duty.periodStart) + ' – ' + shortDate(duty.periodEnd);
+      '🧹 Cleaning & 🗑️ Bin OUT — ' + shortDate(duty.periodStart) + ' – ' + shortDate(duty.periodEnd);
     var select = document.getElementById('week-reassign-room');
     var propRooms = roomsOf(duty.propertyId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
     select.innerHTML = propRooms.map(function(r){ return '<option value="'+r.id+'"'+(r.id===duty.roomId?' selected':'')+'>'+esc(r.name)+'</option>'; }).join('');
@@ -10342,55 +10282,41 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var newDate = document.getElementById('week-reassign-date').value;
     if (!roomId || !newDate || !weekReassignDutyId) return;
     closeWeekReassignModal();
-    reassignDutyRoom(weekReassignKind, weekReassignDutyId, roomId, newDate);
+    reassignDutyRoom(weekReassignDutyId, roomId, newDate);
   }
   window.saveWeekReassignForm = saveWeekReassignForm;
 
-  /** Reassigns one calendar week's room AND/OR date, and cascades both changes forward: every
-   *  later week for that property (same kind) is re-rolled by continuing the round-robin from the
-   *  newly chosen room, exactly like ensureCleaningDutiesUpToDate/ensureBinDutiesUpToDate would
-   *  generate it — "pick this week's room and shift the remaining weeks accordingly." When
-   *  `newPeriodStart` moves the edited week's start date, every week in the chain (the edited one
-   *  and all later ones) is shifted by that same number of days, so the weekly/fortnightly cadence
-   *  between them stays unbroken instead of leaving a gap or an overlap. Weeks before the edited
-   *  one are never touched. Updates each duty's linked task(s) too so both stay consistent. */
-  async function reassignDutyRoom(kind, dutyId, roomId, newPeriodStart){
+  /** Reassigns one roster week's room AND/OR date, and cascades both changes forward: every
+   *  later week for that property is re-rolled by continuing the round-robin from the newly
+   *  chosen room (exactly like ensureCleaningDutiesUpToDate would generate it), and a date change
+   *  shifts every week in the chain by the same number of days so the cadence stays unbroken.
+   *  Weeks before the edited one are never touched. The linked cleaning task follows its week,
+   *  and the open Bin OUT tasks are re-synced to the new rooms afterwards. */
+  async function reassignDutyRoom(dutyId, roomId, newPeriodStart){
     try {
-      var duties = kind==='cleaning' ? weeklyDuties : binDuties;
-      var edited = duties.find(function(d){ return d.id===dutyId; });
+      var edited = weeklyDutyOf(dutyId);
       if (!edited) return;
       var deltaDays = newPeriodStart ? daysBetween(edited.periodStart, newPeriodStart) : 0;
-      var roomOrder = roomsOf(edited.propertyId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(r){ return r.id; });
-      var chain = duties.filter(function(d){ return d.propertyId===edited.propertyId && d.periodStart >= edited.periodStart; })
+      var roomOrder = roomOrderOf(edited.propertyId);
+      var chain = weeklyDuties.filter(function(d){ return d.propertyId===edited.propertyId && d.periodStart >= edited.periodStart; })
         .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
 
       var currentRoom = roomId;
       for (var i=0; i<chain.length; i++){
         var d = chain[i];
         var newRoom = (i===0) ? roomId : nextRoomInOrder(roomOrder, currentRoom);
-        var newStart = deltaDays ? stepDateIso(d.periodStart, deltaDays) : d.periodStart;
-        var newEnd = deltaDays ? stepDateIso(d.periodEnd, deltaDays) : d.periodEnd;
-        if (kind === 'cleaning'){
-          var savedDuty = await weeklyDutyService.updateRoom(d.id, newRoom);
-          if (deltaDays) savedDuty = await weeklyDutyService.updatePeriod(d.id, newStart, newEnd);
-          weeklyDuties = weeklyDuties.map(function(w){ return w.id===savedDuty.id ? savedDuty : w; });
-          var task = cleaningTaskOfWeeklyDuty(d.id);
-          if (task){
-            var savedTask = await cleaningService.updateTaskRoom(task.id, newRoom);
-            if (deltaDays) savedTask = await cleaningService.updateTaskDate(task.id, newEnd);
-            cleaningTasks = cleaningTasks.map(function(t){ return t.id===savedTask.id ? savedTask : t; });
-          }
-        } else {
-          var savedBinDuty = await binDutyService.updateRoom(d.id, newRoom);
-          if (deltaDays) savedBinDuty = await binDutyService.updatePeriod(d.id, newStart, newEnd);
-          binDuties = binDuties.map(function(w){ return w.id===savedBinDuty.id ? savedBinDuty : w; });
-          var savedBinTasks = await binOutTaskService.updateTasksRoom(d.id, newRoom);
-          if (deltaDays) savedBinTasks = await binOutTaskService.shiftTasksByDays(d.id, deltaDays);
-          var savedIds = savedBinTasks.map(function(t){ return t.id; });
-          binOutTasks = binOutTasks.map(function(t){ return savedIds.indexOf(t.id)>=0 ? savedBinTasks.find(function(s){ return s.id===t.id; }) : t; });
+        var savedDuty = await weeklyDutyService.updateRoom(d.id, newRoom);
+        if (deltaDays) savedDuty = await weeklyDutyService.updatePeriod(d.id, stepDateIso(d.periodStart, deltaDays), stepDateIso(d.periodEnd, deltaDays));
+        weeklyDuties = weeklyDuties.map(function(w){ return w.id===savedDuty.id ? savedDuty : w; });
+        var task = cleaningTaskOfWeeklyDuty(d.id);
+        if (task){
+          var savedTask = await cleaningService.updateTaskRoom(task.id, newRoom);
+          if (deltaDays) savedTask = await cleaningService.updateTaskDate(task.id, savedDuty.periodEnd);
+          cleaningTasks = cleaningTasks.map(function(t){ return t.id===savedTask.id ? savedTask : t; });
         }
         currentRoom = newRoom;
       }
+      await syncBinOutRoomsWithRoster(edited.propertyId);
       showToast(deltaDays ? 'Roster updated — dates and following weeks re-rolled too.' : 'Roster updated — following weeks re-rolled too.', 'success');
       render();
     } catch(err){
@@ -10619,26 +10545,37 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  whichever room was last assigned — the admin can still override any of these from the
    *  calendar (reassignDutyRoom). Safe to call repeatedly (on bootstrap, after a reassignment): a
    *  no-op once every property is already generated through the horizon. */
-  async function ensureCleaningDutiesUpToDate(){
+  /** The property's rooms in roster order (by name). */
+  function roomOrderOf(propId){
+    return roomsOf(propId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(r){ return r.id; });
+  }
+  /** Shared by both generators: the next (room, period) slots for every property until the
+   *  calendar horizon, continuing the round-robin from the last slot already stored. */
+  function nextDutySlots(existing, periodDays, skipProperty){
     var horizonEnd = stepDateIso(TODAY, CALENDAR_HORIZON_DAYS);
     var newRows = []; // [{propertyId, roomId, periodStart, periodEnd}]
     for (var i=0; i<properties.length; i++){
+      if (skipProperty && skipProperty(properties[i])) continue;
       var propId = properties[i].id;
-      var roomOrder = roomsOf(propId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(r){ return r.id; });
+      var roomOrder = roomOrderOf(propId);
       if (roomOrder.length===0) continue;
-      var propDuties = weeklyDuties.concat(newRows).filter(function(w){ return w.propertyId===propId; });
-      var lastDuty = propDuties.reduce(function(best, w){ return (!best || w.periodEnd > best.periodEnd) ? w : best; }, null);
+      var lastDuty = existing.filter(function(w){ return w.propertyId===propId; })
+        .reduce(function(best, w){ return (!best || w.periodEnd > best.periodEnd) ? w : best; }, null);
       var guard = 0;
       while (guard++ < 20){
         var nextStart = lastDuty ? stepDateIso(lastDuty.periodEnd, 1) : startOfWeekIso(TODAY);
         if (lastDuty && nextStart > horizonEnd) break; // already generated through the horizon
-        var nextEnd = stepDateIso(nextStart, 6);
-        var row = { propertyId: propId, roomId: nextRoomInOrder(roomOrder, lastDuty?lastDuty.roomId:null), periodStart: nextStart, periodEnd: nextEnd };
+        var row = { propertyId: propId, roomId: nextRoomInOrder(roomOrder, lastDuty?lastDuty.roomId:null), periodStart: nextStart, periodEnd: stepDateIso(nextStart, periodDays-1) };
         newRows.push(row);
         lastDuty = row;
         if (nextStart > horizonEnd) break;
       }
     }
+    return newRows;
+  }
+
+  async function ensureCleaningDutiesUpToDate(){
+    var newRows = nextDutySlots(weeklyDuties, 7);
     if (!newRows.length) return;
 
     var createdDuties = await weeklyDutyService.createTasksBulk(newRows);
@@ -10651,48 +10588,48 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     cleaningTasks = cleaningTasks.concat(createdCleaning);
   }
 
-  /** Mirrors ensureCleaningDutiesUpToDate, but for Bin OUT: a 14-day (fortnightly) cycle,
-   *  advancing through the same round-robin order independently of Cleaning's weekly one — so at
-   *  any given time the two duties can (and usually will) land on different rooms. Each new
-   *  bin_duty then gets its own bin_out_tasks rows, one per trash_schedule pickup date inside that
-   *  fortnight (trashPickupsInWindow, unchanged). */
+  /** Bin OUT: extends the fortnightly bin_duties containers through the horizon and creates one
+   *  bin_out_tasks row per trash_schedule pickup date inside each. The room on duty comes from the
+   *  weekly roster (weeklyDutyForDate) — the same room the calendar and the tenant see — so it
+   *  must run after ensureCleaningDutiesUpToDate. Finishes by re-syncing every open task's room. */
   async function ensureBinDutiesUpToDate(){
-    var horizonEnd = stepDateIso(TODAY, CALENDAR_HORIZON_DAYS);
-    var newRows = []; // [{propertyId, roomId, periodStart, periodEnd}]
-    for (var i=0; i<properties.length; i++){
-      if (properties[i].binDutyRequired === false) continue; // this property has no bins to take out
-      var propId = properties[i].id;
-      var roomOrder = roomsOf(propId).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); }).map(function(r){ return r.id; });
-      if (roomOrder.length===0) continue;
-      var propDuties = binDuties.concat(newRows).filter(function(w){ return w.propertyId===propId; });
-      var lastDuty = propDuties.reduce(function(best, w){ return (!best || w.periodEnd > best.periodEnd) ? w : best; }, null);
-      var guard = 0;
-      while (guard++ < 20){
-        var nextStart = lastDuty ? stepDateIso(lastDuty.periodEnd, 1) : startOfWeekIso(TODAY);
-        if (lastDuty && nextStart > horizonEnd) break; // already generated through the horizon
-        var nextEnd = stepDateIso(nextStart, 13);
-        var row = { propertyId: propId, roomId: nextRoomInOrder(roomOrder, lastDuty?lastDuty.roomId:null), periodStart: nextStart, periodEnd: nextEnd };
-        newRows.push(row);
-        lastDuty = row;
-        if (nextStart > horizonEnd) break;
+    var newRows = nextDutySlots(binDuties, 14, function(p){ return p.binDutyRequired === false; });
+    if (newRows.length){
+      var createdDuties = await binDutyService.createTasksBulk(newRows);
+      binDuties = binDuties.concat(createdDuties);
+      var newBinOutRows = [];
+      createdDuties.forEach(function(duty){
+        trashPickupsInWindow(duty.propertyId, duty.periodStart, duty.periodEnd).forEach(function(x){
+          var wd = weeklyDutyForDate(duty.propertyId, x.pickupDate);
+          newBinOutRows.push({ binDutyId: duty.id, propertyId: duty.propertyId, roomId: wd ? wd.roomId : duty.roomId, pickupDate: x.pickupDate, binTypes: x.binTypes });
+        });
+      });
+      if (newBinOutRows.length){
+        var createdBinOut = await binOutTaskService.createTasksBulk(newBinOutRows);
+        binOutTasks = binOutTasks.concat(createdBinOut);
       }
     }
-    if (!newRows.length) return;
+    await syncBinOutRoomsWithRoster();
+  }
 
-    var createdDuties = await binDutyService.createTasksBulk(newRows);
-    binDuties = binDuties.concat(createdDuties);
-
-    var newBinOutRows = [];
-    for (var j=0; j<createdDuties.length; j++){
-      var duty = createdDuties[j];
-      var pickups = trashPickupsInWindow(duty.propertyId, duty.periodStart, duty.periodEnd);
-      for (var k=0; k<pickups.length; k++){
-        newBinOutRows.push({ binDutyId: duty.id, propertyId: duty.propertyId, roomId: duty.roomId, pickupDate: pickups[k].pickupDate, binTypes: pickups[k].binTypes });
-      }
-    }
-    if (newBinOutRows.length){
-      var createdBinOut = await binOutTaskService.createTasksBulk(newBinOutRows);
-      binOutTasks = binOutTasks.concat(createdBinOut);
+  /** Keeps every still-open Bin OUT task on the room the weekly roster has for its pickup date
+   *  (fixes tasks generated by the old independent fortnightly rotation, and follows any roster
+   *  reassignment). Completed / not-completed tasks are history and never touched. */
+  async function syncBinOutRoomsWithRoster(onlyPropertyId){
+    if (!isStaff() || isViewer()) return;
+    var byRoom = {};
+    binOutTasks.forEach(function(t){
+      if (onlyPropertyId && t.propertyId !== onlyPropertyId) return;
+      if (t.status === 'completed' || t.status === 'not_completed') return;
+      var wd = weeklyDutyForDate(t.propertyId, t.pickupDate);
+      if (!wd || wd.roomId === t.roomId) return;
+      (byRoom[wd.roomId] = byRoom[wd.roomId] || []).push(t.id);
+    });
+    var roomIds = Object.keys(byRoom);
+    for (var i=0; i<roomIds.length; i++){
+      var saved = await binOutTaskService.updateRoomForTasks(byRoom[roomIds[i]], roomIds[i]);
+      var map = {}; saved.forEach(function(x){ map[x.id] = x; });
+      binOutTasks = binOutTasks.map(function(t){ return map[t.id] || t; });
     }
   }
 
