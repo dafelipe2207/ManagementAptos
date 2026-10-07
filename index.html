@@ -8,14 +8,13 @@
 <link rel="icon" href="favicon.svg?v=2" type="image/svg+xml">
 <link rel="icon" href="icon-32.png?v=2" sizes="32x32" type="image/png">
 <link rel="icon" href="icon-16.png?v=2" sizes="16x16" type="image/png">
-<link rel="shortcut icon" href="favicon.ico?v=2">
 <link rel="apple-touch-icon" href="icon-180.png?v=2">
 <link rel="manifest" href="manifest.json?v=2">
 <meta name="theme-color" content="#2e4d6e">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap">
-<link rel="stylesheet" href="styles.css?v=86">
+<link rel="stylesheet" href="styles.css?v=87">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -118,10 +117,10 @@
 
   <div class="modal-overlay" id="partial-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Partial payment</h2>
-      <p id="partial-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <h2 class="modal-title">Partial payment</h2>
+      <p class="modal-sub" id="partial-modal-sub"></p>
       <input id="partial-modal-input" class="modal-input" type="number" min="0" step="0.01" placeholder="0.00" />
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Date paid</label>
+      <label class="modal-hint">Date paid</label>
       <input id="partial-modal-date" class="modal-input" type="date" />
       <div style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button class="mini-btn" type="button" onclick="pickAdminPayReceipt('partial-receipt-status')">📎 Attach receipt (optional)</button>
@@ -136,9 +135,9 @@
 
   <div class="modal-overlay" id="charge-paid-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Confirm payment</h2>
-      <p id="charge-paid-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Date paid</label>
+      <h2 class="modal-title">Confirm payment</h2>
+      <p class="modal-sub" id="charge-paid-modal-sub"></p>
+      <label class="modal-hint">Date paid</label>
       <input id="charge-paid-modal-date" class="modal-input" type="date" />
       <div style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button class="mini-btn" type="button" onclick="pickAdminPayReceipt('charge-paid-receipt-status')">📎 Attach receipt (optional)</button>
@@ -153,9 +152,9 @@
 
   <div class="modal-overlay" id="alloc-paid-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Confirm payment</h2>
-      <p id="alloc-paid-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Date paid</label>
+      <h2 class="modal-title">Confirm payment</h2>
+      <p class="modal-sub" id="alloc-paid-modal-sub"></p>
+      <label class="modal-hint">Date paid</label>
       <input id="alloc-paid-modal-date" class="modal-input" type="date" />
       <div style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button class="mini-btn" type="button" onclick="pickAdminPayReceipt('alloc-paid-receipt-status')">📎 Attach receipt (optional)</button>
@@ -170,18 +169,18 @@
 
   <div class="modal-overlay" id="payment-report-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">I made this payment</h2>
-      <p id="payment-report-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment date</label>
+      <h2 class="modal-title">I made this payment</h2>
+      <p class="modal-sub" id="payment-report-modal-sub"></p>
+      <label class="modal-hint">Payment date</label>
       <input id="payment-report-date" class="modal-input" type="date" />
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment method</label>
+      <label class="modal-hint">Payment method</label>
       <select id="payment-report-method" class="modal-input">
         <option value="bank_transfer">Bank transfer</option>
         <option value="cash">Cash</option>
         <option value="card">Card</option>
         <option value="other">Other</option>
       </select>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reference (optional)</label>
+      <label class="modal-hint">Reference (optional)</label>
       <input id="payment-report-reference" class="modal-input" type="text" maxlength="120" />
       <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button class="mini-btn" type="button" onclick="triggerPaymentReportProofUpload()">📎 Attach receipt (optional)</button>
@@ -197,20 +196,20 @@
 
   <div class="modal-overlay" id="rent-report-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">I paid my rent</h2>
-      <p id="rent-report-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <h2 class="modal-title">I paid my rent</h2>
+      <p class="modal-sub" id="rent-report-modal-sub"></p>
       <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:10px 0 2px;">Amount paid</label>
       <input id="rent-report-amount" class="modal-input" type="number" min="0.01" step="0.01" inputmode="decimal" />
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment date</label>
+      <label class="modal-hint">Payment date</label>
       <input id="rent-report-date" class="modal-input" type="date" />
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Payment method</label>
+      <label class="modal-hint">Payment method</label>
       <select id="rent-report-method" class="modal-input">
         <option value="bank_transfer">Bank transfer</option>
         <option value="cash">Cash</option>
         <option value="card">Card</option>
         <option value="other">Other</option>
       </select>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reference (optional)</label>
+      <label class="modal-hint">Reference (optional)</label>
       <input id="rent-report-reference" class="modal-input" type="text" maxlength="120" />
       <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <button class="mini-btn" type="button" onclick="document.getElementById('rent-report-proof-input').click()">📎 Attach receipt (optional)</button>
@@ -228,9 +227,9 @@
 
   <div class="modal-overlay" id="rent-reject-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Reject rent payment</h2>
-      <p id="rent-reject-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reason (shown to the tenant)</label>
+      <h2 class="modal-title">Reject rent payment</h2>
+      <p class="modal-sub" id="rent-reject-modal-sub"></p>
+      <label class="modal-hint">Reason (shown to the tenant)</label>
       <textarea id="rent-reject-reason" class="modal-input" rows="3" maxlength="300"></textarea>
       <p id="rent-reject-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -242,8 +241,8 @@
 
   <div class="modal-overlay" id="reject-payment-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Reject payment report</h2>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Reason (shown to the tenant)</label>
+      <h2 class="modal-title">Reject payment report</h2>
+      <label class="modal-hint">Reason (shown to the tenant)</label>
       <textarea id="reject-payment-reason" class="modal-input" rows="3" placeholder="e.g. Payment could not be verified. Please provide proof of payment."></textarea>
       <p id="reject-payment-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -255,8 +254,8 @@
 
   <div class="modal-overlay" id="move-out-date-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Move-out date</h2>
-      <p id="move-out-date-note" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <h2 class="modal-title">Move-out date</h2>
+      <p class="modal-sub" id="move-out-date-note"></p>
       <input id="move-out-date-input" class="modal-input" type="date" />
       <p id="move-out-date-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -268,7 +267,7 @@
 
   <div class="modal-overlay" id="history-modal" hidden>
     <div class="card modal-card">
-      <h2 id="history-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
+      <h2 class="modal-title" id="history-modal-title"></h2>
       <div id="history-modal-body"></div>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeHistoryModal()">Close</button>
@@ -291,8 +290,8 @@
 
   <div class="modal-overlay" id="import-modal" hidden>
     <div class="card modal-card" style="max-width:340px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add bill</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Import a photo or PDF of the bill and a mock analysis service will extract the details for you — or enter it by hand.</p>
+      <h2 class="modal-title">Add bill</h2>
+      <p class="modal-sub">Import a photo or PDF of the bill and a mock analysis service will extract the details for you — or enter it by hand.</p>
       <div id="import-modal-picker" class="import-picker">
         <button class="import-option" type="button" onclick="triggerImportInput('camera')"></button>
         <button class="import-option" type="button" onclick="triggerImportInput('gallery')"></button>
@@ -338,8 +337,8 @@
 
   <div class="modal-overlay" id="review-modal" hidden>
     <div class="card modal-card" style="max-width:420px;" oninput="refreshReviewIssues()" onchange="refreshReviewIssues()">
-      <h2 id="review-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Review extracted data</h2>
-      <p id="review-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;">Check and correct what the automatic analysis detected before saving this bill.</p>
+      <h2 class="modal-title" id="review-modal-title">Review extracted data</h2>
+      <p class="modal-sub" id="review-modal-sub">Check and correct what the automatic analysis detected before saving this bill.</p>
       <div id="review-detected" hidden></div>
       <div class="form-row">
         <label for="review-property">Property</label>
@@ -415,8 +414,8 @@
 
   <div class="modal-overlay" id="recurring-bill-modal" hidden>
     <div class="card modal-card" style="max-width:360px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Recurring bill</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">A bill like this is created automatically each month, ready to review and allocate.</p>
+      <h2 class="modal-title">Recurring bill</h2>
+      <p class="modal-sub">A bill like this is created automatically each month, ready to review and allocate.</p>
       <div class="form-row">
         <label for="recurring-property">Property</label>
         <select id="recurring-property"></select>
@@ -457,8 +456,8 @@
 
   <div class="modal-overlay" id="doc-modal" hidden>
     <div class="card modal-card" style="max-width:340px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add document</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">Save a photo or PDF of a lease agreement, ID or other tenant document.</p>
+      <h2 class="modal-title">Add document</h2>
+      <p class="modal-sub">Save a photo or PDF of a lease agreement, ID or other tenant document.</p>
       <div class="form-row">
         <label for="doc-tenant">Tenant</label>
         <select id="doc-tenant"></select>
@@ -498,8 +497,8 @@
 
   <div class="modal-overlay" id="allocate-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Allocate bill</h2>
-      <p id="allocate-modal-sub" style="font-size:12.5px;color:var(--text-dim);margin:0;"></p>
+      <h2 class="modal-title">Allocate bill</h2>
+      <p class="modal-sub" id="allocate-modal-sub"></p>
       <div class="filter-chips" id="allocate-method-chips" style="margin:10px 0 4px;">
         <button class="chip" type="button" onclick="setAllocationMethod('equal')">Equal split</button>
         <button class="chip" type="button" onclick="setAllocationMethod('days')">By days occupied</button>
@@ -523,8 +522,8 @@
 
   <div class="modal-overlay" id="pin-modal" hidden>
     <div class="card modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Set app PIN</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">4 to 6 digits. This is just a local lock screen — it does not encrypt your data.</p>
+      <h2 class="modal-title">Set app PIN</h2>
+      <p class="modal-sub">4 to 6 digits. This is just a local lock screen — it does not encrypt your data.</p>
       <div class="form-row"><label for="pin-input-1">PIN</label><input id="pin-input-1" type="password" inputmode="numeric" maxlength="6" /></div>
       <div class="form-row"><label for="pin-input-2">Confirm PIN</label><input id="pin-input-2" type="password" inputmode="numeric" maxlength="6" /></div>
       <p id="pin-modal-error" class="form-error" hidden></p>
@@ -537,7 +536,7 @@
 
   <div class="modal-overlay" id="bill-changes-modal" hidden>
     <div class="card modal-card" style="max-width:400px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Review changes to this bill</h2>
+      <h2 class="modal-title">Review changes to this bill</h2>
       <p id="bill-changes-sub" style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;"></p>
       <div id="bill-changes-list"></div>
       <p id="bill-changes-error" class="form-error" hidden></p>
@@ -551,23 +550,23 @@
 
   <div class="modal-overlay" id="rei-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
-      <h2 id="rei-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Schedule real estate inspection</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0;">The agency's visit to the property. Tenants see it on their dashboard until the day.</p>
+      <h2 class="modal-title" id="rei-modal-title">Schedule real estate inspection</h2>
+      <p class="modal-sub">The agency's visit to the property. Tenants see it on their dashboard until the day.</p>
       <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:10px 0 2px;">Property</label>
       <select id="rei-property" class="modal-input"></select>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Date</label>
+      <label class="modal-hint">Date</label>
       <input id="rei-date" class="modal-input" type="date" oninput="reiDateChanged()" />
       <p id="rei-past-hint" style="font-size:11.5px;color:var(--text-faint);margin:4px 0 0;" hidden>This date has passed — it will be saved in the history (tenants aren't notified).</p>
       <div style="display:flex;gap:8px;">
-        <div style="flex:1;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Window from</label><input id="rei-start" class="modal-input" type="time" /></div>
-        <div style="flex:1;"><label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Window to</label><input id="rei-end" class="modal-input" type="time" /></div>
+        <div style="flex:1;"><label class="modal-hint">Window from</label><input id="rei-start" class="modal-input" type="time" /></div>
+        <div style="flex:1;"><label class="modal-hint">Window to</label><input id="rei-end" class="modal-input" type="time" /></div>
       </div>
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Real estate agency (optional)</label>
+      <label class="modal-hint">Real estate agency (optional)</label>
       <input id="rei-agency" class="modal-input" type="text" maxlength="120" placeholder="e.g. Ray White Belmont" />
-      <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">Message for the tenants</label>
+      <label class="modal-hint">Message for the tenants</label>
       <textarea id="rei-notes" class="modal-input" rows="4" maxlength="800"></textarea>
       <div id="rei-outcome-row" hidden>
-        <label style="font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;">How it went (after the visit — only you see this)</label>
+        <label class="modal-hint">How it went (after the visit — only you see this)</label>
         <textarea id="rei-outcome" class="modal-input" rows="3" maxlength="800" placeholder="e.g. All good. Agent asked to fix the bathroom fan."></textarea>
       </div>
       <label id="rei-notify-row" style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="rei-notify" checked /> <span id="rei-notify-label">Notify the tenants now</span></label>
@@ -599,7 +598,7 @@
 
   <div class="modal-overlay" id="confirm-modal" hidden>
     <div class="card modal-card">
-      <h2 id="confirm-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;"></h2>
+      <h2 class="modal-title" id="confirm-modal-title"></h2>
       <p id="confirm-modal-body" style="font-size:13px;color:var(--text-dim);margin:0;white-space:pre-line;"></p>
       <p id="confirm-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -611,7 +610,7 @@
 
   <div class="modal-overlay" id="property-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 id="property-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add property</h2>
+      <h2 class="modal-title" id="property-modal-title">Add property</h2>
       <div class="form-row"><label for="property-name">Name</label><input id="property-name" type="text" /></div>
       <div class="form-row"><label for="property-address">Address</label><input id="property-address" type="text" /></div>
       <div class="form-row form-row-2">
@@ -691,7 +690,7 @@
 
   <div class="modal-overlay" id="lease-payment-modal" hidden>
     <div class="card modal-card" style="max-width:360px;">
-      <h2 id="lease-payment-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Mark lease payment as paid</h2>
+      <h2 class="modal-title" id="lease-payment-modal-title">Mark lease payment as paid</h2>
       <p id="lease-payment-modal-sub" style="font-size:12px;color:var(--text-faint);margin:0 0 10px;"></p>
       <div class="form-row">
         <label for="lease-payment-start">This payment covers the period starting</label>
@@ -721,7 +720,7 @@
 
   <div class="modal-overlay" id="user-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Create user</h2>
+      <h2 class="modal-title">Create user</h2>
       <div class="form-row form-row-2">
         <div><label for="user-first-name">First name</label><input id="user-first-name" type="text" /></div>
         <div><label for="user-last-name">Last name</label><input id="user-last-name" type="text" /></div>
@@ -759,7 +758,7 @@
 
   <div class="modal-overlay" id="change-password-modal" hidden>
     <div class="card modal-card" style="max-width:340px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Change your password</h2>
+      <h2 class="modal-title">Change your password</h2>
       <div class="form-row"><label for="change-password-new">New password</label><span class="pw-wrap"><input id="change-password-new" type="password" autocomplete="new-password" placeholder="At least 8 characters" /><button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility('change-password-new', this)"><svg class="eye-open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a18.4 18.4 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg></button></span></div>
       <div class="form-row"><label for="change-password-confirm">Confirm new password</label><span class="pw-wrap"><input id="change-password-confirm" type="password" autocomplete="new-password" /><button type="button" class="pw-eye" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility('change-password-confirm', this)"><svg class="eye-open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a18.4 18.4 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg></button></span></div>
       <p id="change-password-error" class="form-error" hidden></p>
@@ -772,7 +771,7 @@
 
   <div class="modal-overlay" id="edit-user-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Edit user</h2>
+      <h2 class="modal-title">Edit user</h2>
       <div class="form-row form-row-2">
         <div><label for="edit-user-first-name">First name</label><input id="edit-user-first-name" type="text" /></div>
         <div><label for="edit-user-last-name">Last name</label><input id="edit-user-last-name" type="text" /></div>
@@ -790,7 +789,7 @@
 
   <div class="modal-overlay" id="maintenance-modal" hidden>
     <div class="card modal-card" id="maintenance-modal-card" style="max-width:380px;">
-      <h2 id="maintenance-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Report a problem</h2>
+      <h2 class="modal-title" id="maintenance-modal-title">Report a problem</h2>
       <p id="maintenance-modal-source-note" style="font-size:12px;color:var(--text-dim);margin:0 0 10px;" hidden></p>
       <div class="form-row" id="maintenance-property-row">
         <label for="maintenance-property">Property</label>
@@ -881,7 +880,7 @@
 
   <div class="modal-overlay" id="week-reassign-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 id="week-reassign-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Reassign</h2>
+      <h2 class="modal-title" id="week-reassign-title">Reassign</h2>
       <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">This updates this week and re-rolls every week after it too.</p>
       <div class="form-row"><label for="week-reassign-room">Room</label>
         <select id="week-reassign-room"></select>
@@ -898,7 +897,7 @@
 
   <div class="modal-overlay" id="cleaning-history-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning history</h2>
+      <h2 class="modal-title">Cleaning history</h2>
       <div id="cleaning-history-body"></div>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeCleaningHistoryModal()">Close</button>
@@ -908,7 +907,7 @@
 
   <div class="modal-overlay" id="notification-compose-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">New notification</h2>
+      <h2 class="modal-title">New notification</h2>
       <div class="form-row"><label for="notif-compose-scope">Send to</label>
         <select id="notif-compose-scope" onchange="onNotifComposeScopeChange()">
           <option value="tenant">One resident</option>
@@ -944,7 +943,7 @@
 
   <div class="modal-overlay" id="cleaning-detail-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
-      <h2 id="cleaning-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Cleaning task</h2>
+      <h2 class="modal-title" id="cleaning-detail-title">Cleaning task</h2>
       <div id="cleaning-detail-body"></div>
       <div class="form-row" id="cleaning-detail-comment-row"><label for="cleaning-detail-comment">Add a comment / observation</label><textarea id="cleaning-detail-comment"></textarea></div>
       <p id="cleaning-detail-modal-error" class="form-error" hidden></p>
@@ -959,7 +958,7 @@
 
   <div class="modal-overlay" id="cleaning-submit-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Add cleaning photos</h2>
+      <h2 class="modal-title">Add cleaning photos</h2>
       <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Take photos or choose several from your gallery to show how the room was left.</p>
       <div class="form-row"><label for="cleaning-submit-photos">Photos</label><input id="cleaning-submit-photos" type="file" accept="image/*" multiple /></div>
       <div class="form-row"><label for="cleaning-submit-note">Note (optional)</label><textarea id="cleaning-submit-note"></textarea></div>
@@ -973,7 +972,7 @@
 
   <div class="modal-overlay" id="bin-out-complete-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Mark Bin OUT completed</h2>
+      <h2 class="modal-title">Mark Bin OUT completed</h2>
       <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">A photo is optional — add one if you'd like a record of it.</p>
       <div class="form-row"><label for="bin-out-complete-photo">Photo (optional)</label><input id="bin-out-complete-photo" type="file" accept="image/*" /></div>
       <p id="bin-out-complete-modal-error" class="form-error" hidden></p>
@@ -986,7 +985,7 @@
 
   <div class="modal-overlay" id="bin-out-detail-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
-      <h2 id="bin-out-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Bin OUT task</h2>
+      <h2 class="modal-title" id="bin-out-detail-title">Bin OUT task</h2>
       <div id="bin-out-detail-body"></div>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeBinOutDetailModal()">Close</button>
@@ -997,7 +996,7 @@
 
   <div class="modal-overlay" id="room-activity-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
-      <h2 id="room-activity-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Room — Activity</h2>
+      <h2 class="modal-title" id="room-activity-title">Room — Activity</h2>
       <div id="room-activity-body"></div>
       <div class="modal-actions">
         <button class="mini-btn" onclick="closeRoomActivityModal()">Close</button>
@@ -1007,7 +1006,7 @@
 
   <div class="modal-overlay" id="trash-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 id="trash-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add trash collection</h2>
+      <h2 class="modal-title" id="trash-modal-title">Add trash collection</h2>
       <div class="form-row"><label for="trash-type">Bin / trash type</label>
         <select id="trash-type" onchange="onTrashTypeChange()">
           <option value="garbage">Garbage (red bin)</option>
@@ -1030,7 +1029,7 @@
 
   <div class="modal-overlay" id="inspection-detail-modal" hidden>
     <div class="card modal-card" style="max-width:420px;">
-      <h2 id="inspection-detail-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Inspection photos</h2>
+      <h2 class="modal-title" id="inspection-detail-title">Inspection photos</h2>
       <div id="inspection-detail-body"></div>
       <p id="inspection-detail-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -1041,7 +1040,7 @@
 
   <div class="modal-overlay" id="inspection-submit-modal" hidden>
     <div class="card modal-card" style="max-width:380px;">
-      <h2 id="inspection-submit-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add photos</h2>
+      <h2 class="modal-title" id="inspection-submit-title">Add photos</h2>
       <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Take photos or choose several from your gallery.</p>
       <div class="form-row"><label for="inspection-submit-photos">Photos</label><input id="inspection-submit-photos" type="file" accept="image/*" multiple /></div>
       <div class="form-row"><label for="inspection-submit-note">Note (optional)</label><textarea id="inspection-submit-note"></textarea></div>
@@ -1055,7 +1054,7 @@
 
   <div class="modal-overlay" id="room-modal" hidden>
     <div class="card modal-card">
-      <h2 id="room-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add room</h2>
+      <h2 class="modal-title" id="room-modal-title">Add room</h2>
       <div class="form-row"><label for="room-name">Room name</label><input id="room-name" type="text" /></div>
       <p id="room-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -1067,7 +1066,7 @@
 
   <div class="modal-overlay" id="included-bill-modal" hidden>
     <div class="card modal-card">
-      <h2 id="included-bill-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add included bill</h2>
+      <h2 class="modal-title" id="included-bill-modal-title">Add included bill</h2>
       <div class="form-row"><label for="included-bill-label">Label</label><input id="included-bill-label" type="text" placeholder="e.g. Electricity" /></div>
       <div class="form-row form-row-2">
         <div><label for="included-bill-amount">Amount</label><input id="included-bill-amount" type="number" min="0" step="0.01" /></div>
@@ -1093,7 +1092,7 @@
 
   <div class="modal-overlay" id="tenant-modal" hidden>
     <div class="card modal-card" style="max-width:400px;">
-      <h2 id="tenant-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add tenant</h2>
+      <h2 class="modal-title" id="tenant-modal-title">Add tenant</h2>
       <div class="form-row"><label for="tenant-fullname">Full name</label><input id="tenant-fullname" type="text" /></div>
       <div class="form-row form-row-2">
         <div><label for="tenant-phone">Phone</label><input id="tenant-phone" type="text" /></div>
@@ -1140,7 +1139,7 @@
 
   <div class="modal-overlay" id="search-modal" hidden onclick="if(event.target===this)closeSearchModal();">
     <div class="card modal-card search-modal-card">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:15px;">Search</h2>
+      <h2 class="modal-title">Search</h2>
       <div class="search-input-row">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <input id="search-modal-input" type="text" placeholder="Search properties or tenants…" oninput="runSearch(this.value)" autocomplete="off" />
@@ -1154,7 +1153,7 @@
 
   <div class="modal-overlay" id="bond-modal" hidden>
     <div class="card modal-card">
-      <h2 id="bond-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add bond</h2>
+      <h2 class="modal-title" id="bond-modal-title">Add bond</h2>
       <div class="form-row form-row-2">
         <div><label for="bond-required">Amount required</label><input id="bond-required" type="number" min="0" step="0.01" /></div>
         <div><label for="bond-paid">Amount paid</label><input id="bond-paid" type="number" min="0" step="0.01" /></div>
@@ -1196,7 +1195,7 @@
 
   <div id="move-out-deduction-modal" class="modal-overlay" hidden>
     <div class="card modal-card">
-      <h2 id="move-out-deduction-modal-title" style="text-transform:none;letter-spacing:0;font-size:15px;">Add deduction</h2>
+      <h2 class="modal-title" id="move-out-deduction-modal-title">Add deduction</h2>
       <div class="form-row"><label for="move-out-deduction-category">Category</label>
         <select id="move-out-deduction-category">
           <option value="cleaning">Cleaning</option>
