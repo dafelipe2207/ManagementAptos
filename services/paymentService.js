@@ -57,7 +57,3 @@ export async function remove(id) {
   if (error) throw error;
 }
 
-export async function removeByTenant(tenantId) {
-  const { error } = await supabase.from('payments').delete().eq('tenant_id', tenantId);
-  if (error) throw error;
-}

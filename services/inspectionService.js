@@ -34,21 +34,6 @@ export async function create(propertyId, roomId, tenantId, type, photoPaths, not
   return fromRow(data);
 }
 
-/** Appends more photos to an existing move-in/move-out submission. */
-export async function addPhotos(id, photoPaths) {
-  const { data: existing, error: getErr } = await supabase.from('inspection_submissions').select('photo_paths').eq('id', id).single();
-  if (getErr) throw getErr;
-  const merged = (Array.isArray(existing.photo_paths) ? existing.photo_paths : []).concat(photoPaths || []);
-  const { data, error } = await supabase.from('inspection_submissions').update({ photo_paths: merged }).eq('id', id).select().single();
-  if (error) throw error;
-  return fromRow(data);
-}
-
-export async function remove(id) {
-  const { error } = await supabase.from('inspection_submissions').delete().eq('id', id);
-  if (error) throw error;
-}
-
 /* ---------- Admin comments on a tenant's move-in/move-out photos (mirrors cleaningService's
    task comments, just keyed by tenant+type instead of a cleaning task id). ---------- */
 function commentFromRow(row) {

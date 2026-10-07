@@ -12,6 +12,8 @@
 // Allocations live in a separate table — see billAllocationService.js;
 // app.js attaches `bill.allocations` after loading both in parallel.
 import { supabase } from '../lib/supabaseClient.js';
+import { removeById } from '../lib/db.js';
+import { describeFunctionError } from '../lib/errors.js?v=2';
 import { getCurrentUserId } from '../lib/auth.js';
 
 function fromRow(row) {
@@ -84,13 +86,7 @@ export async function update(id, b) {
 }
 
 export async function remove(id) {
-  // .select() returns the deleted rows: when the database refuses (no permission for that
-  // property) nothing is deleted and no error comes back, so check something was removed.
-  const { data: deleted, error } = await supabase.from('bills').delete().eq('id', id).select('id');
-  if (!error && (!deleted || deleted.length === 0)) {
-    throw new Error('It wasn\'t deleted — your account doesn\'t have permission to delete this. Ask the Super Admin.');
-  }
-  if (error) throw error;
+  return removeById('bills', id);
 }
 
 /** Signed URL for a bill's original document (photo/PDF), via the tenant-bill-receipt Edge
@@ -104,15 +100,6 @@ export async function getTenantReceiptUrl(billId) {
   return res.data && res.data.url;
 }
 
-async function describeFunctionError(err) {
-  try {
-    if (err && err.context && typeof err.context.json === 'function') {
-      var body = await err.context.clone().json();
-      if (body && body.error) return new Error(body.error);
-    }
-  } catch (_e) { /* fall through */ }
-  return err instanceof Error ? err : new Error((err && err.message) || 'Could not reach the server.');
-}
 
 /** Records that this bill was sent to the property's WhatsApp group (or clears it with
  *  `shared=false`). Kept out of toRow() so ordinary bill edits never overwrite it. */

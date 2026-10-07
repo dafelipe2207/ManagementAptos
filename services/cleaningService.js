@@ -105,11 +105,6 @@ export async function markNotCompleted(id) {
   return taskFromRow(data);
 }
 
-export async function removeTask(id) {
-  const { error } = await supabase.from('cleaning_tasks').delete().eq('id', id);
-  if (error) throw error;
-}
-
 /** Admin override from the Cleaning calendar: keeps this task's own room_id in step with its
  *  weekly_duty after a reassignment (see weeklyDutyService.updateRoom) — called right after it,
  *  never on its own. */
@@ -136,16 +131,6 @@ export async function createSubmission(taskId, propertyId, roomId, tenantId, pho
     user_id: userId, task_id: taskId, property_id: propertyId, room_id: roomId, tenant_id: tenantId,
     photo_paths: photoPaths || [], note: note || null
   }).select().single();
-  if (error) throw error;
-  return submissionFromRow(data);
-}
-
-/** Appends more photos to an existing submission (e.g. the tenant re-opens it to add one they missed). */
-export async function addSubmissionPhotos(id, photoPaths) {
-  const { data: existing, error: getErr } = await supabase.from('cleaning_submissions').select('photo_paths').eq('id', id).single();
-  if (getErr) throw getErr;
-  const merged = (Array.isArray(existing.photo_paths) ? existing.photo_paths : []).concat(photoPaths || []);
-  const { data, error } = await supabase.from('cleaning_submissions').update({ photo_paths: merged }).eq('id', id).select().single();
   if (error) throw error;
   return submissionFromRow(data);
 }

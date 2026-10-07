@@ -4,6 +4,7 @@
 // goes through the `create-user` Edge Function — never supabase.auth.signUp() here, which would
 // swap the CALLER's own session for the new user's session.
 import { supabase } from '../lib/supabaseClient.js';
+import { describeFunctionError } from '../lib/errors.js?v=2';
 
 function fromRow(row) {
   return {
@@ -48,14 +49,6 @@ export async function setRole(profileId, role) {
 
 export async function setActive(profileId, isActive) {
   const { data, error } = await supabase.from('profiles').update({ is_active: isActive }).eq('id', profileId).select().single();
-  if (error) throw error;
-  return fromRow(data);
-}
-
-export async function updateContact(profileId, p) {
-  const { data, error } = await supabase.from('profiles').update({
-    first_name: p.firstName, last_name: p.lastName, phone: p.phone || null
-  }).eq('id', profileId).select().single();
   if (error) throw error;
   return fromRow(data);
 }
@@ -142,12 +135,3 @@ export async function forceSetPassword(profileId, newPassword) {
   return res.data;
 }
 
-async function describeFunctionError(err) {
-  try {
-    if (err && err.context && typeof err.context.json === 'function') {
-      var body = await err.context.clone().json();
-      if (body && body.error) return new Error(body.error);
-    }
-  } catch (_e) { /* fall through */ }
-  return err instanceof Error ? err : new Error((err && err.message) || 'Could not reach the server.');
-}

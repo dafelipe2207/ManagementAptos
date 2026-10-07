@@ -59,11 +59,6 @@ export async function reject(id, reviewedByProfileId, reason) {
   return fromRow(data);
 }
 
-export async function remove(id) {
-  const { error } = await supabase.from('rent_payment_reports').delete().eq('id', id);
-  if (error) throw error;
-}
-
 /** Detaches the proof file from a report (e.g. the wrong photo was uploaded). Staff only (RLS). */
 export async function clearProof(id) {
   const { error } = await supabase.from('rent_payment_reports').update({ proof_path: null }).eq('id', id);

@@ -44,11 +44,6 @@ export async function remove(id) {
   if (error) throw error;
 }
 
-export async function removeByTenant(tenantId) {
-  const { error } = await supabase.from('rent_schedules').delete().eq('tenant_id', tenantId);
-  if (error) throw error;
-}
-
 /** Creates the schedule if the tenant doesn't have one yet, updates it otherwise (matches the reference app's tenant-form behaviour). */
 export async function upsertForTenant(existingSchedule, s) {
   if (existingSchedule) return update(existingSchedule.id, s);

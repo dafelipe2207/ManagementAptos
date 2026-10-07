@@ -4,23 +4,23 @@
 // structural change is that persistence now goes through the async
 // services/* modules instead of synchronous localStorage.
 import * as auth from './lib/auth.js?v=3';
-import { friendlyErrorMessage } from './lib/errors.js';
+import { friendlyErrorMessage } from './lib/errors.js?v=2';
 import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
   // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
-import * as propertyService from './services/propertyService.js?v=3';
-import * as roomService from './services/roomService.js?v=2';
-import * as tenantService from './services/tenantService.js?v=9';
+import * as propertyService from './services/propertyService.js?v=4';
+import * as roomService from './services/roomService.js?v=3';
+import * as tenantService from './services/tenantService.js?v=10';
 import * as bondService from './services/bondService.js?v=2';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
-import * as billService from './services/billService.js?v=5';
+import * as billService from './services/billService.js?v=6';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
-import * as storageService from './services/storageService.js?v=2';
-import * as aiService from './services/aiService.js?v=3';
+import * as storageService from './services/storageService.js?v=3';
+import * as aiService from './services/aiService.js?v=4';
 import * as billExtractionService from './services/billExtractionService.js?v=1';
-import * as profileService from './services/profileService.js?v=5';
+import * as profileService from './services/profileService.js?v=6';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as paymentReportService from './services/paymentReportService.js?v=2';
@@ -30,7 +30,7 @@ import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
 import * as leasePaymentService from './services/leasePaymentService.js?v=1';
 import * as auditService from './services/auditService.js?v=2';
-import * as recurringBillService from './services/recurringBillService.js?v=2';
+import * as recurringBillService from './services/recurringBillService.js?v=3';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
 import * as inspectionService from './services/inspectionService.js';
@@ -281,8 +281,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /**
    * PHASE 8 — OCR/AI bill extraction (the "Import Bill" section of the brief):
    * the invoice photo/PDF is sent to the `analyze-bill` Edge Function
-   * (services/aiService.js), which calls Gemini (Google) server-side
-   * to actually read the document — provider, type, dates,
+   * (services/aiService.js), which reads it server-side with Azure Document Intelligence
+   * (Gemini as backup) to extract the document's fields — provider, type, dates,
    * amount, and a suggested property based on matching the address/name
    * against existing properties. The API key lives as an Edge Function
    * secret, never in the frontend. The result still goes through the

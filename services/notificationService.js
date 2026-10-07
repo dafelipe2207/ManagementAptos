@@ -38,11 +38,6 @@ export async function markRead(id) {
   if (error) throw error;
 }
 
-export async function markUnread(id) {
-  const { error } = await supabase.from('notifications').update({ is_read: false }).eq('id', id);
-  if (error) throw error;
-}
-
 function optsToRow(opts) {
   opts = opts || {};
   return {
@@ -147,12 +142,3 @@ export async function archive(id) {
   if (error) throw error;
 }
 
-export async function unarchive(id) {
-  const { error } = await supabase.from('notifications').update({ archived_at: null }).eq('id', id);
-  if (error) throw error;
-}
-
-export async function remove(id) {
-  const { error } = await supabase.from('notifications').delete().eq('id', id);
-  if (error) throw error;
-}

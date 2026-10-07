@@ -5,6 +5,7 @@
 // with its confidence and source, line items, and validation issues). The API keys live only as
 // Edge Function secrets; nothing secret ever reaches the browser.
 import { supabase } from '../lib/supabaseClient.js';
+import { describeFunctionError } from '../lib/errors.js?v=2';
 
 function readFileAsBase64(file) {
   return new Promise(function (resolve, reject) {
@@ -40,35 +41,8 @@ export async function analyzeBill(file, properties, today) {
       today: today
     }
   });
-  if (res.error) throw await describeFunctionError(res.error);
+  if (res.error) throw await describeFunctionError(res.error, 'The AI service could not be reached.');
   if (res.data && res.data.error) throw new Error(res.data.error);
   return res.data;
 }
 
-/**
- * Analyzes the account's existing bill HISTORY (no image involved) to spot each property/bill
- * type/provider's usual billing cadence and predict which ones look overdue for a new invoice
- * that hasn't been loaded yet. Returns { predictions: [...] } — see predict-bills Edge Function
- * for the shape of each entry. Throws on failure (missing API key, network, etc.).
- */
-export async function predictMissingBills(bills, today) {
-  var res = await supabase.functions.invoke('predict-bills', { body: { bills: bills, today: today } });
-  if (res.error) throw await describeFunctionError(res.error);
-  if (res.data && res.data.error) throw new Error(res.data.error);
-  return res.data;
-}
-
-// supabase-js's default error for a non-2xx Edge Function response is a generic
-// "Edge Function returned a non-2xx status code" — it doesn't read the response body.
-// The actual, useful message (from our Edge Function's own json({error: '...'}) replies)
-// is on err.context, which is the raw fetch Response. Read it here so the person sees the
-// real reason (bad/missing API key, Gemini quota, etc.) instead of a generic error.
-async function describeFunctionError(err) {
-  try {
-    if (err && err.context && typeof err.context.json === 'function') {
-      var body = await err.context.clone().json();
-      if (body && body.error) return new Error(body.error);
-    }
-  } catch (_e) { /* fall through to the generic message below */ }
-  return err instanceof Error ? err : new Error((err && err.message) || 'The AI service could not be reached.');
-}

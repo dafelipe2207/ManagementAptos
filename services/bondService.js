@@ -58,12 +58,3 @@ export async function update(id, b) {
   return fromRow(data);
 }
 
-export async function remove(id) {
-  const { error } = await supabase.from('bonds').delete().eq('id', id);
-  if (error) throw error;
-}
-
-export async function removeByTenant(tenantId) {
-  const { error } = await supabase.from('bonds').delete().eq('tenant_id', tenantId);
-  if (error) throw error;
-}

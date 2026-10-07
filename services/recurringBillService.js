@@ -4,6 +4,7 @@
 // auto-creates the matching row in `bills` once `nextDueDate` arrives, then advances
 // `nextDueDate` by a month (looping if the app wasn't opened for more than one month).
 import { supabase } from '../lib/supabaseClient.js';
+import { removeById } from '../lib/db.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
 function fromRow(row) {
@@ -72,11 +73,5 @@ export async function setActive(id, isActive) {
 }
 
 export async function remove(id) {
-  // .select() returns the deleted rows: when the database refuses (no permission for that
-  // property) nothing is deleted and no error comes back, so check something was removed.
-  const { data: deleted, error } = await supabase.from('recurring_bills').delete().eq('id', id).select('id');
-  if (!error && (!deleted || deleted.length === 0)) {
-    throw new Error('It wasn\'t deleted — your account doesn\'t have permission to delete this. Ask the Super Admin.');
-  }
-  if (error) throw error;
+  return removeById('recurring_bills', id);
 }

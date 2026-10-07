@@ -91,7 +91,3 @@ export async function setReceipt(id, path) {
   return fromRow(data);
 }
 
-export async function removeForBill(billId) {
-  const { error } = await supabase.from('bill_allocations').delete().eq('bill_id', billId);
-  if (error) throw error;
-}

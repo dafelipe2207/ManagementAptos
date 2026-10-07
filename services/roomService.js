@@ -1,5 +1,6 @@
 // services/roomService.js
 import { supabase } from '../lib/supabaseClient.js';
+import { removeById } from '../lib/db.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
 function fromRow(row) {
@@ -30,11 +31,5 @@ export async function update(id, r) {
 }
 
 export async function remove(id) {
-  // .select() returns the deleted rows: when the database refuses (no permission for that
-  // property) nothing is deleted and no error comes back, so check something was removed.
-  const { data: deleted, error } = await supabase.from('rooms').delete().eq('id', id).select('id');
-  if (!error && (!deleted || deleted.length === 0)) {
-    throw new Error('It wasn\'t deleted — your account doesn\'t have permission to delete this. Ask the Super Admin.');
-  }
-  if (error) throw error;
+  return removeById('rooms', id);
 }

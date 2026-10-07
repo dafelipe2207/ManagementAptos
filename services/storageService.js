@@ -1,8 +1,7 @@
 // services/storageService.js
-// Upload/download for the `receipts` and `documents` private Storage
-// buckets. Both buckets are private (RLS restricts each user to files
-// under `<bucket>/<their-auth-uid>/...`), so reading a file back needs a
-// signed URL rather than a public one.
+// Uploads to the private Storage buckets and signed URLs to read them back. Every bucket is
+// private and RLS restricts each user to files under `<their-auth-uid>/...` (staff can read all),
+// so every path starts with the uploader's uid and reading needs a signed URL.
 import { supabase } from '../lib/supabaseClient.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
@@ -10,97 +9,34 @@ function sanitizeFileName(name) {
   return String(name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
-export async function uploadReceipt(billId, file) {
+/** Uploads one file to `bucket` under `<uid>/[prefix-]<timestamp>-<name>` and returns its path. */
+async function upload(bucket, file, prefix) {
   const userId = await getCurrentUserId();
-  const path = userId + '/' + billId + '-' + Date.now() + '-' + sanitizeFileName(file.name);
-  const { error } = await supabase.storage.from('receipts').upload(path, file, { upsert: false });
+  const path = userId + '/' + (prefix ? prefix + '-' : '') + Date.now() + '-' + sanitizeFileName(file.name);
+  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false });
   if (error) throw error;
   return path;
 }
 
-export async function uploadDocument(tenantId, file) {
-  const userId = await getCurrentUserId();
-  const path = userId + '/' + tenantId + '-' + Date.now() + '-' + sanitizeFileName(file.name);
-  const { error } = await supabase.storage.from('documents').upload(path, file, { upsert: false });
-  if (error) throw error;
-  return path;
-}
-
-export async function uploadMaintenancePhoto(file) {
-  const userId = await getCurrentUserId();
-  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
-  const { error } = await supabase.storage.from('maintenance-photos').upload(path, file, { upsert: false });
-  if (error) throw error;
-  return path;
-}
-
-/** Uploads several files (a FileList or array — from a multi-select gallery picker or repeated
- *  camera shots) to `maintenance-photos`, one at a time so a single failure doesn't lose the
- *  paths of files that already succeeded. Returns the array of storage paths, in order. */
-export async function uploadMaintenancePhotos(files) {
+/** Uploads several files (a FileList or array) one at a time, so a single failure doesn't lose
+ *  the paths of files that already succeeded. Returns the storage paths, in order. */
+async function uploadMany(bucket, files) {
   const paths = [];
-  for (const file of Array.from(files || [])) {
-    paths.push(await uploadMaintenancePhoto(file));
-  }
+  for (const file of Array.from(files || [])) paths.push(await upload(bucket, file));
   return paths;
 }
 
-/** Cleaning-check photos (a tenant's "how it looks after cleaning" submission) — same private,
- *  path-scoped-by-uid pattern as the other buckets. */
-export async function uploadCleaningPhoto(file) {
-  const userId = await getCurrentUserId();
-  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
-  const { error } = await supabase.storage.from('cleaning-photos').upload(path, file, { upsert: false });
-  if (error) throw error;
-  return path;
-}
-
-export async function uploadCleaningPhotos(files) {
-  const paths = [];
-  for (const file of Array.from(files || [])) {
-    paths.push(await uploadCleaningPhoto(file));
-  }
-  return paths;
-}
-
-/** Move-in / move-out condition photos — same private, path-scoped-by-uid pattern. */
-export async function uploadInspectionPhoto(file) {
-  const userId = await getCurrentUserId();
-  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
-  const { error } = await supabase.storage.from('inspection-photos').upload(path, file, { upsert: false });
-  if (error) throw error;
-  return path;
-}
-
-export async function uploadInspectionPhotos(files) {
-  const paths = [];
-  for (const file of Array.from(files || [])) {
-    paths.push(await uploadInspectionPhoto(file));
-  }
-  return paths;
-}
+export const uploadReceipt = (billId, file) => upload('receipts', file, billId);
+export const uploadDocument = (tenantId, file) => upload('documents', file, tenantId);
+export const uploadMaintenancePhotos = (files) => uploadMany('maintenance-photos', files);
+export const uploadCleaningPhotos = (files) => uploadMany('cleaning-photos', files);
+export const uploadInspectionPhotos = (files) => uploadMany('inspection-photos', files);
+export const uploadMoveOutEvidencePhotos = (files) => uploadMany('move-out-evidence', files);
+export const uploadBinOutEvidencePhoto = (file) => upload('bin-out-evidence', file);
 
 /** Buckets are private — always use a signed URL (expires after `expiresInSeconds`) to display/open a file. */
 export async function getSignedUrl(bucket, path, expiresInSeconds) {
   const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, expiresInSeconds || 3600);
   if (error) throw error;
   return data.signedUrl;
-}
-
-export async function uploadMoveOutEvidencePhoto(file) {
-  const userId = await getCurrentUserId();
-  const path = userId + '/' + Date.now() + '-' + sanitizeFileName(file.name);
-  const { error } = await supabase.storage.from('move-out-evidence').upload(path, file, { upsert: false });
-  if (error) throw error;
-  return path;
-}
-
-/** Uploads several evidence photos for one manual deduction (e.g. multiple angles of a damaged
- *  wall), one at a time so a single failure doesn't lose the paths that already succeeded. */
-export async function uploadMoveOutEvidencePhotos(files) {
-  const paths = [];
-  for (const file of Array.from(files || [])) {
-    paths.push(await uploadMoveOutEvidencePhoto(file));
-  }
-  return paths;
 }

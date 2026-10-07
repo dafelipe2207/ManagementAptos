@@ -9,6 +9,7 @@
 // represents for the 'occupancy' allocation method (1.0 = one person, 2.0 =
 // a couple, etc.) — see computeOccupancyFactorAllocationRows in app.js.
 import { supabase } from '../lib/supabaseClient.js';
+import { removeById } from '../lib/db.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
 function fromRow(row) {
@@ -82,22 +83,7 @@ export async function update(id, t) {
 }
 
 export async function remove(id) {
-  // .select() returns the deleted rows: when the database refuses (no permission for that
-  // property) nothing is deleted and no error comes back, so check something was removed.
-  const { data: deleted, error } = await supabase.from('tenants').delete().eq('id', id).select('id');
-  if (!error && (!deleted || deleted.length === 0)) {
-    throw new Error('It wasn\'t deleted — your account doesn\'t have permission to delete this. Ask the Super Admin.');
-  }
-  if (error) throw error;
-}
-
-/** Marks that the move-out bond settlement has run for this tenant, without touching any other
- *  field (a plain `update()` call would send toRow(t), which requires the FULL tenant draft). */
-export async function markMoveOutSettled(id, isoTimestamp) {
-  const { data, error } = await supabase.from('tenants')
-    .update({ move_out_settled_at: isoTimestamp }).eq('id', id).select().single();
-  if (error) throw error;
-  return fromRow(data);
+  return removeById('tenants', id);
 }
 
 // Lets a logged-in TENANT set only their own actual_move_out_date (when starting the move-out
