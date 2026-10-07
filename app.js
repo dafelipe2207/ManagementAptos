@@ -2671,23 +2671,30 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  1) what's ALREADY owed (real amounts: unpaid rent, bills charged and unpaid, deductions), and
    *  2) bills ESTIMATED for the days not billed yet. Then the total and the bond left.
    *  The safety margin on variable bills is applied in the numbers but never mentioned. */
+  /** What a leaving tenant already owes (real amounts), shared by the on-screen estimate, the
+   *  WhatsApp text and the image. A credit (rent paid ahead) comes back as a negative amount.
+   *  `long` = the fuller labels used on screen. */
+  function moveOutOwedItems(est, manual, long){
+    var out = [];
+    if (est.outstandingRent > 0) out.push({ label:'Rent (until '+(long ? fullDate(est.moveOutDate) : shortDate(est.moveOutDate))+')', amount:est.outstandingRent });
+    est.lines.forEach(function(l){ if (l.unpaid > 0) out.push({ label:billTypeLabel(l.billType)+(long ? ' (bills already charged)' : ' (charged)'), amount:l.unpaid }); });
+    (manual || []).forEach(function(d){ out.push({ label:d.description, amount:d.amount || 0 }); });
+    if (est.bondDeduction > 0) out.push({ label: long ? 'Other bond deductions' : 'Other deductions', amount:est.bondDeduction });
+    if (est.bondReturned > 0) out.push({ label:'Bond already returned', amount:est.bondReturned });
+    if (est.rentCredit > 0) out.push({ label: long ? 'Rent paid in advance (credit)' : 'Rent paid in advance', amount:-est.rentCredit });
+    return out;
+  }
   function moveOutEstimateBodyHtml(est, manual, who){
     manual = manual || [];
     var neg = function(v){ return '<span class="v" style="color:var(--status-overdue);">-'+money(v)+'</span>'; };
     var sub = function(txt){ return '<br><span style="font-size:10.5px;font-weight:400;color:var(--text-faint);">'+txt+'</span>'; };
     var head = function(txt){ return '<h3 style="font-size:12.5px;margin:12px 0 4px;">'+txt+'</h3>'; };
-    var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
-
-    var owedRows = '';
-    if (est.outstandingRent > 0) owedRows += '<div class="field-row"><span class="k">Rent (until '+fullDate(est.moveOutDate)+')</span>'+neg(est.outstandingRent)+'</div>';
-    est.lines.forEach(function(l){
-      if (l.unpaid > 0) owedRows += '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' (bills already charged)</span>'+neg(l.unpaid)+'</div>';
-    });
-    manual.forEach(function(d){ owedRows += '<div class="field-row"><span class="k">'+esc(d.description)+'</span>'+neg(d.amount)+'</div>'; });
-    if (est.bondDeduction > 0) owedRows += '<div class="field-row"><span class="k">Other bond deductions</span>'+neg(est.bondDeduction)+'</div>';
-    if (est.bondReturned > 0) owedRows += '<div class="field-row"><span class="k">Bond already returned</span>'+neg(est.bondReturned)+'</div>';
-    if (est.rentCredit > 0) owedRows += '<div class="field-row"><span class="k">Rent paid in advance (credit)</span><span class="v" style="color:var(--status-paid);">+'+money(est.rentCredit)+'</span></div>';
-    var owedTotal = round2(est.outstandingRent + est.totalUnpaid + manualTotal + est.bondDeduction + est.bondReturned - (est.rentCredit || 0));
+    var owedItems = moveOutOwedItems(est, manual, true);
+    var owedRows = owedItems.map(function(x){
+      return '<div class="field-row"><span class="k">'+esc(x.label)+'</span>'+
+        (x.amount < 0 ? '<span class="v" style="color:var(--status-paid);">+'+money(-x.amount)+'</span>' : neg(x.amount))+'</div>';
+    }).join('');
+    var owedTotal = round2(owedItems.reduce(function(s,x){ return s + x.amount; }, 0));
 
     var estRows = '';
     est.lines.forEach(function(l){
@@ -3053,14 +3060,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var est = computeMoveOutEstimate(t, { tenantView:true });
     if (!est) return null;
     var manual = (settlement && settlement.status === 'in_progress') ? (settlement.manualDeductions || []) : [];
-    var manualTotal = round2(manual.reduce(function(s,d){ return s + (d.amount || 0); }, 0));
-    var owed = [];
-    if (est.outstandingRent > 0) owed.push({ label:'Rent (until '+shortDate(est.moveOutDate)+')', amount:est.outstandingRent });
-    est.lines.forEach(function(l){ if (l.unpaid > 0) owed.push({ label:billTypeLabel(l.billType)+' (charged)', amount:l.unpaid }); });
-    manual.forEach(function(d){ owed.push({ label:d.description, amount:d.amount }); });
-    if (est.bondDeduction > 0) owed.push({ label:'Other deductions', amount:est.bondDeduction });
-    if (est.bondReturned > 0) owed.push({ label:'Bond already returned', amount:est.bondReturned });
-    if (est.rentCredit > 0) owed.push({ label:'Rent paid in advance', amount:-est.rentCredit });
+    var owed = moveOutOwedItems(est, manual, false);
     var estimated = [];
     est.lines.forEach(function(l){
       if (l.estimatedGapAmount > 0) estimated.push({ label:billTypeLabel(l.billType), sub: gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo), amount:l.estimatedGapAmount });
@@ -3754,7 +3754,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var PAID_CAP = rentHistoryShowAll[tenantId] ? Infinity : 5;
     var pendingShown = pending; // pending items are always shown in full, never truncated
     var paidShown = paidGroups.slice(0, PAID_CAP);
-    var paidExtra = paidGroups.length - paidShown.length;
     return tenantRentReportsHtml(tenantId) + '<div class="card"><h2>Rent history</h2>'+
       '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:0 0 6px;">Due &amp; upcoming ('+pending.length+')</h3>'+
       (pendingShown.length ? '<div class="field-list">'+pendingShown.map(row).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0 0 10px;">Nothing due right now.</p>')+
@@ -4953,6 +4952,29 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       amount: isFinite(amt) ? Math.round(amt*100)/100 : null
     };
   }
+  /** Fills the review/edit bill form from a bill or extracted values (reverse of reviewFormValues). */
+  function fillReviewForm(v){
+    document.getElementById('review-property').value = v.propertyId || '';
+    document.getElementById('review-billtype').value = v.billType || '';
+    document.getElementById('review-provider').value = v.provider || '';
+    document.getElementById('review-account').value = v.accountNumber || '';
+    document.getElementById('review-account-hint').hidden = true;
+    document.getElementById('review-invoice').value = v.invoiceNumber || '';
+    document.getElementById('review-issue').value = v.issueDate || '';
+    document.getElementById('review-due').value = v.dueDate || '';
+    document.getElementById('review-period-start').value = v.billingPeriodStart || '';
+    document.getElementById('review-period-end').value = v.billingPeriodEnd || '';
+    document.getElementById('review-amount').value = v.amount == null ? '' : v.amount;
+  }
+  /** "Repeats every month": saves a recurring_bills template from a saved bill. */
+  async function createRecurringFromBill(bill, billingDay, note){
+    var tpl = await recurringBillService.create({
+      propertyId: bill.propertyId, billType: bill.billType, provider: bill.provider, amount: bill.amount,
+      billingDay: billingDay, nextDueDate: addMonthsIso(bill.dueDate, 1), isActive: true, notes: note
+    });
+    recurringBills.push(tpl);
+    return tpl;
+  }
   /** Checks the values about to be saved. Uses the extraction's own findings, dropping the ones
    *  about a field the admin has since corrected, and re-checks the edited values. */
   function validateReviewValues(v, item){
@@ -5083,18 +5105,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     reviewDuplicateOverride = false;
     var saveBtnReset = document.querySelector('#review-modal .mini-btn.primary');
     if (saveBtnReset) saveBtnReset.textContent = 'Save bill';
-    var d = item.extracted;
-    document.getElementById('review-property').value = d.propertyId;
-    document.getElementById('review-billtype').value = d.billType;
-    document.getElementById('review-provider').value = d.provider;
-    document.getElementById('review-account').value = d.accountNumber || '';
-    document.getElementById('review-account-hint').hidden = true;
-    document.getElementById('review-invoice').value = d.invoiceNumber;
-    document.getElementById('review-issue').value = d.issueDate;
-    document.getElementById('review-due').value = d.dueDate;
-    document.getElementById('review-period-start').value = d.billingPeriodStart;
-    document.getElementById('review-period-end').value = d.billingPeriodEnd;
-    document.getElementById('review-amount').value = d.amount;
+    fillReviewForm(item.extracted);
     document.getElementById('review-recurring').checked = false;
     document.getElementById('review-recurring-day').value = '';
     document.getElementById('review-recurring-day-row').hidden = true;
@@ -5144,17 +5155,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('review-due-assume').hidden = true;
     document.getElementById('review-modal-sub').textContent = 'Update the details for this bill.';
     document.getElementById('review-discard-btn').hidden = true;
-    document.getElementById('review-property').value = b.propertyId;
-    document.getElementById('review-billtype').value = b.billType;
-    document.getElementById('review-provider').value = b.provider;
-    document.getElementById('review-account').value = b.accountNumber || '';
-    document.getElementById('review-account-hint').hidden = true;
-    document.getElementById('review-invoice').value = b.invoiceNumber || '';
-    document.getElementById('review-issue').value = b.issueDate || '';
-    document.getElementById('review-due').value = b.dueDate || '';
-    document.getElementById('review-period-start').value = b.billingPeriodStart || '';
-    document.getElementById('review-period-end').value = b.billingPeriodEnd || '';
-    document.getElementById('review-amount').value = b.amount;
+    fillReviewForm(b);
     document.getElementById('review-recurring-row').hidden = false;
     var recurringCheckbox = document.getElementById('review-recurring');
     var recurringHint = document.getElementById('review-recurring-existing-hint');
@@ -5202,17 +5203,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  bill (old → new) and asks the admin to Accept or Reject before anything is written. Nothing
    *  is saved with no changes. Payments already recorded are never touched by an edit. */
   async function saveEditedBill(){
-    var provider = document.getElementById('review-provider').value.trim();
-    var accountNumber = document.getElementById('review-account').value.trim();
-    var invoiceNumber = document.getElementById('review-invoice').value.trim();
-    var issueDate = document.getElementById('review-issue').value;
-    var dueDate = document.getElementById('review-due').value;
-    var periodStart = document.getElementById('review-period-start').value;
-    var periodEnd = document.getElementById('review-period-end').value;
-    var amount = parseFloat(document.getElementById('review-amount').value);
+    var v = reviewFormValues();
     var errorEl = document.getElementById('review-modal-error');
 
-    if (!provider || !issueDate || !dueDate || !periodStart || !periodEnd || !isFinite(amount) || amount <= 0){
+    if (!v.provider || !v.issueDate || !v.dueDate || !v.billingPeriodStart || !v.billingPeriodEnd || v.amount == null || v.amount <= 0){
       errorEl.textContent = 'Add a provider, both dates and a valid amount before saving.';
       errorEl.hidden = false;
       return;
@@ -5220,22 +5214,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var b = billOf(editingBillId);
     if (!b){ closeReviewModal(); return; }
-    var newAmount = Math.round(amount*100)/100;
-    var amountChanged = newAmount !== round2(b.amount);
-    var periodChanged = periodStart !== b.billingPeriodStart || periodEnd !== b.billingPeriodEnd;
-
-    var updated = Object.assign({}, b, {
-      propertyId: document.getElementById('review-property').value,
-      billType: document.getElementById('review-billtype').value,
-      provider: provider,
-      accountNumber: accountNumber,
-      invoiceNumber: invoiceNumber,
-      issueDate: issueDate,
-      dueDate: dueDate,
-      billingPeriodStart: periodStart,
-      billingPeriodEnd: periodEnd,
-      amount: newAmount
-    });
+    var amountChanged = v.amount !== round2(b.amount);
+    var periodChanged = v.billingPeriodStart !== b.billingPeriodStart || v.billingPeriodEnd !== b.billingPeriodEnd;
+    var updated = Object.assign({}, b, v);
 
     var recurringCheckbox = document.getElementById('review-recurring');
     var makeRecurring = recurringCheckbox.checked && !recurringCheckbox.disabled;
@@ -5328,17 +5309,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           recurringMsg = ' This provider already repeats automatically for this property, so a duplicate monthly repeat wasn\'t created.';
         } else if (isFinite(billingDay) && billingDay >= 1 && billingDay <= 28){
           try {
-            var tpl = await recurringBillService.create({
-              propertyId: saved.propertyId,
-              billType: saved.billType,
-              provider: saved.provider,
-              amount: saved.amount,
-              billingDay: billingDay,
-              nextDueDate: addMonthsIso(saved.dueDate, 1),
-              isActive: true,
-              notes: 'Auto-generated from an edited bill.'
-            });
-            recurringBills.push(tpl);
+            await createRecurringFromBill(saved, billingDay, 'Auto-generated from an edited bill.');
             recurringMsg = ' It will now repeat automatically every month.';
           } catch(tplErr){
             recurringMsg = ' The bill was saved, but the recurring template failed to save: ' + friendlyErrorMessage(tplErr);
@@ -5447,14 +5418,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.chooseManualBillEntry = chooseManualBillEntry;
   async function confirmReviewedBill(){
-    var provider = document.getElementById('review-provider').value.trim();
-    var accountNumber = document.getElementById('review-account').value.trim();
-    var invoiceNumber = document.getElementById('review-invoice').value.trim();
-    var issueDate = document.getElementById('review-issue').value;
-    var dueDate = document.getElementById('review-due').value;
-    var periodStart = document.getElementById('review-period-start').value;
-    var periodEnd = document.getElementById('review-period-end').value;
-    var amount = parseFloat(document.getElementById('review-amount').value);
+    var v = reviewFormValues();
     var errorEl = document.getElementById('review-modal-error');
 
     // Validate before anything is saved or split among tenants: errors block, warnings must be
@@ -5466,7 +5430,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       errorEl.hidden = false;
       return;
     }
-    if (!issueDate){
+    if (!v.issueDate){
       errorEl.textContent = 'Enter the invoice date from the bill.';
       errorEl.hidden = false;
       return;
@@ -5478,12 +5442,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return;
     }
 
-    var reviewPropertyId = document.getElementById('review-property').value;
     var saveBtnEl = document.querySelector('#review-modal .mini-btn.primary');
     if (!reviewDuplicateOverride){
-      var duplicate = findDuplicateBill(reviewPropertyId, provider, invoiceNumber, periodStart, periodEnd, accountNumber);
+      var duplicate = findDuplicateBill(v.propertyId, v.provider, v.invoiceNumber, v.billingPeriodStart, v.billingPeriodEnd, v.accountNumber);
       if (duplicate){
-        errorEl.textContent = 'This looks like a bill you already saved — same provider ('+esc(provider)+') and period for this property'+(invoiceNumber && duplicate.invoiceNumber ? ' (or a matching invoice number)' : '')+'. Tap "Save anyway" if this is a different bill, or Cancel to check it first.';
+        errorEl.textContent = 'This looks like a bill you already saved — same provider ('+esc(v.provider)+') and period for this property'+(v.invoiceNumber && duplicate.invoiceNumber ? ' (or a matching invoice number)' : '')+'. Tap "Save anyway" if this is a different bill, or Cancel to check it first.';
         errorEl.hidden = false;
         reviewDuplicateOverride = true;
         if (saveBtnEl) saveBtnEl.textContent = 'Save anyway';
@@ -5492,17 +5455,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
 
     var queueItem = importQueue.find(function(i){ return i.id===reviewItemId; }) || {};
-    var draftBill = {
-      propertyId: document.getElementById('review-property').value,
-      provider: provider,
-      billType: document.getElementById('review-billtype').value,
-      accountNumber: accountNumber,
-      invoiceNumber: invoiceNumber,
-      issueDate: issueDate,
-      dueDate: dueDate,
-      billingPeriodStart: periodStart,
-      billingPeriodEnd: periodEnd,
-      amount: Math.round(amount*100)/100,
+    var draftBill = Object.assign({}, v, {
       status: 'pending',
       notes: queueItem.skippedAi
         ? 'Imported — recognized account, entered by hand without using AI.'
@@ -5510,7 +5463,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         : 'Imported from ' + (queueItem.fileName || 'a photo/PDF') + ' — ' + (EXTRACTOR_LABEL[queueItem.extractor] || 'read automatically').toLowerCase() +
           (queueItem.detected && queueItem.detected.confidence != null ? ' (confidence ' + Math.round(queueItem.detected.confidence * 100) + '%)' : '') +
           ', reviewed and confirmed before splitting' + (reviewWarnings.length ? ' (' + reviewWarnings.length + ' check' + (reviewWarnings.length === 1 ? '' : 's') + ' confirmed against the bill).' : '.')
-    };
+    });
 
     var saveBtn = document.querySelector('#review-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
@@ -5554,17 +5507,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var billingDay = parseInt(document.getElementById('review-recurring-day').value, 10);
         if (isFinite(billingDay) && billingDay >= 1 && billingDay <= 28){
           try {
-            var tpl = await recurringBillService.create({
-              propertyId: newBill.propertyId,
-              billType: newBill.billType,
-              provider: newBill.provider,
-              amount: newBill.amount,
-              billingDay: billingDay,
-              nextDueDate: addMonthsIso(newBill.dueDate, 1),
-              isActive: true,
-              notes: 'Auto-generated from a manually saved bill.'
-            });
-            recurringBills.push(tpl);
+            await createRecurringFromBill(newBill, billingDay, 'Auto-generated from a manually saved bill.');
             showToast('Bill saved — it will repeat automatically every month.', 'success');
           } catch(recErr){
             showToast('Bill saved, but could not set up the monthly repeat. ' + friendlyErrorMessage(recErr), 'error');
@@ -5574,7 +5517,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
       bills.push(newBill);
       if (queueItem.extractionId){
-        var finalValues = reviewFormValues();
+        var finalValues = v;
         billExtractionService.update(queueItem.extractionId, {
           status: 'confirmed', billId: newBill.id, propertyId: newBill.propertyId,
           confirmedAt: new Date().toISOString(), confirmedBy: currentProfile ? currentProfile.id : null,
@@ -9127,7 +9070,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var MAINTENANCE_STATUS_BADGE = { reported:'due', assigned:'upcoming', in_progress:'neutral', waiting:'due', completed:'paid', verified:'paid', closed:'neutral', cancelled:'neutral', rejected:'overdue' };
   var MAINTENANCE_STATUS_LABEL = { reported:'Reported', assigned:'Assigned', in_progress:'In Progress', waiting:'Waiting', completed:'Completed', verified:'Verified', closed:'Closed', cancelled:'Cancelled', rejected:'Rejected' };
   var MAINTENANCE_PRIORITY_ORDER = ['low','medium','high','urgent'];
-  var MAINTENANCE_PRIORITY_BADGE = { low:'neutral', medium:'upcoming', high:'due', urgent:'overdue' };
   var MAINTENANCE_PRIORITY_LABEL = { low:'Low', medium:'Medium', high:'High', urgent:'Urgent' };
   var MAINTENANCE_CATEGORY_LABEL = { plumbing:'Plumbing', electrical:'Electrical', appliance:'Appliance', pest_control:'Pest control', cleaning:'Cleaning', structural:'Structural', other:'Other' };
   // Statuses that mean the request is no longer active — a due_date in the past no longer counts
@@ -10602,9 +10544,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  canComment: admin can leave/see an observation on these photos (mirrors cleaning's
    *  per-task comments — see inspection_comments). Tenants always see existing comments
    *  read-only, same as they do on cleaning photos. */
-  // Traffic-light tags on inspection comments (finding_severity column) — reuses the same
-  // badge color tokens as Maintenance's priority badges (MAINTENANCE_PRIORITY_BADGE above),
-  // not new colors: 'attention' ~ 'high' priority (orange/due), 'failed' ~ 'urgent' (red/overdue).
+  // Traffic-light tags on inspection comments (finding_severity column) — the same badge color
+  // tokens as everywhere else: 'attention' = orange (due), 'failed' = red (overdue).
   var INSPECTION_SEVERITY_BADGE = { attention:'due', failed:'overdue' };
   var INSPECTION_SEVERITY_LABEL = { attention:'🟠 Attention', failed:'🔴 Failed' };
 
