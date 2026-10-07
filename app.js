@@ -20,7 +20,6 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=2';
 import * as aiService from './services/aiService.js?v=3';
 import * as billExtractionService from './services/billExtractionService.js?v=1';
-import * as migrationService from './services/migrationService.js';
 import * as profileService from './services/profileService.js?v=5';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
@@ -712,7 +711,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return amount; // 'weekly' (and any unrecognized value falls back to as-is)
   }
   function weeklyToMonthly(weekly){ return weekly * 52 / 12; }
-  function weeklyToAnnual(weekly){ return weekly * 52; }
   function weeklyToFortnightly(weekly){ return weekly * 2; }
   function shortDate(iso){
     var d = new Date(iso + 'T00:00:00');
@@ -2497,9 +2495,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function sendTenantAccess(tenantId){
     var t = tenantOf(tenantId); if (!t) return;
-    var digits = phoneDigitsForWhatsApp(t.phone);
-    if (!digits){ showToast('No phone number on file for this tenant.', 'error'); return; }
-    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(tenantAccessMessage(t)));
+    var url = waChatUrl(t.phone, tenantAccessMessage(t));
+    if (!url){ showToast('No phone number on file for this tenant.', 'error'); return; }
+    openWhatsApp(url);
   }
   function copyTenantAccess(tenantId, btn){
     var t = tenantOf(tenantId); if (!t) return;
@@ -2991,8 +2989,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Settlement approved: dates can't change any more, but the final figures can still be sent.
     if (s && s.status === 'completed' && bondOf(t.id)){
       return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
-        '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.chat+'</svg>Send settlement (text)</button>'+
-        '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'shareMoveOutEstimateImage(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send settlement (image)</button></div>';
+        '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send settlement</button></div>';
     }
     if (tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
     if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
@@ -3000,8 +2997,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button type="button" class="mini-btn" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Change date</button>'+
       '<button type="button" class="mini-btn danger" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel move-out</button>'+
       ((!s || s.status === 'in_progress') && (t.actualMoveOutDate || t.expectedMoveOutDate)
-        ? '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimateWhatsApp(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.chat+'</svg>Send estimate (text)</button>'+
-          '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'shareMoveOutEstimateImage(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send estimate (image)</button>' : '')+
+        ? '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send estimate</button>' : '')+
       '</div>';
   }
 
@@ -3119,25 +3115,53 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     L.push('What you owe is taken from your bond — anything you pay before you leave lowers that amount. The bills not billed yet are an estimate based on your average; the final figure is confirmed once the last bills arrive. You can also see this anytime in your app.');
     return L.join('\n');
   }
-  function sendMoveOutEstimateWhatsApp(tenantId){
+  /** One "Send estimate" / "Send settlement" button: the summary image + the full message,
+   *  in the same send window used for bills (copy image, open the chat with the text typed,
+   *  share, save). */
+  async function sendMoveOutEstimate(tenantId){
     var t = tenantOf(tenantId); if (!t) return;
-    var msg = moveOutEstimateMessage(t);
-    if (!msg){ showToast('Set a move-out date first.', 'error'); return; }
-    var digits = phoneDigitsForWhatsApp(t.phone);
-    if (!digits){
-      copyTextReliably(msg).then(function(ok){ showToast('No phone number on file for this tenant.'+(ok ? ' The estimate was copied so you can paste it.' : ''), 'error'); });
-      return;
-    }
-    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(msg));
+    var d = moveOutEstimateData(t);
+    if (!d){ showToast('Set a move-out date first.', 'error'); return; }
+    var m = groupSendModalShell('Send to ' + d.first + ' on WhatsApp', 'Preparing the ' + (d.final ? 'settlement' : 'estimate') + '…');
+    var message = moveOutEstimateMessage(t);
+    var blob = null;
+    try { blob = await moveOutEstimateImageBlob(t); } catch(err){ console.error('estimate image', err); }
+    var chatUrl = waChatUrl(t.phone, message);
+    showGroupSend(m, { message: message, imageBlob: blob,
+      imageName: 'move-out-' + (d.final ? 'settlement' : 'estimate') + '-' + (d.first || 'tenant') + '.png',
+      chatUrl: chatUrl, chatPrefilled: !!chatUrl, recipientName: d.first,
+      note: (chatUrl ? '' : 'No phone number on file for this tenant — copy the image and message and send them yourself. ') + (blob ? '' : 'The image couldn\'t be created — the message is still ready.') });
   }
-  window.sendMoveOutEstimateWhatsApp = sendMoveOutEstimateWhatsApp;
+  window.sendMoveOutEstimate = sendMoveOutEstimate;
 
-  /** Draws the estimate as a clean summary card (PNG) — easiest for the tenant to read at a
-   *  glance in WhatsApp. Light background so it looks the same in any chat theme. */
+  /* ============ WhatsApp images: shared canvas card ============
+   * Every image sent to tenants (move-out estimate, what they owe, bill split) is the same white
+   * rounded card on a light grey background, 1080px wide, so it reads the same in any chat theme. */
+  var IMG_FONT = 'Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+  function imageCard(W, H){
+    var c = document.createElement('canvas'); c.width = W; c.height = H;
+    var g = c.getContext('2d');
+    function rr(x, y, w, h, r, fill){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); g.fillStyle = fill; g.fill(); }
+    g.fillStyle = '#f4f5f8'; g.fillRect(0, 0, W, H);
+    rr(32, 32, W - 64, H - 64, 36, '#ffffff');
+    g.textBaseline = 'alphabetic';
+    return { c: c, g: g, rr: rr, toBlob: function(){ return new Promise(function(res){ c.toBlob(function(b){ res(b); }, 'image/png'); }); } };
+  }
+  /** Draws a bill document (already rendered to a canvas) inside the card with a small caption. */
+  function drawDocOnCard(g, docCanvas, caption, L, y, dw){
+    var dh = Math.round(docCanvas.height * dw / docCanvas.width);
+    g.fillStyle = '#6b7280'; g.font = '600 24px ' + IMG_FONT; g.fillText(caption, L, y + 6);
+    y += 24;
+    g.fillStyle = '#e5e7eb'; g.fillRect(L - 13, y - 1, dw + 2, dh + 2);
+    g.drawImage(docCanvas, L - 12, y, dw, dh);
+    return dh;
+  }
+
+  /** The move-out estimate / settlement as a summary card (PNG). */
   function moveOutEstimateImageBlob(t){
     var d = moveOutEstimateData(t);
     if (!d) return Promise.resolve(null);
-    var Wd = 1080, pad = 64, rowH = 58, font = 'Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+    var Wd = 1080, pad = 64, rowH = 58, font = IMG_FONT;
     var rows = [];
     rows.push({ kind:'kv', label:'Bond paid', amount:d.bondPaid, bold:true });
     rows.push({ kind:'head', label:'Already owed', color:'#c0392b' });
@@ -3150,13 +3174,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     rows.push({ kind:'kv', label:'Total owed + estimated', amount:d.total, bold:true });
     var heights = rows.map(function(r){ return r.kind === 'head' ? 86 : r.kind === 'gap' ? 20 : (r.sub ? rowH + 34 : rowH); });
     var Hd = 230 + heights.reduce(function(s,h){ return s + h; }, 0) + 190 + 170;
-    var c = document.createElement('canvas'); c.width = Wd; c.height = Hd;
-    var g = c.getContext('2d');
-    function rr(x, y, w, h, r, fill){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); g.fillStyle = fill; g.fill(); }
-    g.fillStyle = '#f4f5f8'; g.fillRect(0, 0, Wd, Hd);
-    rr(32, 32, Wd - 64, Hd - 64, 36, '#ffffff');
+    var card = imageCard(Wd, Hd), g = card.g, rr = card.rr;
     var y = 32 + pad + 20;
-    g.fillStyle = '#1d2433'; g.font = '700 50px ' + font; g.textBaseline = 'alphabetic';
+    g.fillStyle = '#1d2433'; g.font = '700 50px ' + font;
     g.fillText(d.final ? 'Move-out settlement' : 'Move-out estimate', pad + 32, y + 24);
     g.fillStyle = '#6b7280'; g.font = '400 32px ' + font;
     g.fillText(d.fullName + ' · moving out ' + fullDate(d.moveOutDate), pad + 32, y + 78);
@@ -3198,89 +3218,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       g.fillText('Estimate only — confirmed once the last bills arrive.', L, y + 10);
       g.fillText('Paying before you leave lowers what\'s taken from the bond.', L, y + 48);
     }
-    return new Promise(function(res){ c.toBlob(function(b){ res(b); }, 'image/png'); });
+    return card.toBlob();
   }
-  /** Opens a preview window with the summary image, so it's always visible and in hand, plus
-   *  the ways to get it into WhatsApp: Copy (then paste with Ctrl+V in the chat), Share (phones),
-   *  Download, and Open the tenant's chat. The image can also be dragged straight into WhatsApp. */
-  var estimateImageState = null;
-  function shareMoveOutEstimateImage(tenantId){
-    var t = tenantOf(tenantId); if (!t) return;
-    var d = moveOutEstimateData(t);
-    if (!d){ showToast('Set a move-out date first.', 'error'); return; }
-    var p;
-    try { p = moveOutEstimateImageBlob(t); }
-    catch(err){ console.error('estimate image', err); showToast('Could not create the image. ' + (err && err.message || ''), 'error'); return; }
-    p.then(function(blob){
-      if (!blob){ showToast('Could not create the image.', 'error'); return; }
-      var name = 'move-out-' + (d.final ? 'settlement' : 'estimate') + '-' + (d.first || 'tenant').toLowerCase() + '.png';
-      var caption = 'Hi ' + d.first + ', here is ' + (d.final ? 'the final settlement of your bond' : 'the estimate') + ' for your move-out on ' + fullDate(d.moveOutDate) + '.';
-      if (estimateImageState && estimateImageState.url) URL.revokeObjectURL(estimateImageState.url);
-      estimateImageState = { blob: blob, url: URL.createObjectURL(blob), name: name, caption: caption, digits: phoneDigitsForWhatsApp(t.phone) };
-      var file = null;
-      try { file = new File([blob], name, { type:'image/png' }); } catch(_e){}
-      var canShareFile = !!(file && navigator.canShare && navigator.canShare({ files:[file] }));
-      var canCopy = !!(navigator.clipboard && window.ClipboardItem);
-      var phone = isAppleMobile() || /Android/i.test(navigator.userAgent || '');
-      var m = document.getElementById('estimate-image-modal');
-      if (!m){
-        m = document.createElement('div');
-        m.className = 'modal-overlay'; m.id = 'estimate-image-modal';
-        m.addEventListener('click', function(e){ if (e.target === m) closeEstimateImageModal(); });
-        document.body.appendChild(m);
-      }
-      var btn = function(label, fn, primary){ return '<button type="button" class="mini-btn'+(primary?' primary':'')+'" onclick="'+fn+'">'+label+'</button>'; };
-      m.innerHTML = '<div class="card modal-card" style="max-width:520px;">'+
-        '<div class="modal-actions" style="justify-content:space-between;align-items:center;margin:0 0 10px;">'+
-          '<h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:15px;">Send to '+esc(d.first)+' on WhatsApp</h2>'+
-          btn('Close', 'closeEstimateImageModal()')+'</div>'+
-        '<img src="'+estimateImageState.url+'" alt="Move-out summary" draggable="true" class="send-preview">'+
-        '<div class="action-tiles">'+
-          (canCopy ? actionTile('copyImage', 'Copy image', 'estimateImageCopy(this)', true) : '')+
-          (estimateImageState.digits ? actionTile('chat', 'Open chat', 'estimateImageOpenChat()', !canCopy) : '')+
-          (canShareFile ? actionTile('share', 'Share image', 'estimateImageShare(this)') : '')+
-          actionTile('download', 'Save image', 'estimateImageDownload()')+
-        '</div>'+
-        '<p class="send-howto"><b>Straight to '+esc(d.first)+'\'s chat:</b> Copy image → Open chat → '+(phone ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+' → send.'+
-          (canShareFile ? '<br><span style="color:var(--text-faint);">Or tap Share image → WhatsApp Business and pick the chat yourself.</span>' : '')+'</p>'+
-        '</div>';
-      m.hidden = false;
-    }, function(err){ console.error('estimate image', err); showToast('Could not create the image.', 'error'); });
-  }
-  function closeEstimateImageModal(){ var m = document.getElementById('estimate-image-modal'); if (m) m.hidden = true; }
-  function estimateImageCopy(b){
-    var st = estimateImageState; if (!st) return;
-    navigator.clipboard.write([new ClipboardItem({ 'image/png': st.blob })]).then(function(){
-      flashTileDone(b, 'Copied');
-      showToast('Image copied — now open the chat and paste it.', 'success');
-    }, function(err){
-      console.error('copy image', err);
-      showToast('Couldn\'t copy here — use Download (or drag the image) instead.', 'error');
-    });
-  }
-  function estimateImageShare(el){
-    var st = estimateImageState; if (!st) return;
-    if (el && el.focus) el.focus(); // iPad anchors the share popover to the focused button
-    var file = new File([st.blob], st.name, { type:'image/png' });
-    navigator.share({ files:[file], text: st.caption }).catch(function(err){
-      if (!err || err.name !== 'AbortError') showToast('Couldn\'t share — use Download instead.', 'error');
-    });
-  }
-  function estimateImageDownload(){
-    var st = estimateImageState; if (!st) return;
-    var aEl = document.createElement('a'); aEl.href = st.url; aEl.download = st.name; document.body.appendChild(aEl); aEl.click(); aEl.remove();
-    showToast('Image saved to your downloads.', 'success');
-  }
-  function estimateImageOpenChat(){
-    var st = estimateImageState; if (!st || !st.digits) return;
-    openWhatsApp('https://wa.me/' + st.digits + '?text=' + encodeURIComponent(st.caption));
-  }
-  window.closeEstimateImageModal = closeEstimateImageModal;
-  window.estimateImageCopy = estimateImageCopy;
-  window.estimateImageShare = estimateImageShare;
-  window.estimateImageDownload = estimateImageDownload;
-  window.estimateImageOpenChat = estimateImageOpenChat;
-  window.shareMoveOutEstimateImage = shareMoveOutEstimateImage;
 
   var moveOutDeductionModalSettlementId = null;
   var moveOutDeductionModalEditId = null;
@@ -3684,9 +3623,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function sendBondApprovedWhatsApp(tenantId, settlementId){
     var t = tenantOf(tenantId); if (!t) return;
     var settlement = moveOutSettlements.find(function(s){ return s.id === settlementId; });
-    var digits = phoneDigitsForWhatsApp(t.phone);
-    if (!digits || !settlement){ showToast('No phone number on file for this tenant.', 'error'); return; }
-    openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(bondApprovedMessage(t, settlement)));
+    var url = settlement && waChatUrl(t.phone, bondApprovedMessage(t, settlement));
+    if (!url){ showToast('No phone number on file for this tenant.', 'error'); return; }
+    openWhatsApp(url);
   }
   window.sendBondApprovedWhatsApp = sendBondApprovedWhatsApp;
 
@@ -3843,8 +3782,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div><button class="mini-btn" onclick="copyPaymentRef(\''+esc(ref)+'\', this)">Copy</button></div></div>';
   }
   function copyPaymentRef(ref, btn){
-    try { navigator.clipboard.writeText(ref); if (btn){ btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1800); } }
-    catch(_e){ showToast('Your reference: ' + ref, 'info'); }
+    copyTextReliably(ref).then(function(ok){
+      if (!ok){ showToast('Your reference: ' + ref, 'info'); return; }
+      if (btn){ btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1800); }
+    });
   }
   window.copyPaymentRef = copyPaymentRef;
 
@@ -7015,7 +6956,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   /* ============ "Missing invoices" tab — local calculation based on the average of past invoices ============
-   * No longer depends on AI (the predict-bills Edge Function) — that dependency used to fail
+   * Pure local calculation (no AI call) — an AI dependency used to fail
    * often ("AI service is overloaded"). Instead, for each property + service type with at
    * least 2 bills loaded, it computes the actual AVERAGE interval between consecutive invoices
    * (instead of a fixed 45-day threshold for everyone) and projects the next expected date
@@ -7090,8 +7031,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   async function copyToClipboard(text, okMsg){
-    try { await navigator.clipboard.writeText(text); showToast(okMsg || 'Copied.', 'success'); }
-    catch(_e){ showToast(text, 'info'); }
+    var ok = await copyTextReliably(text);
+    showToast(ok ? (okMsg || 'Copied.') : text, ok ? 'success' : 'info');
   }
   window.copyToClipboard = copyToClipboard;
 
@@ -7649,20 +7590,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return digits.length >= 8 ? digits : null;
   }
 
-  /** Rewrites a wa.me / chat.whatsapp.com link so that, on Android, it opens specifically in
-   *  WhatsApp Business instead of whichever WhatsApp app the OS would otherwise pick when both
-   *  the regular app and Business are installed. A web page can't change the phone's default
-   *  handler for wa.me — but on Android it CAN name the app outright with an "intent://" URL
-   *  that points straight at Business's package (com.whatsapp.w4b), falling back to the plain
-   *  link (browser_fallback_url) if Business isn't installed. There is no equivalent way to do
-   *  this on iOS or desktop — Apple doesn't expose a separate public URL scheme for the
-   *  Business app there — so those just get the ordinary link back, same as before. */
-  /** Opens a wa.me / chat.whatsapp.com link in WhatsApp BUSINESS on any phone.
-   *  - Android: the intent:// link from whatsAppBusinessLink (names the Business app outright).
-   *  - iPhone/iPad: WhatsApp Business answers its own "whatsapp-smb://" scheme (the regular app
-   *    uses "whatsapp://"), so the link is rewritten to that. If Business doesn't open within a
-   *    moment (not installed / scheme not handled), it falls back to the normal https link.
-   *  Must be called straight from a tap so the browser allows it. */
+  /* WhatsApp Business everywhere: on Android an intent:// URL names the Business app's package
+   * (com.whatsapp.w4b, with the normal link as fallback — whatsAppBusinessLink); on iPhone/iPad
+   * the link is rewritten to Business's own "whatsapp-smb://" scheme (whatsAppBusinessIosUrl);
+   * desktop gets the ordinary link. openWhatsApp applies the right one and must run from a tap. */
   function isAppleMobile(){
     var ua = navigator.userAgent || '';
     return /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
@@ -7716,6 +7647,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     });
   }
 
+  /** wa.me link to a person's chat with `text` already typed (null without a usable phone). */
+  function waChatUrl(phone, text){
+    var digits = phoneDigitsForWhatsApp(phone);
+    return digits ? 'https://wa.me/' + digits + (text ? '?text=' + encodeURIComponent(text) : '') : null;
+  }
   function openWhatsApp(httpsUrl){
     if (!httpsUrl) return;
     if (isAppleMobile()){
@@ -7747,34 +7683,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return 'intent://' + withoutScheme + '#Intent;package=com.whatsapp.w4b;scheme=https;S.browser_fallback_url=' + encodeURIComponent(httpsUrl) + ';end';
   }
 
-  /** Builds the WhatsApp link (wa.me) that opens a chat with the tenant with the
-   *  bill's payment notice already drafted — provider, service, amount owed and due date.
-   *  The admin only has to review and tap send; nothing is sent automatically. */
-  function billAllocationWhatsAppMessage(bill, property, tenant, amount){
-    var propertyLabel = property ? (property.address || property.name) : 'the property';
-    var message = 'Hi ' + tenant.fullName + ', this is ' + propertyLabel +
-      ' — you owe ' + money(amount) + ' for ' + bill.billType +
-      ' (' + bill.provider + '), for the period ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
-      (bill.dueDate ? ('. Due date: ' + shortDate(bill.dueDate)) : '') + '.' +
-      (tenantPaymentRef(tenant) ? '\n\nPlease use your reference ' + tenantPaymentRef(tenant) + ' in the transfer description.' : '') +
-      ' Thank you!';
-    return message;
-  }
-  function billAllocationWhatsAppLink(bill, property, tenant, amount){
-    var digits = phoneDigitsForWhatsApp(tenant.phone);
-    if (!digits) return null;
-    var message = billAllocationWhatsAppMessage(bill, property, tenant, amount);
-    return whatsAppBusinessLink('https://wa.me/' + digits + '?text=' + encodeURIComponent(message));
-  }
-
   /** The small "Send WhatsApp" button shown next to each tenant in a bill's
    *  allocation — only appears if the tenant has a saved phone number; if not, shows a short
    *  notice instead of the button, so it's clear why it can't be sent from there. */
   function whatsAppButtonHtml(bill, property, tenant, amount){
     if (!tenant || isTenantHiddenProvider(bill.provider)) return '';
-    prefetchBillInvoiceLink(bill);
-    var link = billAllocationWhatsAppLink(bill, property, tenant, amount);
-    if (!link) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
+    if (!phoneDigitsForWhatsApp(tenant.phone)) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return waButton('sendBillsWhatsAppToTenant(\''+tenant.id+'\',[\''+bill.id+'\'])', 'Send to '+esc(tenant.fullName)+' by WhatsApp', 'wa-btn-sm');
   }
 
@@ -7797,47 +7711,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '\n\nPlease confirm payment with your receipt. Thank you!';
   }
 
-  /** Builds the WhatsApp message + link for a tenant's whole consolidated list of pending bills
-   *  (the "Pending bills by tenant" card in the Bills tab) — one line per bill plus a total,
-   *  instead of sending one WhatsApp message per bill. Bills from a hidden-from-tenant provider
-   *  (isTenantHiddenProvider) are left out of the message, same as everywhere else tenants see
-   *  bill text, even though they still count in the on-screen total for the admin. */
-  function pendingBillsWhatsAppMessage(tenant, items, property){
-    var visibleItems = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); });
-    if (!visibleItems.length) return null;
-    var propertyLabel = property ? (property.address || property.name) : 'the property';
-    var lines = visibleItems.map(function(it){
-      var b = it.bill, a = it.alloc;
-      return '• ' + billTypeLabel(b.billType) + ' (' + b.provider + '): ' + money(a.amount) +
-        (b.dueDate ? (' — due ' + shortDate(b.dueDate)) : '');
-    });
-    var total = round2(visibleItems.reduce(function(s,it){ return s + it.alloc.amount; }, 0));
-    return 'Hi ' + tenant.fullName + ', this is ' + propertyLabel + ' — here are your pending bills:\n\n' +
-      lines.join('\n') +
-      '\n\nTotal owed: ' + money(total) +
-      (tenantPaymentRef(tenant) ? '\nYour payment reference: ' + tenantPaymentRef(tenant) + ' (put it in the transfer description)' : '') +
-      '\n\nPlease confirm payment with your receipt. Thank you!';
-  }
   /** The "Send WhatsApp" row shown when a tenant's consolidated pending-bills list is expanded —
    *  same pattern as whatsAppButtonHtml (one bill at a time), but for the whole list at once. */
   function pendingBillsWhatsAppRowHtml(tenant, items, property){
-    var message = pendingBillsWhatsAppMessage(tenant, items, property);
-    if (!message) return '';
+    var visible = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); });
+    if (!visible.length) return '';
     var digits = phoneDigitsForWhatsApp(tenant.phone);
-    var ids = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); }).map(function(it){ return '\''+it.bill.id+'\''; }).join(',');
-    var withFiles = items.some(function(it){ return !isTenantHiddenProvider(it.bill.provider) && it.bill.receiptPath; });
-    if (digits) items.forEach(function(it){ if (!isTenantHiddenProvider(it.bill.provider)) prefetchBillInvoiceLink(it.bill); });
+    var ids = visible.map(function(it){ return '\''+it.bill.id+'\''; }).join(',');
     var linkOrNote = digits
       ? waButton('sendBillsWhatsAppToTenant(\''+tenant.id+'\',['+ids+'])', 'Send pending bills to '+esc(tenant.fullName)+' by WhatsApp')
       : '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return '<div class="alloc-summary-row" style="align-items:center;padding-left:10px;justify-content:flex-end;">'+linkOrNote+'</div>';
   }
 
-  /** Sends a tenant their unpaid bill(s) over WhatsApp WITH the bill documents attached, so they
-   *  can see exactly which bill they're being charged for. wa.me links can only carry text, so this
-   *  uses the phone's share sheet (text + files) — the admin picks the tenant's chat and taps send.
-   *  If the device can't share files (or no bill has a document), it falls back to the old wa.me
-   *  link that opens the tenant's chat with the message typed. */
+  /** Sends a tenant what they owe on the given bill(s) — amounts only, as an image + message
+   *  (sendTenantStatement). The bill documents stay in the app for the tenant to open. */
   function sendBillsWhatsAppToTenant(tenantId, billIds){
     var tenant = tenantOf(tenantId);
     if (!tenant) return;
@@ -7920,26 +7808,24 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<div class="wa-status pending">Not sent to the WhatsApp group yet</div>';
   }
 
-  // Can be sent as many times as needed (e.g. the attachment didn't load the first time) — the
-  // status line above the button already shows when and how many times it went out. There used
-  // to be a "Send again?" confirmation, but going through it lost Safari's tap permission, so the
-  // share sheet never opened.
-  /** A 30-day link to the bill's document, made ahead of time (when the button is drawn) so it
-   *  can go straight into the group message on tap — WhatsApp group links can't carry a file. */
+  /** A 30-day link to the bill's document — only used in the group message when the document
+   *  itself couldn't be loaded as an image. Made ahead of time (when the button is drawn). */
   var billInvoiceLinkCache = {}; // receiptPath -> signed URL (string) once ready
   function prefetchBillInvoiceLink(bill){
     if (!bill || !bill.receiptPath || billInvoiceLinkCache[bill.receiptPath] !== undefined) return;
     billInvoiceLinkCache[bill.receiptPath] = null; // in flight
-    storageService.getSignedUrl('receipts', bill.receiptPath, 30*24*3600)
-      .then(function(url){ billInvoiceLinkCache[bill.receiptPath] = url; })
-      .catch(function(){ delete billInvoiceLinkCache[bill.receiptPath]; });
+    billInvoiceLink(bill).catch(function(){});
+  }
+  async function billInvoiceLink(bill){
+    if (!bill || !bill.receiptPath) return null;
+    if (billInvoiceLinkCache[bill.receiptPath]) return billInvoiceLinkCache[bill.receiptPath];
+    try {
+      var url = await storageService.getSignedUrl('receipts', bill.receiptPath, 30*24*3600);
+      billInvoiceLinkCache[bill.receiptPath] = url;
+      return url;
+    } catch(_e){ delete billInvoiceLinkCache[bill.receiptPath]; return null; }
   }
 
-  /** "Share to WhatsApp group": goes STRAIGHT to the property's group (its saved link) — no
-   *  picking a contact. A group link can only open the chat, not carry text or a file, so the
-   *  message (with a link to the bill's document) is copied first and the admin just pastes it.
-   *  Everything here runs synchronously inside the tap, which Safari needs to allow the copy and
-   *  the new tab. */
   /** "Send to the WhatsApp group". A group's invite link can only OPEN the chat — it can't carry
    *  text or a file — so instead of copying silently, this opens a window with everything ready:
    *  an image with each tenant's share on top and the bill itself below (page 1 of the PDF, or the
@@ -7959,14 +7845,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var m = groupSendModalShell('Send to ' + property.name + '\'s WhatsApp group', 'Preparing the bill and each tenant\'s share…');
     var message = billGroupWhatsAppMessage(bill, property, rows);
-    var invoiceUrl = null;
-    if (bill.receiptPath){
-      invoiceUrl = billInvoiceLinkCache[bill.receiptPath] || null;
-      if (!invoiceUrl){
-        try { invoiceUrl = await storageService.getSignedUrl('receipts', bill.receiptPath, 30*24*3600); billInvoiceLinkCache[bill.receiptPath] = invoiceUrl; }
-        catch(_e){ invoiceUrl = null; }
-      }
-    }
     var docFile = bill.receiptPath ? await fetchBillReceiptFile(bill) : null;
     var docCanvas = null, docNote = '';
     if (docFile){
@@ -7974,15 +7852,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       catch(err){ console.warn('bill document render', err); }
     }
     // The bill goes as a file/image, not a link. A link is added only if it couldn't be loaded.
-    if (!docCanvas && invoiceUrl) message += '\n\n📄 Bill: ' + invoiceUrl;
+    var invoiceUrl = docCanvas ? null : await billInvoiceLink(bill);
+    if (invoiceUrl) message += '\n\n📄 Bill: ' + invoiceUrl;
     var imageBlob = await billSplitImageBlob(bill, property, rows, docCanvas, docNote);
-    var imageName = (billTypeLabel(bill.billType) + '-' + (bill.billingPeriodEnd || TODAY)).toLowerCase().replace(/[^a-z0-9-]+/g, '-') + '.png';
-    if (m.hidden) return; // closed while preparing
-    groupSendState = { message: message, imageBlob: imageBlob, imageName: imageName,
-      imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null, docFiles: docFile ? [docFile] : [],
-      chatUrl: property.whatsappGroupLink, chatPrefilled: false, chatLabel: 'group',
-      onSent: function(){ markBillSharedToGroup(bill, true); }, marked: false };
-    renderGroupSendModal(!docFile && bill.receiptPath ? 'Couldn\'t load the bill document — the message includes a link to it instead.' : (!bill.receiptPath ? 'This bill has no document attached — only the split is shown.' : ''));
+    showGroupSend(m, { message: message, imageBlob: imageBlob,
+      imageName: billTypeLabel(bill.billType) + '-' + (bill.billingPeriodEnd || TODAY) + '.png', docFiles: docFile ? [docFile] : [],
+      chatUrl: property.whatsappGroupLink, chatLabel: 'group',
+      onSent: function(){ markBillSharedToGroup(bill, true); },
+      note: !docFile && bill.receiptPath ? 'Couldn\'t load the bill document — the message includes a link to it instead.' : (!bill.receiptPath ? 'This bill has no document attached — only the split is shown.' : '') });
   }
   window.sendBillToWhatsAppGroup = sendBillToWhatsAppGroup;
 
@@ -8033,6 +7910,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     m.hidden = false;
     return m;
   }
+  /** Fills the send window opened by groupSendModalShell (ignored if it was closed meanwhile).
+   *  opts: message, imageBlob, imageName, docFiles, chatUrl, chatPrefilled, chatLabel
+   *  ('chat' | 'group'), recipientName, onSent, note. */
+  function showGroupSend(m, opts){
+    if (m.hidden) return; // closed while preparing
+    groupSendState = { message: opts.message, imageBlob: opts.imageBlob || null,
+      imageName: (opts.imageName || 'image').toLowerCase().replace(/[^a-z0-9.-]+/g, '-'),
+      imageUrl: opts.imageBlob ? URL.createObjectURL(opts.imageBlob) : null, docFiles: opts.docFiles || [],
+      chatUrl: opts.chatUrl || null, chatPrefilled: !!opts.chatPrefilled, chatLabel: opts.chatLabel || 'chat',
+      recipientName: opts.recipientName || '', onSent: opts.onSent || null, marked: false };
+    renderGroupSendModal(opts.note || '');
+  }
   function closeGroupSendModal(){
     var m = document.getElementById('group-send-modal'); if (m) m.hidden = true;
     if (groupSendState && groupSendState.imageUrl) URL.revokeObjectURL(groupSendState.imageUrl);
@@ -8041,7 +7930,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.closeGroupSendModal = closeGroupSendModal;
   function renderGroupSendModal(note){
     var st = groupSendState; if (!st) return;
-    var touch = isAppleMobile() || /Android/i.test(navigator.userAgent || '') || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent || ''));
+    var touch = isAppleMobile() || /Android/i.test(navigator.userAgent || '');
     var canCopyImage = !!(navigator.clipboard && window.ClipboardItem && st.imageBlob);
     var imgFile = groupSendImageFile();
     var canShareImage = !!(imgFile && navigator.share && navigator.canShare && navigator.canShare({ files: [imgFile] }));
@@ -8075,13 +7964,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function groupSendImageFile(){
     var st = groupSendState; if (!st || !st.imageBlob) return null;
     try { return new File([st.imageBlob], st.imageName, { type:'image/png' }); } catch(_e){ return null; }
-  }
-  function groupSendShareFiles(){
-    var st = groupSendState; if (!st) return [];
-    var out = [];
-    try { if (st.imageBlob) out.push(new File([st.imageBlob], st.imageName, { type:'image/png' })); } catch(_e){}
-    (st.docFiles || []).forEach(function(f){ out.push(f); });
-    return out;
   }
   function groupSendMarkSent(){
     var st = groupSendState; if (!st || st.marked) return;
@@ -8171,7 +8053,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.sendTenantOwedStatement = sendTenantOwedStatement;
   async function sendTenantStatement(t, rent, billItems, title){
     var property = propertyOf(t.propertyId);
-    var digits = phoneDigitsForWhatsApp(t.phone);
     var m = groupSendModalShell(title, 'Preparing the statement…');
     var ref = tenantPaymentRef(t);
     var rentTotal = round2(rent.reduce(function(s,c){ return s + c.remaining; }, 0));
@@ -8197,30 +8078,20 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     // Only the amounts go out — the bills themselves stay in the app, attached to each charge,
     // so the image stays short and easy to read.
-    var docFiles = [], missingDocs = 0;
-    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, []);
-    if (m.hidden) return;
-    groupSendState = { message: message, imageBlob: imageBlob,
-      imageName: ('owed-' + first + '-' + TODAY).toLowerCase().replace(/[^a-z0-9-]+/g, '-') + '.png',
-      imageUrl: imageBlob ? URL.createObjectURL(imageBlob) : null, docFiles: docFiles,
-      chatUrl: digits ? 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message) : null,
-      chatPrefilled: !!digits, chatLabel: 'chat', recipientName: first, onSent: null, marked: false };
-    renderGroupSendModal(!digits ? 'No phone number on file for ' + t.fullName + ' — copy the image and message and send them yourself.'
-      : missingDocs ? 'Some bill documents couldn\'t be loaded — they\'re not included.' : '');
+    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total);
+    var chatUrl = waChatUrl(t.phone, message);
+    showGroupSend(m, { message: message, imageBlob: imageBlob, imageName: 'owed-' + first + '-' + TODAY + '.png',
+      chatUrl: chatUrl, chatPrefilled: !!chatUrl, recipientName: first,
+      note: chatUrl ? '' : 'No phone number on file for ' + t.fullName + ' — copy the image and message and send them yourself.' });
   }
 
-  /** Image: the tenant's rent and bills owed, the total, and each bill underneath. */
-  function tenantStatementImageBlob(t, property, rent, billItems, total, docCanvases){
-    var W = 1080, pad = 64, font = 'Segoe UI, Roboto, Helvetica, Arial, sans-serif';
-    var rowH = 86, L = pad + 32, R = W - pad - 32, dw = R - L + 24;
-    var docsH = docCanvases.reduce(function(s, d){ return s + Math.round(d.canvas.height * dw / d.canvas.width) + 80; }, 0);
-    var H = 32 + 230 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + (billItems.length ? 40 : 0) + docsH + 30;
-    var c = document.createElement('canvas'); c.width = W; c.height = H;
-    var g = c.getContext('2d');
-    function rr(x, y, w, h, r, fill){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); g.fillStyle = fill; g.fill(); }
-    g.fillStyle = '#f4f5f8'; g.fillRect(0, 0, W, H);
-    rr(32, 32, W - 64, H - 64, 36, '#ffffff');
-    var y = 32 + 82; g.textBaseline = 'alphabetic';
+  /** Image: the tenant's rent and bills owed (amounts only) and the total. */
+  function tenantStatementImageBlob(t, property, rent, billItems, total){
+    var W = 1080, pad = 64, font = IMG_FONT;
+    var rowH = 86, L = pad + 32, R = W - pad - 32;
+    var H = 32 + 230 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + (billItems.length ? 40 : 0) + 30;
+    var card = imageCard(W, H), g = card.g, rr = card.rr;
+    var y = 32 + 82;
     g.fillStyle = '#1d2433'; g.font = '700 48px ' + font; g.fillText('What you owe', L, y);
     g.fillStyle = '#6b7280'; g.font = '400 30px ' + font;
     g.fillText(t.fullName + (property ? ' · ' + property.name : '') + ' · as of ' + fullDate(TODAY), L, y + 50);
@@ -8264,15 +8135,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       g.fillText('Questions about a bill? See it in the app — it\'s attached to its charge.', L, y);
     }
     y += 30;
-    docCanvases.forEach(function(d){
-      var dh = Math.round(d.canvas.height * dw / d.canvas.width);
-      g.fillStyle = '#6b7280'; g.font = '600 24px ' + font; g.fillText(d.label.toUpperCase(), L, y + 40);
-      y += 56;
-      g.fillStyle = '#e5e7eb'; g.fillRect(L - 13, y - 1, dw + 2, dh + 2);
-      g.drawImage(d.canvas, L - 12, y, dw, dh);
-      y += dh + 24;
-    });
-    return new Promise(function(res){ c.toBlob(function(b){ res(b); }, 'image/png'); });
+    return card.toBlob();
   }
 
   /** Draws the bill's document (photo, or page 1 of the PDF via pdf.js) onto a canvas `width`
@@ -8309,17 +8172,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  payment reference), and the bill itself underneath. Light background so it reads the same in
    *  any chat theme. */
   function billSplitImageBlob(bill, property, rows, docCanvas, docNote){
-    var W = 1080, pad = 64, font = 'Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+    var W = 1080, pad = 64, font = IMG_FONT;
     var rowH = 64, headerH = 250, tableH = rows.length * rowH + 60, totalH = 90, footH = 70;
     var docH = docCanvas ? Math.round(docCanvas.height * (W - 2*pad) / docCanvas.width) + 70 : 0;
     var H = 32 + headerH + tableH + totalH + footH + docH + 40;
-    var c = document.createElement('canvas'); c.width = W; c.height = H;
-    var g = c.getContext('2d');
-    function rr(x, y, w, h, r, fill){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); g.fillStyle = fill; g.fill(); }
-    g.fillStyle = '#f4f5f8'; g.fillRect(0, 0, W, H);
-    rr(32, 32, W - 64, H - 64, 36, '#ffffff');
+    var card = imageCard(W, H), g = card.g, rr = card.rr;
     var L = pad + 32, R = W - pad - 32, y = 32 + 80;
-    g.textBaseline = 'alphabetic';
     g.fillStyle = '#1d2433'; g.font = '700 46px ' + font;
     g.fillText(billTypeLabel(bill.billType) + ' bill · ' + (bill.provider || ''), L, y);
     g.fillStyle = '#6b7280'; g.font = '400 30px ' + font;
@@ -8348,64 +8206,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     g.fillStyle = '#9aa1ad'; g.font = '400 25px ' + font;
     g.fillText('Put your reference in the transfer description and reply with your receipt.', L, y);
     y += 40;
-    if (docCanvas){
-      var dw = R - L + 24, dh = Math.round(docCanvas.height * dw / docCanvas.width);
-      g.fillStyle = '#6b7280'; g.font = '600 24px ' + font; g.fillText('THE BILL' + (docNote ? ' · ' + docNote : ''), L, y + 6);
-      y += 24;
-      g.fillStyle = '#e5e7eb'; g.fillRect(L - 13, y - 1, dw + 2, dh + 2);
-      g.drawImage(docCanvas, L - 12, y, dw, dh);
-    }
-    return new Promise(function(res){ c.toBlob(function(b){ res(b); }, 'image/png'); });
+    if (docCanvas) drawDocOnCard(g, docCanvas, 'THE BILL' + (docNote ? ' · ' + docNote : ''), L, y, R - L + 24);
+    return card.toBlob();
   }
 
-  async function shareBillToWhatsAppGroup(billId){
-    var bill = billOf(billId);
-    if (!bill || !bill.allocations || !bill.allocations.length) return;
-    if (isTenantHiddenProvider(bill.provider)){
-      showToast('Bills from this provider are never sent to tenants.', 'error');
-      return;
-    }
-    var property = propertyOf(bill.propertyId);
-    if (!property || !property.whatsappGroupLink){
-      showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error');
-      return;
-    }
-    var tenantsForMsg = bill.allocations.filter(function(a){ return !a.isAdmin; }).map(function(a){
-      var t = tenantOf(a.tenantId);
-      return { name: t ? t.fullName : 'Tenant', ref: tenantPaymentRef(t), amount: a.amount, paid: !!a.paid };
-    });
-    var message = billGroupWhatsAppMessage(bill, property, tenantsForMsg);
-    var file = await fetchBillReceiptFile(bill);
-
-    try {
-      if (file && navigator.canShare && navigator.canShare({ files: [file] })){
-        await navigator.share({ files: [file], text: message, title: 'Bill split' });
-        await markBillSharedToGroup(bill, true);
-        return;
-      }
-      if (navigator.share){
-        await navigator.share({ text: message, title: 'Bill split' });
-        await markBillSharedToGroup(bill, true);
-        return;
-      }
-      throw new Error('not supported');
-    } catch (err){
-      if (err && err.name === 'AbortError') return; // person cancelled the share sheet — not an error
-      if (err && err.name === 'NotAllowedError'){ // attachment took too long to load — it's cached now
-        showToast('The bill is ready now — tap Share to WhatsApp group again.', 'info');
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(message);
-        showToast('Your phone doesn\'t support direct sharing — we copied the message; open the group and paste it in.', 'info');
-      } catch (_e){
-        showToast('Copy this message by hand and paste it in the group:\n\n' + message, 'info');
-      }
-      openWhatsApp(property.whatsappGroupLink);
-      await markBillSharedToGroup(bill, true);
-    }
-  }
-  window.shareBillToWhatsAppGroup = shareBillToWhatsAppGroup;
 
   /** The little "Upload receipt" / "View receipt" link shown under a tenant's allocation row or
    *  the admin's provider-payment row. `path` is the file's storage path, or null/undefined if
@@ -9229,125 +9033,36 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.body.removeChild(a);
     setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
   }
+  /** Downloads an offline JSON copy of everything this account can see (read-only snapshot —
+   *  the live data always stays in Supabase). */
   function exportBackup(){
     var data = {
-      exportedAt: TODAY,
-      properties: properties,
-      rooms: rooms,
-      tenants: tenants,
-      bonds: bonds,
-      rentSchedules: rentSchedules,
-      paymentRecords: paymentRecords,
-      bills: bills,
-      notifReadIds: notifReadIds
+      exportedAt: new Date().toISOString(),
+      properties: properties, rooms: rooms, tenants: tenants, bonds: bonds,
+      rentSchedules: rentSchedules, paymentRecords: paymentRecords, leasePayments: leasePayments,
+      bills: bills, recurringBills: recurringBills, roomIncludedBills: roomIncludedBills,
+      paymentReports: paymentReports, rentPaymentReports: rentPaymentReports,
+      moveOutSettlements: moveOutSettlements, tenantDocuments: tenantDocuments,
+      maintenanceRequests: maintenanceRequests, maintenanceLog: maintenanceLog,
+      cleaningTasks: cleaningTasks, cleaningSubmissions: cleaningSubmissions, cleaningComments: cleaningComments,
+      weeklyDuties: weeklyDuties, binDuties: binDuties, binOutTasks: binOutTasks, trashSchedule: trashSchedule,
+      inspectionSubmissions: inspectionSubmissions, inspectionComments: inspectionComments,
+      realEstateInspections: realEstateInspections, houseRules: houseRules, entityLinks: entityLinks
     };
-    var json = JSON.stringify(data, null, 2);
-    var filename = 'belmont-manager-backup-' + TODAY + '.json';
-    downloadViaAnchor(filename, json);
-    backupStatusMessage = 'Backup downloaded.';
-    render();
-  }
-  var backupStatusMessage = '';
-  function handleImportBackup(evt){
-    var file = evt.target.files && evt.target.files[0];
-    evt.target.value = '';
-    if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function(){
-      // Important: render() redraws the whole page (innerHTML), so
-      // the status message has to live in a variable and come out of renderSettings(),
-      // not be written directly into the old <p> — that node disappears as soon as render() runs.
-      try {
-        var data = JSON.parse(reader.result);
-        if (!data || typeof data !== 'object') throw new Error('invalid format');
-        // NOTE: this restores into the CURRENT SESSION's in-memory view only —
-        // it does not write back to Supabase. It's a quick way to inspect an
-        // old snapshot; reloading the page goes back to what's in the cloud.
-        // To actually move old data into Supabase, use "Migrate local data to
-        // cloud" below (services/migrationService.js), not this restore.
-        if (Array.isArray(data.properties)) properties = data.properties;
-        if (Array.isArray(data.rooms)) rooms = data.rooms;
-        if (Array.isArray(data.tenants)) tenants = data.tenants;
-        if (Array.isArray(data.bonds)) bonds = data.bonds;
-        if (Array.isArray(data.rentSchedules)) rentSchedules = data.rentSchedules;
-        if (Array.isArray(data.paymentRecords)) paymentRecords = data.paymentRecords;
-        if (Array.isArray(data.bills)) bills = data.bills;
-        if (Array.isArray(data.notifReadIds)){ notifReadIds = data.notifReadIds; saveNotifRead(notifReadIds); }
-        recomputeRentCharges();
-        refreshStaticSelects();
-        backupStatusMessage = 'Backup loaded into this session (not saved to the cloud — reloading the page goes back to your Supabase data).';
-      } catch(e){
-        backupStatusMessage = "Couldn't read that file — it doesn't look like a valid backup.";
-      }
-      render();
-    };
-    reader.readAsText(file);
+    downloadViaAnchor('belmont-manager-backup-' + TODAY + '.json', JSON.stringify(data, null, 2));
+    showToast('Backup downloaded.', 'success');
   }
   window.exportBackup = exportBackup;
-  window.handleImportBackup = handleImportBackup;
-
-  /* ---------- Phase E: localStorage -> Supabase migration tool ---------- */
-  // Lives outside runLocalMigration (like backupStatusMessage) because render() replaces
-  // the whole page via innerHTML — a status written straight into the old DOM node would
-  // vanish the moment anything re-renders. renderSettings() reads this var each time.
-  var migrationStatusMessage = '';
-  async function runLocalMigration(){
-    var btn = document.getElementById('migrate-btn');
-    var statusEl = document.getElementById('migration-status');
-    if (btn){ btn.disabled = true; btn.textContent = 'Migrating…'; }
-    migrationStatusMessage = 'Migrating your local data — this can take a moment…';
-    if (statusEl) statusEl.textContent = migrationStatusMessage;
-    try {
-      var result = await migrationService.migrate();
-      window.__lastMigrationResult = result; // handy for debugging/tests
-      var lines = [];
-      Object.keys(result.counts).forEach(function(key){
-        if (result.counts[key] > 0) lines.push(result.counts[key] + ' ' + key + ' migrated');
-      });
-      if (result.success){
-        migrationStatusMessage = 'Your local data has been successfully migrated to the cloud.\n' + lines.join(', ');
-        showToast('Migration complete.', 'success');
-      } else {
-        migrationStatusMessage = 'Migration finished with some issues.\n' +
-          (lines.length ? 'Succeeded: ' + lines.join(', ') + '\n' : '') +
-          'Not migrated:\n' + result.failures.map(function(f){ return '- ' + f.entity + ' ' + f.oldId + ': ' + f.reason; }).join('\n');
-        showToast('Migration finished with some items that need attention — see Settings for details.', 'error');
-      }
-      // Reload the in-memory arrays from Supabase so the freshly-migrated data shows up immediately.
-      await bootstrapData();
-      render();
-    } catch(err){
-      migrationStatusMessage = 'Migration failed before it could finish: ' + friendlyErrorMessage(err) + '. Nothing further was changed — your local data is untouched and you can try again.';
-      showToast('Migration failed. ' + friendlyErrorMessage(err), 'error');
-      render();
-    }
-  }
-  window.runLocalMigration = runLocalMigration;
 
   function renderSettings(){
-    if (isTenantRole()){
-      return pageHeader('Settings', '') +
-        '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Account</h2>'+
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
-        '<button class="mini-btn" onclick="openChangePasswordModal()">Change password</button>'+
-        '<button class="mini-btn" onclick="signOutAndReload()">Sign out</button>'+
-        '</div></div>';
-    }
-    var pin = getAppPin();
-    var hasLocalData = migrationService.hasLocalData();
-    var migrationCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Migrate local data to cloud</h2>'+
-      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">If this browser still has data saved from an older, offline version of this app, this copies it into your Supabase account (new cloud IDs are assigned, and everything is relinked). Your old local data is left untouched as a safety-net backup.</p>'+
-      (hasLocalData
-        ? '<button class="mini-btn primary" id="migrate-btn" onclick="runLocalMigration()">Migrate local data to cloud</button>'
-        : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No old local data was found in this browser.</p>')+
-      '<div id="migration-status" style="font-size:12px;color:var(--text-dim);margin-top:8px;white-space:pre-wrap;">'+esc(migrationStatusMessage)+'</div>'+
-      '</div>';
-    var recurringSection = isStaff() ? recurringBillsCardHtml('all') : '';
     var accountCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Account</h2>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
       '<button class="mini-btn" onclick="openChangePasswordModal()">Change password</button>'+
       '<button class="mini-btn" onclick="signOutAndReload()">Sign out</button>'+
       '</div></div>';
+    if (isTenantRole()) return pageHeader('Settings', '') + accountCard;
+    var pin = getAppPin();
+    var recurringSection = isStaff() ? recurringBillsCardHtml('all') : '';
     var pinCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">App lock (local)</h2>'+
       '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">A simple screen PIN for this app on this device. It is not encryption or real authentication — it only stops a casual glance; anyone using the browser\'s developer tools can bypass it.</p>'+
       (pin
@@ -9357,21 +9072,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<button class="mini-btn" onclick="removeAppPin()">Remove PIN</button></div>'
         : '<button class="mini-btn primary" onclick="openSetPinModal()">Set a PIN</button>')+
       '</div>';
-    var backupCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Backup &amp; restore</h2>'+
-      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">Export a JSON file with your properties, rooms, tenants, bonds, rent schedules, payments, bills (including allocations) and notification status. Import it to restore — this replaces the data currently on this device.</p>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+
+    var backupCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Backup</h2>'+
+      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">Your data lives in your own Supabase project (protected by row-level security) and loads fresh every time you sign in. Download a JSON copy of everything you can see here as an extra offline backup.</p>'+
       '<button class="mini-btn primary" onclick="exportBackup()">Export backup (.json)</button>'+
-      '<button class="mini-btn" onclick="document.getElementById(\'backup-file-input\').click()">Import backup</button>'+
-      '</div>'+
-      '<input type="file" id="backup-file-input" accept="application/json" hidden onchange="handleImportBackup(event)" />'+
-      (backupStatusMessage ? '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;">'+esc(backupStatusMessage)+'</p>' : '<p id="backup-status" style="font-size:12px;color:var(--text-dim);margin:8px 0 0;"></p>')+
       '</div>';
-    var advanced = collapsibleCardHtml('settings-advanced', 'Storage & old data', 'Where your data lives · migrate from an older version',
-      '<p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">Your data is stored in your own Supabase project, protected by row-level security, and loaded fresh from there every time you sign in. Use the backup above for an extra offline copy.</p>'+
-      migrationCard.replace('<div class="card">', '<div class="cc-section">'), true);
     // Most used first: account, app lock, backup; then recurring bills; rarely needed info folded at the end.
     return pageHeader('Settings', 'Account, app lock, backup and preferences.') +
-      accountCard + pinCard + backupCard + recurringSection + advanced;
+      accountCard + pinCard + backupCard + recurringSection;
   }
 
   function openChangePasswordModal(){
@@ -9924,7 +9631,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * trashSchedule: property-level (not per-room) — which bin type is collected, from a reference
    * date, repeating every `intervalDays` days (not every property has this set up at all). */
   var TRASH_TYPE_LABEL = { garbage:'Garbage (red bin)', recycling:'Recycling (yellow bin)', organic:'Organic (green bin)' };
-  var TRASH_TYPE_DOT = { garbage:'🔴', recycling:'🟡', organic:'🟢' };
   var NOTIFICATION_CATEGORY_META = {
     check_in: { emoji: '🏠', label: 'Check-in' },
     check_out: { emoji: '🚪', label: 'Check-out' },
@@ -10151,43 +9857,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<tbody>'+bodyRows+'</tbody></table></div>';
   }
 
-  /** A plain-text agenda for the same month the grid above shows — one row per day that has a
-   *  Cleaning or Bin OUT event, spelling out what the pill's icon only hints at: the date, which
-   *  operation it is (Cleaning, or Bin OUT naming every color due that day), and which room it
-   *  falls to. Reads the same weeklyDuties/trashPickupsInWindow data as the grid, so the two never
-   *  disagree — this is just the same information written out in full. */
-  function propertyAgendaListHtml(p, monthStr){
-    var propId = p.id;
-    var cells = buildMonthGrid(monthStr);
-    var gridStart = cells.find(function(c){ return !!c; });
-    var gridEnd = cells.slice().reverse().find(function(c){ return !!c; });
-    if (!gridStart || !gridEnd) return '';
-    var pickupsByDate = {};
-    if (p.binDutyRequired !== false){
-      trashPickupsInWindow(propId, gridStart, gridEnd).forEach(function(x){ pickupsByDate[x.pickupDate] = x.binTypes; });
-    }
-    var rows = [];
-    cells.forEach(function(iso){
-      if (!iso) return;
-      var cd = weeklyDuties.find(function(d){ return d.propertyId===propId && nextWeekdayIso(d.periodStart, 0)===iso; });
-      if (cd){
-        var r1 = roomOf(cd.roomId);
-        rows.push({ date: iso, operation: 'Cleaning', room: r1 ? r1.name : '—' });
-      }
-      var binTypesToday = pickupsByDate[iso];
-      if (binTypesToday && binTypesToday.length){
-        var bd = weeklyDutyForDate(propId, iso);
-        var r2 = bd ? roomOf(bd.roomId) : null;
-        var opLabel = 'Bin OUT — ' + binTypesToday.map(function(bt){ return TRASH_TYPE_LABEL[bt] || bt; }).join(', ');
-        rows.push({ date: iso, operation: opLabel, room: r2 ? r2.name : '—' });
-      }
-    });
-    if (!rows.length) return '<p style="font-size:12.5px;color:var(--text-dim);margin:10px 0 0;">No Cleaning or Bin OUT dates this month.</p>';
-    return '<div style="margin-top:10px;">' + rows.map(function(r){
-      return '<div class="field-row"><span class="k">'+shortDate(r.date)+'</span>'+
-        '<span class="v" style="font-weight:400;text-align:right;">'+esc(r.operation)+' · '+esc(r.room)+'</span></div>';
-    }).join('') + '</div>';
-  }
 
   /** Grouped by property, same convention as Inspection's staff view — an admin with several
    *  properties thinks property by property. The "View" filter narrows this to one property at a
@@ -10326,43 +9995,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.reassignDutyRoom = reassignDutyRoom;
 
-  function binOutTaskCardHtml(task){
-    var typeLabels = task.binTypes.map(function(bt){ return TRASH_TYPE_LABEL[bt] || bt; }).join(' & ');
-    var effStatus = binOutTaskEffectiveStatus(task);
-    var canComplete = effStatus !== 'completed' && effStatus !== 'not_completed';
-    var evidenceHtml = task.evidencePhotoPath ? '<div style="margin-top:8px;">'+photoThumbsHtml('bin-out-evidence', [task.evidencePhotoPath])+'</div>' : '';
-    return '<div class="card">'+
-      '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">🗑️ '+esc(typeLabels)+'</h2>'+binOutStatusBadgeHtml(task)+'</div>'+
-      '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0 0;">Bin OUT: '+shortDate(task.pickupDate)+'</p>'+
-      evidenceHtml +
-      (canComplete ? '<button class="mini-btn primary" style="margin-top:10px;" onclick="openBinOutCompleteModal(\''+task.id+'\')">Mark Bin OUT completed</button>' : '')+
-      '</div>';
-  }
 
-  function cleaningDutyCardHtml(duty){
-    var cleaningTask = cleaningTaskOfWeeklyDuty(duty.id);
-    if (!cleaningTask) return '';
-    var subs = cleaningTaskSubmissions(cleaningTask.id);
-    var comments = cleaningTaskComments(cleaningTask.id);
-    var photosHtml = subs.length===0 ? '' :
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'+subs.map(function(s){ return cleaningPhotoThumbsHtml(s.photoPaths); }).join('')+'</div>';
-    var commentsHtml = comments.length===0 ? '' :
-      '<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">'+comments.map(function(c){
-        return '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">💬 '+esc(c.comment)+'</p>';
-      }).join('')+'</div>';
-    return '<div class="card">'+
-      '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">🧹 Cleaning</h2>'+cleaningStatusBadgeHtml(cleaningTask)+'</div>'+
-      '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0 0;">'+shortDate(duty.periodStart)+' – '+shortDate(duty.periodEnd)+'</p>'+
-      photosHtml + commentsHtml +
-      '<button class="mini-btn primary" style="margin-top:10px;" onclick="openCleaningSubmitModal(\''+cleaningTask.id+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>'+
-      '</div>';
-  }
 
-  function binDutyCardHtml(duty){
-    var binTasks = binOutTasksOfBinDuty(duty.id).sort(function(a,b){ return a.pickupDate.localeCompare(b.pickupDate); });
-    return '<h2 style="font-size:12.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;">Bin OUT · '+shortDate(duty.periodStart)+' – '+shortDate(duty.periodEnd)+'</h2>'+
-      binTasks.map(binOutTaskCardHtml).join('');
-  }
 
   /** Wheelie-bin illustration (inline SVG, no external image) — dark body with the lid in the
    *  bin's own colour: red Garbage, yellow Recycling, green Organic, as used in Australian councils. */
@@ -11453,28 +11087,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  first), then the ones already done (newest first) and cancelled ones, with time window,
    *  agency and what was noted after the visit. */
   function propertyInspectionHistoryHtml(p){
-    var all = realEstateInspections.filter(function(i){ return i.propertyId===p.id; });
-    var upcoming = all.filter(function(i){ return i.status==='scheduled' && i.date >= TODAY; })
+    // Only upcoming visits on the property page — past ones live in the Inspection section.
+    var upcoming = realEstateInspections.filter(function(i){ return i.propertyId===p.id && i.status==='scheduled' && i.date >= TODAY; })
       .sort(function(a,b){ return (a.date+a.startTime).localeCompare(b.date+b.startTime); });
-    var past = []; // inspections already gone (done/cancelled/expired) aren't shown on the property page any more
-    function item(i, isUpcoming){
-      var cd = isUpcoming ? reiCountdown(i) : null;
-      var state = isUpcoming ? badge(cd.urgent?'overdue':'upcoming', cd.small ? 'In '+cd.big+' days' : cd.big)
-        : (i.status==='cancelled' ? badge('neutral','Cancelled') : badge('paid','Done'));
-      return '<div class="rei-hist-item'+(isUpcoming?' up':'')+(i.status==='cancelled'?' cancelled':'')+'" onclick="openReiModal(\''+i.id+'\')" onkeydown="if(event.key===\'Enter\')openReiModal(\''+i.id+'\')" role="button" tabindex="0">'+
+    function item(i){
+      var cd = reiCountdown(i);
+      var state = badge(cd.urgent?'overdue':'upcoming', cd.small ? 'In '+cd.big+' days' : cd.big);
+      return '<div class="rei-hist-item up" onclick="openReiModal(\''+i.id+'\')" onkeydown="if(event.key===\'Enter\')openReiModal(\''+i.id+'\')" role="button" tabindex="0">'+
         '<div class="rei-hist-date"><b>'+new Date(i.date+'T00:00:00').getDate()+'</b><span>'+new Date(i.date+'T00:00:00').toLocaleDateString('en-AU',{month:'short', year:'2-digit'})+'</span></div>'+
         '<div class="rei-hist-body"><div class="rei-hist-top">'+esc(new Date(i.date+'T00:00:00').toLocaleDateString('en-AU',{weekday:'long'}))+' · '+esc(reiTimeText(i))+' '+state+'</div>'+
           (i.agency ? '<div class="rei-hist-sub">'+esc(i.agency)+'</div>' : '')+
-          (isUpcoming ? '<div class="rei-hist-sub">'+(i.notifiedAt ? '✓ Tenants notified '+shortDate(i.notifiedAt.slice(0,10)) : '⚠️ Tenants not notified yet')+'</div>' : '')+
-          (!isUpcoming && i.outcome ? '<div class="rei-hist-outcome">📝 '+esc(i.outcome)+'</div>' : '')+
-          (!isUpcoming && !i.outcome && i.status!=='cancelled' ? '<div class="rei-hist-sub">Add how it went →</div>' : '')+
+          '<div class="rei-hist-sub">'+(i.notifiedAt ? '✓ Tenants notified '+shortDate(i.notifiedAt.slice(0,10)) : '⚠️ Tenants not notified yet')+'</div>'+
         '</div></div>';
     }
     return '<div class="card">'+ppHead('inspect','Inspections','Real estate inspections',
       '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">+ Schedule</button>')+
-      (upcoming.length ? '' : '<p style="font-size:13px;color:var(--text-dim);margin:0;">No upcoming inspections. Schedule the next one.</p>')+
-      (upcoming.length ? '<div class="rei-hist-group">Upcoming</div>'+upcoming.map(function(i){ return item(i, true); }).join('') : '')+
-      (past.length ? '<div class="rei-hist-group">History</div>'+past.map(function(i){ return item(i, false); }).join('') : '')+
+      (upcoming.length ? '<div class="rei-hist-group">Upcoming</div>'+upcoming.map(item).join('')
+        : '<p style="font-size:13px;color:var(--text-dim);margin:0;">No upcoming inspections. Schedule the next one.</p>')+
       '</div>';
   }
 
@@ -11706,12 +11335,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var span = btn.parentElement.querySelector('.pw-mask');
     var pw = span ? span.getAttribute('data-pw') : '';
     if (!pw) return;
-    if (navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(pw).then(function(){ showToast('Password copied.', 'success'); })
-        .catch(function(){ showToast('Could not copy — press and hold the password to copy it manually.', 'error'); });
-    } else {
-      showToast('Could not copy — press and hold the password to copy it manually.', 'error');
-    }
+    copyTextReliably(pw).then(function(ok){
+      showToast(ok ? 'Password copied.' : 'Could not copy — press and hold the password to copy it manually.', ok ? 'success' : 'error');
+    });
   }
   window.copyPasswordToClipboard = copyPasswordToClipboard;
 
@@ -11873,9 +11499,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       try { await navigator.share({ text: message, title: 'Manager login' }); return; }
       catch(e){ /* user cancelled the share sheet — fall through to the direct link below */ }
     }
-    var digits = phoneDigitsForWhatsApp(profile.phone);
-    if (digits){
-      openWhatsApp('https://wa.me/' + digits + '?text=' + encodeURIComponent(message));
+    var waUrl = waChatUrl(profile.phone, message);
+    if (waUrl){
+      openWhatsApp(waUrl);
     } else {
       showToast('No phone number saved for ' + name + ' — copy the password from Users to send it another way.', 'info');
     }
@@ -12024,13 +11650,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       } else if (isTenant){
         var linked = tenantId ? tenantOf(tenantId) : null;
         var ref = tenantPaymentRef(linked);
-        var digitsForWa = phoneDigitsForWhatsApp(phone);
+        var waLoginUrl = null;
         var loginMsg = 'Hi ' + firstName + ', your Manager login is ready.\n' +
           (ref ? 'Tenant ID: ' + ref + '\n' : 'Phone: ' + phone + '\n') + 'Password: ' + password +
           (ref ? '\n\nUse your Tenant ID ' + ref + ' to log in, and also as the reference on every rent and bill transfer.' : '') +
           '\n\nKeep this somewhere safe.';
+        waLoginUrl = waChatUrl(phone, loginMsg);
         showToast('Tenant login created' + (ref ? ' — ID ' + ref : '') + '. Activate it in Users when ready.', 'success',
-          digitsForWa ? { label: 'Send by WhatsApp', onClick: function(){ openWhatsApp('https://wa.me/' + digitsForWa + '?text=' + encodeURIComponent(loginMsg)); } } : null);
+          waLoginUrl ? { label: 'Send by WhatsApp', onClick: function(){ openWhatsApp(waLoginUrl); } } : null);
       } else {
         showToast('User created. Share the login and password with them directly.', 'success');
       }
@@ -12318,12 +11945,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function renderTenantMyBondHtml(t){
     var bond = bondOf(t.id);
     var settlement = moveOutSettlementOf(t.id);
-    if (!bond && !settlement) return '';
+    if (!settlement) return ''; // only shown once a move-out process exists (see the caller)
     var rows = bond ? '<div class="field-row"><span class="k">Original bond</span><span class="v">'+money(bond.amountPaid)+'</span></div>' : '';
-    if (!settlement){
-      return '<div class="card"><h2>My Bond</h2>'+rows+
-        '<button class="mini-btn primary" onclick="startMoveOutProcess(\''+t.id+'\')">Start Move-Out Process</button></div>';
-    }
     if (settlement.status === 'completed'){
       var lines = (bond && bond.discounts || []).filter(function(d){ return d.settlementId === settlement.id; });
       return '<div class="card"><h2>My Bond</h2>'+
@@ -12336,14 +11959,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // In progress → the live estimate card (tenantMoveOutEstimateHtml) already covers it.
     if (settlement.status === 'in_progress') return '';
     var candidates = computeCandidateDeductions(t.id);
-    // Only in_progress recomputes live; a pending_approval proposal shows the FROZEN totals
-    // stored on the settlement row at Calculate time (same as the admin card).
-    var totals = settlement.status === 'pending_approval'
-      ? { totalDeductions: settlement.totalDeductions, bondRefund: settlement.bondRefund }
-      : computeSettlementTotals(bond, settlement.manualDeductions, candidates);
-    var statusLabel = settlement.status === 'in_progress' ? 'Move-Out in Progress' : 'Settlement pending approval';
+    // pending_approval: the FROZEN totals stored on the settlement row at Calculate time.
+    var totals = { totalDeductions: settlement.totalDeductions, bondRefund: settlement.bondRefund };
     return '<div class="card"><h2>My Bond</h2>'+
-      '<div class="field-row"><span class="k">Status</span><span class="v">'+esc(statusLabel)+'</span></div>'+rows+
+      '<div class="field-row"><span class="k">Status</span><span class="v">Settlement pending approval</span></div>'+rows+
       '<h3 style="font-size:12.5px;">Deductions (estimated)</h3>'+
       (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
@@ -12825,47 +12444,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.handlePaymentReportProofFile = handlePaymentReportProofFile;
   window.submitPaymentReport = submitPaymentReport;
 
-  /** Tenant self-upload: file input + a doc_type select limited to the two tenant-safe types
-   *  ('id','other') — must match tenant_documents_tenant_insert's RLS check exactly, so no other
-   *  DOC_TYPE_LABEL keys are offered here (lease/invoice/technician_report/warranty stay
-   *  staff-only, added via the staff doc-modal/confirmAddDocument). */
-  var TENANT_DOC_TYPES = ['id', 'other'];
-  async function confirmAddTenantDocument(){
-    var t = myTenantRecord();
-    if (!t) return;
-    var fileInput = document.getElementById('tenant-doc-file');
-    var file = fileInput && fileInput.files && fileInput.files[0];
-    if (!file){ showToast('Choose a file to upload.', 'error'); return; }
-    var docType = document.getElementById('tenant-doc-type').value;
-    var btn = document.getElementById('tenant-doc-upload-btn');
-    var originalLabel = btn ? btn.textContent : '';
-    if (btn){ btn.disabled = true; btn.textContent = 'Uploading…'; }
-    try {
-      var storagePath = await storageService.uploadDocument(t.id, file);
-      var saved = await tenantDocumentService.create({ tenantId: t.id, docType: docType, storagePath: storagePath, fileName: file.name || 'document' });
-      tenantDocuments.push(saved);
-      var uploadedProperty = propertyOf(t.propertyId);
-      var assignedAdminIds = propertyAssignments.filter(function(a){ return a.propertyId===t.propertyId; }).map(function(a){ return a.profileId; });
-      var staffToNotify = allProfiles.filter(function(p){
-        if (!p.isActive || !p.authUserId) return false;
-        if (p.role === 'super_admin') return true;
-        return p.role === 'administrator' && assignedAdminIds.indexOf(p.id) > -1;
-      });
-      for (var si=0; si<staffToNotify.length; si++){
-        await notificationService.notify(staffToNotify[si].authUserId, 'New document uploaded',
-          (t.fullName || 'A tenant') + ' uploaded a ' + (DOC_TYPE_LABEL[docType] || docType) +
-          ' document' + (uploadedProperty ? ' at ' + uploadedProperty.name : '') + '.', 'tenant_documents', saved.id);
-      }
-      showToast('Document uploaded.', 'success');
-      await refreshOperationsReadModels();
-      render();
-    } catch(err){
-      showToast('Could not upload this document. ' + friendlyErrorMessage(err), 'error');
-    } finally {
-      if (btn){ btn.disabled = false; btn.textContent = originalLabel; }
-    }
-  }
-  window.confirmAddTenantDocument = confirmAddTenantDocument;
 
   /* ---------- House rules (replaces the tenant "My Documents" tab) ----------
    * Stored per property in house_rules.content as JSON:
@@ -13245,34 +12823,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.saveHouseRules = saveHouseRules;
 
-  function renderTenantDocuments(){
-    var t = myTenantRecord();
-    var myDocs = t ? tenantDocuments.filter(function(d){ return d.tenantId===t.id; }) : [];
-    var body = myDocs.length === 0
-      ? '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No documents uploaded yet.</p></div>'
-      : myDocs.map(function(d){
-          return '<div class="card"><div class="field-row"><span class="k">'+esc(d.fileName||d.docType)+'</span>'+
-            '<span class="v"><button class="text-link" onclick="viewReceipt(\'documents\',\''+d.storagePath+'\')">View</button></span></div></div>';
-        }).join('');
-    var uploadBox = '<div class="card" style="margin-bottom:10px;">'+
-      '<div class="form-row"><label for="tenant-doc-file">File</label>'+
-      '<input id="tenant-doc-file" type="file" accept="image/*,application/pdf" /></div>'+
-      '<div class="form-row"><label for="tenant-doc-type">Document type</label>'+
-      '<select id="tenant-doc-type">'+TENANT_DOC_TYPES.map(function(k){
-        return '<option value="'+k+'">'+esc(DOC_TYPE_LABEL[k])+'</option>';
-      }).join('')+'</select></div>'+
-      '<button type="button" class="mini-btn primary" id="tenant-doc-upload-btn" onclick="confirmAddTenantDocument()">Upload document</button>'+
-      '</div>';
-    return pageHeader('My Documents', 'Your rental agreement, receipts and other files.') + uploadBox + body;
-  }
 
-  /* ============ PHASE 15 — CRUD: properties, rooms, tenants, bonds ============ */
-  var crudIdSeq = 0;
-  function genId(prefix){
-    crudIdSeq++;
-    return prefix + '-' + Date.now() + '-' + crudIdSeq;
-  }
 
+  /* ============ CRUD: properties, rooms, tenants, bonds ============ */
   /** Re-populates the property/tenant <select> elements that were filled in once when the page loaded. */
   function refreshStaticSelects(){
     var reviewPropertySelect = document.getElementById('review-property');
@@ -14231,7 +13784,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * It is strictly a preview: while it's on, every database write (insert/update/delete, RPCs,
    * uploads, account functions) is refused at the client, so nothing can be saved "as" them. */
   var viewAs = null; // { tenantId, realProfile, snapshot, hashBefore }
-  function isViewingAsTenant(){ return !!viewAs; }
   var VIEW_AS_BLOCKED_MSG = "This is a preview of the tenant's app — changes are turned off. Exit the tenant view to make changes.";
   function viewAsBlockedError(){ var e = new Error(VIEW_AS_BLOCKED_MSG); e.viewAsBlocked = true; return e; }
   (function installViewAsWriteGuard(){
@@ -14261,7 +13813,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           return orig.apply(this, arguments);
         };
       });
-      var READ_ONLY_FUNCTIONS = ['predict-bills', 'tenant-bill-receipt'];
+      var READ_ONLY_FUNCTIONS = ['tenant-bill-receipt'];
       var fnProto = Object.getPrototypeOf(c.functions);
       if (fnProto === Object.prototype) fnProto = c.functions; // (test doubles: a plain object)
       var origInvoke = fnProto.invoke;
@@ -15886,43 +15438,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.manualRefresh = manualRefresh;
 
-  /* Pull down from the top of the page to reload (touch screens). */
-  // Pull-to-refresh is turned OFF (the admin asked for it): swiping down at the top was reloading
-  // the app by accident. Data stays in sync on its own, and the ↻ button reloads on purpose.
-  (function setupPullToRefresh(){
-    return;
-    if (!('ontouchstart' in window)) return;
-    var ind = document.createElement('div');
-    ind.id = 'ptr-indicator';
-    ind.innerHTML = svg('refresh') + '<span>Pull to refresh</span>';
-    document.body.appendChild(ind);
-    var startY = null, pulling = false, dist = 0, THRESHOLD = 80;
-    function atTop(){ return (window.scrollY || document.documentElement.scrollTop || 0) <= 0; }
-    document.addEventListener('touchstart', function(e){
-      if (e.touches.length !== 1 || !atTop() || anyModalOpen()) { startY = null; return; }
-      startY = e.touches[0].clientY; pulling = false; dist = 0;
-    }, { passive:true });
-    document.addEventListener('touchmove', function(e){
-      if (startY === null) return;
-      dist = e.touches[0].clientY - startY;
-      if (dist <= 0 || !atTop()){ ind.classList.remove('show','ready'); ind.style.transform = ''; pulling = false; return; }
-      pulling = true;
-      var pull = Math.min(dist, 130);
-      ind.classList.add('show');
-      ind.classList.toggle('ready', dist >= THRESHOLD);
-      ind.querySelector('span').textContent = dist >= THRESHOLD ? 'Release to refresh' : 'Pull to refresh';
-      ind.style.transform = 'translate(-50%,' + (pull * 0.6) + 'px)';
-      ind.querySelector('svg').style.transform = 'rotate(' + (pull * 2.4) + 'deg)';
-    }, { passive:true });
-    document.addEventListener('touchend', function(){
-      if (startY === null) return;
-      var go = pulling && dist >= THRESHOLD && !anyModalOpen();
-      startY = null; pulling = false;
-      if (go){ ind.classList.add('loading'); ind.querySelector('span').textContent = 'Refreshing…'; manualRefresh(); }
-      else { ind.classList.remove('show','ready'); ind.style.transform = ''; }
-    }, { passive:true });
-  })();
-
   var autoRefreshSetupDone = false;
   /** Three triggers to keep everything synced "immediately" between users, without
    *  anyone having to close and reopen the tab:
@@ -16011,18 +15526,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
 
-  /* ============ Auth gate: sign in before loading/rendering any app data ============ */
-  // Self-signup is gone — accounts are created by a Super Admin (Users page), who hands the
-  // person their email + initial password directly. This form is sign-in only now.
-  /** Tenants log in with their phone number, not an email (see PHONE_LOGIN_SUFFIX above) — the
-   *  same conversion the create-user Edge Function does when it creates their login. Anything
-   *  with an "@" is treated as a real email (Administrator/Super Admin) and used as-is. */
-  function loginIdentifierToEmail(raw){
-    var trimmed = (raw || '').trim();
-    if (trimmed.indexOf('@') > -1) return trimmed;
-    return phoneDigitsOnly(trimmed) + PHONE_LOGIN_SUFFIX;
-  }
 
+  /* ============ Auth gate: sign in before loading/rendering any app data ============ */
+  // Accounts are created by a Super Admin (Users page); this form is sign-in only.
   /** Every login email an identifier could map to. Tenant accounts were created with whatever
    *  phone format the admin typed, so an Australian mobile may be stored as 61487352329 or as
    *  0487352329 — both are tried, so "+61 487 352 329" and "0487 352 329" both work. */
@@ -16221,9 +15727,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
 
-  function roleLabel(role){
-    return role==='super_admin' ? 'Super Admin' : role==='administrator' ? 'Administrator' : role==='viewer' ? 'Viewer' : 'Tenant';
-  }
 
   // A "reset your password" email link lets supabase-js automatically create a
   // valid session as soon as the page loads (detectSessionInUrl) — without this, that person

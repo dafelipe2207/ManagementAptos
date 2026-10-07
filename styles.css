@@ -1139,23 +1139,12 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .rei-hist-body{flex:1;min-width:0;}
 .rei-hist-top{font-size:13.5px;font-weight:650;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
 .rei-hist-sub{font-size:12px;color:var(--text-dim);margin-top:2px;}
-.rei-hist-outcome{font-size:12.5px;margin-top:4px;line-height:1.45;}
-.rei-hist-item.cancelled .rei-hist-top{color:var(--text-faint);text-decoration:line-through;}
 
 /* Refresh button */
 #refresh-btn.spinning svg{animation:spin-refresh .8s linear infinite;}
 #refresh-btn[disabled]{cursor:progress;opacity:.8;}
 @keyframes spin-refresh{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion: reduce){#refresh-btn.spinning svg{animation-duration:2.4s;}}
-
-/* Pull-to-refresh indicator */
-#ptr-indicator{position:fixed;top:-44px;left:50%;transform:translate(-50%,0);z-index:2000;display:flex;align-items:center;gap:8px;
-  padding:8px 14px;border-radius:999px;background:var(--bg-elevated);color:var(--text-dim);border:1px solid var(--border);
-  box-shadow:0 4px 14px rgba(20,30,25,.15);font-size:12.5px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .15s ease;}
-#ptr-indicator.show{opacity:1;}
-#ptr-indicator.ready{color:var(--accent);border-color:var(--accent);}
-#ptr-indicator svg{width:18px;height:18px;}
-#ptr-indicator.loading svg{animation:spin-refresh .8s linear infinite;}
 
 /* ===== One typeface everywhere =====
    Form controls don't inherit the page font by default — make them, and give every number
