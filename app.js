@@ -2298,6 +2298,105 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div>');
   }
 
+  /** A payment the tenant made to cover what the bond didn't (stored in bond.discounts as a
+   *  negative entry, so bond.deduction stays the sum of the list). */
+  function isBondBalancePayment(d){ return d && (d.sourceType === 'tenant_payment' || d.amount < 0); }
+  /** One bond line's value: deductions in red (−$x); a balance payment in green (+$x) with its receipt. */
+  function bondLineValueHtml(d, canEdit, tenantId){
+    if (!isBondBalancePayment(d)) return '<span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span>';
+    var rc = d.receiptPath
+      ? '<button type="button" class="rcpt-btn has" style="width:30px;height:30px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+d.receiptPath+'\')">'+RECEIPT_VIEW_ICON+'</button>'
+      : (canEdit ? '<button type="button" class="rcpt-btn" style="width:30px;height:30px;" title="Attach the transfer receipt" aria-label="Attach the transfer receipt" onclick="pickBondPaymentReceipt(\''+tenantId+'\',\''+esc(d.id||'')+'\')">'+RECEIPT_UPLOAD_ICON+'</button>' : '');
+    return '<span class="v" style="display:inline-flex;gap:6px;align-items:center;color:var(--status-paid);">+'+money(-d.amount)+rc+'</span>';
+  }
+  /** What the tenant still owes beyond the bond after the settlement (0 when the bond covered it). */
+  function bondShortfall(bond){
+    if (!bond) return 0;
+    var left = round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0));
+    return left < 0 ? -left : 0;
+  }
+  /** "Record balance payment": the tenant paid (by transfer) what their bond didn't cover. Saved as
+   *  a negative line in the bond so the settlement balances to $0, with the receipt attached. */
+  var bondPaymentTenantId = null;
+  function openBondBalancePaymentModal(tenantId){
+    var bond = bondOf(tenantId), owed = bondShortfall(bond);
+    if (!bond || owed <= 0) return;
+    bondPaymentTenantId = tenantId;
+    var t = tenantOf(tenantId);
+    var m = document.getElementById('bond-payment-modal');
+    if (!m){
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'bond-payment-modal';
+      m.addEventListener('click', function(e){ if (e.target === m) m.hidden = true; });
+      document.body.appendChild(m);
+    }
+    m.innerHTML = '<div class="card modal-card" style="max-width:420px;">'+
+      '<h2 class="modal-title">Record balance payment</h2>'+
+      '<p class="modal-sub">'+esc(t ? t.fullName : '')+' owes '+money(owed)+' beyond the bond. Record the transfer they made.</p>'+
+      '<div class="form-row"><label for="bond-pay-amount">Amount paid</label><input id="bond-pay-amount" type="number" min="0" step="0.01" value="'+owed+'" /></div>'+
+      '<div class="form-row"><label for="bond-pay-date">Date paid</label><input id="bond-pay-date" type="date" value="'+TODAY+'" /></div>'+
+      '<div class="form-row"><label for="bond-pay-file">Transfer receipt (optional)</label><input id="bond-pay-file" type="file" accept="image/*,application/pdf" /></div>'+
+      '<p id="bond-pay-error" class="form-error" hidden style="color:var(--status-overdue);font-size:12.5px;"></p>'+
+      '<div class="modal-actions"><button type="button" class="mini-btn" onclick="document.getElementById(\'bond-payment-modal\').hidden=true">Cancel</button>'+
+      '<button type="button" class="mini-btn primary" onclick="saveBondBalancePayment()">Save payment</button></div></div>';
+    m.hidden = false;
+  }
+  window.openBondBalancePaymentModal = openBondBalancePaymentModal;
+  async function saveBondBalancePayment(){
+    var bond = bondOf(bondPaymentTenantId);
+    var errEl = document.getElementById('bond-pay-error');
+    var amount = round2(parseFloat(document.getElementById('bond-pay-amount').value));
+    var date = document.getElementById('bond-pay-date').value || TODAY;
+    var fileInput = document.getElementById('bond-pay-file');
+    var file = fileInput.files && fileInput.files[0];
+    if (!bond || !isFinite(amount) || amount <= 0){ errEl.textContent = 'Enter the amount paid.'; errEl.hidden = false; return; }
+    var btn = document.querySelector('#bond-payment-modal .mini-btn.primary');
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      var t = tenantOf(bondPaymentTenantId);
+      var receiptPath = file ? await storageService.uploadReceipt(refPrefix(t) + 'bond-balance', file) : null;
+      var settlement = moveOutSettlementOf(bondPaymentTenantId);
+      var entry = { id: 'pay-' + Date.now().toString(36), label: 'Balance paid by tenant (' + shortDate(date) + ')', amount: -amount,
+        category: 'payment', sourceType: 'tenant_payment', paidDate: date, receiptPath: receiptPath, settlementId: settlement ? settlement.id : null };
+      var discounts = (bond.discounts || []).concat([entry]);
+      var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts, deduction: round2((bond.deduction || 0) - amount) }));
+      Object.assign(bond, saved);
+      document.getElementById('bond-payment-modal').hidden = true;
+      showToast('Payment recorded — ' + money(amount) + '.', 'success');
+      render();
+    } catch(err){
+      errEl.textContent = friendlyErrorMessage(err); errEl.hidden = false;
+    } finally {
+      if (btn){ btn.disabled = false; btn.textContent = 'Save payment'; }
+    }
+  }
+  window.saveBondBalancePayment = saveBondBalancePayment;
+  /** Attach the receipt to a balance payment recorded without one. */
+  var bondReceiptTarget = null;
+  function pickBondPaymentReceipt(tenantId, entryId){
+    bondReceiptTarget = { tenantId: tenantId, entryId: entryId };
+    var inp = document.getElementById('bond-receipt-input');
+    if (!inp){
+      inp = document.createElement('input'); inp.type = 'file'; inp.id = 'bond-receipt-input'; inp.accept = 'image/*,application/pdf'; inp.hidden = true;
+      inp.addEventListener('change', handleBondPaymentReceiptFile);
+      document.body.appendChild(inp);
+    }
+    inp.click();
+  }
+  async function handleBondPaymentReceiptFile(event){
+    var file = pickedFile(event), target = bondReceiptTarget;
+    var bond = target && bondOf(target.tenantId);
+    if (!file || !bond) return;
+    try {
+      var path = await storageService.uploadReceipt(refPrefix(tenantOf(target.tenantId)) + 'bond-balance', file);
+      var discounts = (bond.discounts || []).map(function(d){ return (d.id && d.id === target.entryId) ? Object.assign({}, d, { receiptPath: path }) : d; });
+      var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts }));
+      Object.assign(bond, saved);
+      showToast('Receipt attached.', 'success');
+      render();
+    } catch(err){ showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  window.pickBondPaymentReceipt = pickBondPaymentReceipt;
+
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
 
   /** The "Move-Out Settlement" card on the admin's tenant detail page — one of four shapes
@@ -2334,8 +2433,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="field-row"><span class="k">Status</span><span class="v">Move-Out Completed</span></div>'+
         '<div class="field-row"><span class="k">Approved</span><span class="v">'+fullDate(settlement.approvedAt)+'</span></div>'+
         (bond ? '<div class="field-row"><span class="k">Original bond</span><span class="v">'+money(bond.amountPaid)+'</span></div>' : '')+
-        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('')+
-        (bond ? '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>' : '')+ // same basis as computeSettlementTotals: bond.deduction now holds existing + this settlement's lines; subtract what was already returned
+        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span>'+bondLineValueHtml(d, !isViewer(), t.id)+'</div>'; }).join('')+
+        (bond ? (bondShortfall(bond) > 0
+          ? '<div class="field-row"><span class="k" style="font-weight:650;">Tenant still owes</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(bondShortfall(bond))+'</span></div>'+
+            (isViewer() ? '' : '<button class="mini-btn primary" style="margin-top:10px;" onclick="openBondBalancePaymentModal(\''+t.id+'\')">Record balance payment</button>')
+          : '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>') : '')+ // same basis as computeSettlementTotals: bond.deduction holds the sum of the lines; subtract what was already returned
         '</div>';
     }
     var candidates = computeCandidateDeductions(t.id);
@@ -2447,9 +2549,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
       '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
       (effectiveDiscounts.length
-        ? effectiveDiscounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(bondDiscountDisplayLabel(d.label))+'</span><span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span></div>'; }).join('') +
+        ? effectiveDiscounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(bondDiscountDisplayLabel(d.label))+'</span>'+bondLineValueHtml(d, !isViewer(), t.id)+'</div>'; }).join('') +
           '<div class="field-row"><span class="k">Total deduction</span><span class="v">-'+money(totalDeduction)+'</span></div>'+
-          '<div class="field-row"><span class="k" style="font-weight:650;">Amount to return</span><span class="v" style="font-weight:650;">'+money(toReturn)+'</span></div>'
+          (toReturn < 0
+            ? '<div class="field-row"><span class="k" style="font-weight:650;">Tenant still owes</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(-toReturn)+'</span></div>'
+            : '<div class="field-row"><span class="k" style="font-weight:650;">Amount to return</span><span class="v" style="font-weight:650;">'+money(toReturn)+'</span></div>')
         : '') +
       '<div class="field-row"><span class="k">Amount returned</span><span class="v">'+money(bond.amountReturned)+'</span></div>'+
       '<div class="field-row"><span class="k">Status</span><span class="v">'+esc(BOND_STATUS_LABEL[bond.status]||bond.status)+'</span></div>';
@@ -3047,7 +3151,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return order.map(function(k){ return { label:k, amount: round2(by[k]) }; });
       };
       var fOwed = group(mine.filter(function(x){ return x.sourceType !== 'estimate'; }).map(function(x){
-        return { label: x.sourceType === 'rent' ? 'Rent' : (x.sourceType === 'bill' ? String(x.label || 'Bill').replace(/ bill$/,'') + ' (charged)' : (x.label || 'Deduction')), amount: x.amount };
+        return { label: x.sourceType === 'rent' ? 'Rent' : (x.sourceType === 'bill' ? String(x.label || 'Bill').replace(/ bill$/,'') + ' (charged)'
+          : isBondBalancePayment(x) ? 'Paid by you' + (x.paidDate ? ' ' + shortDate(x.paidDate) : '') : (x.label || 'Deduction')), amount: x.amount };
       }));
       var fEst = mine.filter(function(x){ return x.sourceType === 'estimate'; }).map(function(x){
         return { label: x.includedInRent ? String(x.label || 'Bill').replace(/ bill.*$/,'') + ' (in rent)' : String(x.label || 'Bill').replace(/ bill \(estimated\)$/,''),
@@ -11822,8 +11927,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<div class="card"><h2>My Bond</h2>'+
         '<div class="field-row"><span class="k">Status</span><span class="v">Move-Out Completed</span></div>'+rows+
         '<h3 style="font-size:12.5px;">Deductions</h3>'+
-        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span><span class="v">-'+money(d.amount)+'</span></div>'; }).join('')+
-        (bond ? '<div class="field-row"><span class="k" style="font-weight:650;">Final refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>' : '')+ // same basis as computeSettlementTotals (subtracts amount already returned)
+        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span>'+bondLineValueHtml(d, false, t.id)+'</div>'; }).join('')+
+        (bond ? (bondShortfall(bond) > 0
+          ? '<div class="field-row"><span class="k" style="font-weight:650;">Still to pay beyond the bond</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(bondShortfall(bond))+'</span></div>'
+          : '<div class="field-row"><span class="k" style="font-weight:650;">Final refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>') : '')+ // same basis as computeSettlementTotals (subtracts amount already returned)
         '<div class="field-row"><span class="k">Approved</span><span class="v">'+fullDate(settlement.approvedAt)+'</span></div></div>';
     }
     // In progress → the live estimate card (tenantMoveOutEstimateHtml) already covers it.
@@ -13416,8 +13523,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button type="button" class="icon-mini-btn danger" title="Remove" onclick="removeBondDiscountRow(\''+rowId+'\')">✕</button>'+
       '</div></div>';
   }
-  function addBondDiscountRow(label, amount){
+  // Each row remembers the full entry it was opened from (bondDiscountRowMeta), so editing a bond
+  // keeps a settled deduction's details (settlement, bill, estimate days…) instead of reducing it to
+  // label + amount. Balance payments made by the tenant (negative entries) aren't editable rows —
+  // they're kept as they are (bondModalKeptEntries).
+  var bondDiscountRowMeta = {};
+  var bondModalKeptEntries = [];
+  function addBondDiscountRow(label, amount, meta){
     var rowId = 'bond-discount-row-' + (++bondDiscountRowSeq);
+    if (meta) bondDiscountRowMeta[rowId] = meta;
     var container = document.getElementById('bond-discount-rows');
     container.insertAdjacentHTML('beforeend', bondDiscountRowHtml(rowId, label, amount));
     recomputeBondDiscountTotal();
@@ -13436,9 +13550,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var label = row.querySelector('.bond-discount-label').value.trim();
       var amount = parseFloat(row.querySelector('.bond-discount-amount').value);
       if (!isFinite(amount) || amount <= 0) return; // skip empty/blank rows rather than erroring
-      discounts.push({ label: label || 'Discount', amount: round2(amount) });
+      discounts.push(Object.assign({}, bondDiscountRowMeta[row.id] || {}, { label: label || 'Discount', amount: round2(amount) }));
     });
-    return discounts;
+    return discounts.concat(bondModalKeptEntries);
   }
   function recomputeBondDiscountTotal(){
     var discounts = readBondDiscountRows();
@@ -13460,7 +13574,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('bond-discount-rows').innerHTML = '';
     var existingDiscounts = (b && b.discounts && b.discounts.length) ? b.discounts
       : (b && b.deduction > 0 ? [{ label:'Deduction', amount:b.deduction }] : []); // migrate an old single-number deduction into the list, the first time it's opened
-    existingDiscounts.forEach(function(d){ addBondDiscountRow(d.label, d.amount); });
+    bondDiscountRowMeta = {};
+    bondModalKeptEntries = existingDiscounts.filter(isBondBalancePayment);
+    existingDiscounts.filter(function(d){ return !isBondBalancePayment(d); }).forEach(function(d){ addBondDiscountRow(d.label, d.amount, d); });
     recomputeBondDiscountTotal();
     document.getElementById('bond-modal-error').hidden = true;
     document.getElementById('bond-modal').hidden = false;
