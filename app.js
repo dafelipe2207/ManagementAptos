@@ -12346,12 +12346,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function ruleTopic(key){ return RULE_TOPICS.find(function(t){ return t.key===key; }) || RULE_TOPICS[RULE_TOPICS.length-1]; }
   var ruleIdSeq = 0;
   function newRuleId(){ return 'r' + Date.now().toString(36) + (++ruleIdSeq); }
-  function guessRuleTopic(title){
-    var t = (title||'').toLowerCase();
-    var hit = RULE_TOPICS.find(function(x){ return t.indexOf(x.label.toLowerCase().split(' ')[0]) > -1 || t.indexOf(x.key) > -1; });
-    return hit ? hit.key : 'general';
-  }
-  /** Parses saved content into { sections: [...] } — JSON (v2) or legacy plain text. */
+  /** Parses saved content (JSON v2 — every stored set of rules uses it) into { sections: [...] }. */
   function parseHouseRules(content){
     var raw = (content || '').trim();
     if (!raw) return { sections: [], intro:'', closing:'' };
@@ -12366,20 +12361,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           });
           return { sections: obj.sections, intro: obj.intro || '', closing: obj.closing || '' };
         }
-      } catch(_e){ /* fall through to plain text */ }
+      } catch(_e){ console.warn('Unreadable house rules', _e); }
     }
-    var sections = [], current = null;
-    raw.split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean).forEach(function(l){
-      if (/^#+\s*/.test(l) || /:$/.test(l)){
-        var title = l.replace(/^#+\s*/, '').replace(/:$/, '');
-        current = { id:newRuleId(), topic:guessRuleTopic(title), title:title, rules:[] };
-        sections.push(current);
-      } else {
-        if (!current){ current = { id:newRuleId(), topic:'general', title:'General', rules:[] }; sections.push(current); }
-        current.rules.push({ id:newRuleId(), text:l.replace(/^(\d+[.)]|[-*•])\s*/, ''), note:'', level:'please' });
-      }
-    });
-    return { sections: sections, intro:'', closing:'' };
+    return { sections: [], intro:'', closing:'' };
   }
   function serializeHouseRules(doc){
     return JSON.stringify({ v:2, intro:(doc.intro||'').trim(), closing:(doc.closing||'').trim(), sections: doc.sections.map(function(s){
