@@ -1747,51 +1747,44 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   var leasePaymentModalPropertyId = null;
   var leasePaymentEditId = null; // set while editing an existing history entry
-  /** Edit a payment already in the history: its period start (the end follows the frequency),
-   *  amount, paid date, notes, and optionally replace the invoice. */
+  /** One dialog for the payment to the real estate. New payment: the period start is PRE-FILLED
+   *  with the next due date (editable — the invoice's real period may differ). Edit (`editId`):
+   *  a payment already in the history — period, amount, paid date, notes, and optionally a new
+   *  invoice. The period end always follows the property's frequency. */
+  function showLeasePaymentModal(p, editId, v){
+    leasePaymentModalPropertyId = p.id;
+    leasePaymentEditId = editId || null;
+    var freq = p.leasePaymentFrequency==='fortnightly' ? 'Fortnightly' : 'Monthly';
+    document.getElementById('lease-payment-modal-title').textContent = editId ? 'Edit lease payment' : 'Mark lease payment as paid';
+    document.getElementById('lease-payment-modal-sub').textContent = p.name + (!editId && p.leasePaymentAmount!=null ? ' • ' + money(p.leasePaymentAmount) : '') + ' • ' + freq;
+    document.getElementById('lease-payment-start').value = v.start;
+    document.getElementById('lease-payment-amount').value = v.amount != null ? v.amount : '';
+    document.getElementById('lease-payment-paid-date').value = v.paidDate || '';
+    document.getElementById('lease-payment-file').value = '';
+    document.getElementById('lease-payment-file-label').textContent = v.hasReceipt ? 'Replace the invoice (optional — leave empty to keep the current one)' : 'Invoice / payment receipt (optional)';
+    document.getElementById('lease-payment-notes').value = v.notes || '';
+    updateLeasePaymentEndPreview();
+    document.getElementById('lease-payment-modal-error').hidden = true;
+    document.getElementById('lease-payment-modal').hidden = false;
+  }
   function openEditLeasePayment(id){
     var x = leasePayments.find(function(r){ return r.id === id; });
     var p = x && propertyOf(x.propertyId);
     if (!p) return;
-    leasePaymentModalPropertyId = p.id;
-    leasePaymentEditId = id;
-    document.getElementById('lease-payment-modal-title').textContent = 'Edit lease payment';
-    document.getElementById('lease-payment-modal-sub').textContent = p.name + ' • ' + (p.leasePaymentFrequency==='fortnightly'?'Fortnightly':'Monthly');
-    document.getElementById('lease-payment-start').value = x.periodStart;
-    document.getElementById('lease-payment-amount').value = x.amount != null ? x.amount : '';
-    document.getElementById('lease-payment-paid-date').value = x.paidDate || '';
-    document.getElementById('lease-payment-file').value = '';
-    document.getElementById('lease-payment-file-label').textContent = x.receiptPath ? 'Replace the invoice (optional — leave empty to keep the current one)' : 'Invoice / payment receipt (optional)';
-    document.getElementById('lease-payment-notes').value = x.notes || '';
-    updateLeasePaymentEndPreview();
-    document.getElementById('lease-payment-modal-error').hidden = true;
-    document.getElementById('lease-payment-modal').hidden = false;
+    showLeasePaymentModal(p, id, { start: x.periodStart, amount: x.amount, paidDate: x.paidDate, notes: x.notes, hasReceipt: !!x.receiptPath });
   }
   window.openEditLeasePayment = openEditLeasePayment;
-  /** Opens a dialog to confirm the payment to the real estate, with the dates of the period it
-   *  covers PRE-FILLED with whatever the system already computes as the next due date — but fully
-   *  editable, because that default date might not match the invoice's actual period
-   *  (e.g. if the payment arrived late or the actual cycle doesn't line up exactly). */
   function openLeasePaymentModal(propertyId, presetStart){
     var p = propertyOf(propertyId);
     if (!p) return;
-    leasePaymentModalPropertyId = propertyId;
-    leasePaymentEditId = null;
-    document.getElementById('lease-payment-modal-title').textContent = 'Mark lease payment as paid';
-    document.getElementById('lease-payment-file-label').textContent = 'Invoice / payment receipt (optional)';
-    var defaultStart = presetStart || nextLeaseDueDate(p, TODAY) || TODAY;
-    document.getElementById('lease-payment-modal-sub').textContent =
-      p.name + (p.leasePaymentAmount!=null ? ' • ' + money(p.leasePaymentAmount) : '') + ' • ' + (p.leasePaymentFrequency==='fortnightly'?'Fortnightly':'Monthly');
-    document.getElementById('lease-payment-start').value = defaultStart;
-    document.getElementById('lease-payment-amount').value = p.leasePaymentAmount != null ? p.leasePaymentAmount : '';
-    document.getElementById('lease-payment-paid-date').value = TODAY;
-    document.getElementById('lease-payment-file').value = '';
-    document.getElementById('lease-payment-notes').value = '';
-    updateLeasePaymentEndPreview();
-    document.getElementById('lease-payment-modal-error').hidden = true;
-    document.getElementById('lease-payment-modal').hidden = false;
+    showLeasePaymentModal(p, null, { start: presetStart || nextLeaseDueDate(p, TODAY) || TODAY, amount: p.leasePaymentAmount, paidDate: TODAY });
   }
   window.openLeasePaymentModal = openLeasePaymentModal;
+  /** The latest period start in a property's lease payment history (null if none) — what
+   *  "last period paid" (and so "next payment due") follows. */
+  function latestLeasePeriod(propertyId){
+    return leasePayments.filter(function(r){ return r.propertyId === propertyId; }).map(function(r){ return r.periodStart; }).sort().pop() || null;
+  }
   function updateLeasePaymentEndPreview(){
     var p = propertyOf(leasePaymentModalPropertyId);
     var start = document.getElementById('lease-payment-start').value;
@@ -1832,7 +1825,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           amount: amount, paidDate: paidDate, receiptPath: newPath, notes: notes }));
         Object.assign(x, upd);
         // Keep "last period paid" (and so "next payment due") in step with the latest period in the history.
-        var latest = leasePayments.filter(function(r){ return r.propertyId === p.id; }).map(function(r){ return r.periodStart; }).sort().pop() || null;
+        var latest = latestLeasePeriod(p.id);
         if (latest && latest !== p.lastLeasePaymentDate){
           var savedP = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: latest }));
           Object.assign(p, savedP);
@@ -1961,8 +1954,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       leasePayments = leasePayments.filter(function(r){ return r.id !== id; });
       var p = propertyOf(x.propertyId);
       if (p && p.lastLeasePaymentDate === x.periodStart){
-        var latest = leasePayments.filter(function(r){ return r.propertyId === p.id; })
-          .map(function(r){ return r.periodStart; }).sort().pop() || null;
+        var latest = latestLeasePeriod(p.id);
         var saved = await propertyService.update(p.id, Object.assign({}, p, { lastLeasePaymentDate: latest }));
         Object.assign(p, saved);
       }
@@ -4007,12 +3999,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function billOutstandingAmount(b){
     return Math.max(0, round2(b.amount - billPaidAmount(b)));
   }
+  /** One table for a bill's status: badge/bar color and label (badges, list and timeline). */
+  var BILL_STATUS_META = { paid:['paid','Paid'], pending:['due','Pending'], overdue:['overdue','Overdue'],
+    allocated:['upcoming','Allocated'], partially_paid:['due','Partially paid'] };
   function billStatusBadge(b){
-    var map = { paid:['paid','Paid'], pending:['due','Pending'], overdue:['overdue','Overdue'], allocated:['upcoming','Allocated'],
-      partially_allocated:['due','Partially Allocated'], partially_paid:['due','Partially Paid'] };
     var st = billEffectiveStatus(b);
     if (st === 'overdue' && billIsPartiallyPaid(b)) return badge('overdue', 'Overdue · part paid');
-    var m = map[st] || ['neutral', b.status];
+    var m = BILL_STATUS_META[st] || ['neutral', b.status];
     return badge(m[0], m[1]);
   }
   /** The "current" charge is the one that contains today; if there is none, the next future one; otherwise, the last past one. */
@@ -4256,10 +4249,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     // Grouped by tenant — three fixed blocks per tenant ("Due" / "Paid" / "Bills") instead
     // of a separate card for every week or a separate Bills tab.
-    function tenantOwesSomething(t){
-      return rentCharges.some(function(c){ return c.tenantId===t.id && c.status!=='paid'; }) ||
-        unpaidBillAllocationsFor(t.id).length > 0;
-    }
     // A tenant who's moved out (or been deactivated) and is fully settled has nothing left to
     // track here, so they drop off the default ("Active") view entirely — only kept around
     // while they still owe rent or a bill. A currently-active tenant always stays, even with
@@ -4373,7 +4362,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         }).join('');
 
     var movedOutOwing = paymentsTenantStatusFilter==='active'
-      ? tenants.filter(function(t){ return t.rentAmount > 0 && tenantHasMovedOut(t) && tenantOwesSomething(t) && (paymentsPropertyFilter==='all' || t.propertyId===paymentsPropertyFilter); })
+      ? tenants.filter(function(t){ return t.rentAmount > 0 && tenantHasMovedOut(t) && !tenantOwesNothing(t) && (paymentsPropertyFilter==='all' || t.propertyId===paymentsPropertyFilter); })
       : [];
     var owingNote = movedOutOwing.length
       ? '<div class="moved-out-owing">💸 '+movedOutOwing.length+' moved-out tenant'+(movedOutOwing.length>1?'s still owe':' still owes')+' money ('+movedOutOwing.map(function(t){ return esc(t.fullName); }).join(', ')+'). '+
@@ -6466,6 +6455,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     pendingDocFile = null;
     document.getElementById('doc-modal').hidden = true;
   }
+  /** Uploads a file as one of the tenant's documents and, when `linkTo` is given
+   *  ({ table, id }), attaches it to that record (a maintenance request, an inspection
+   *  comment…). Returns the saved document. */
+  async function uploadTenantDocument(tenantId, file, docType, fileName, linkTo){
+    var storagePath = await storageService.uploadDocument(tenantId, file);
+    var saved = await tenantDocumentService.create({ tenantId: tenantId, docType: docType, storagePath: storagePath, fileName: fileName || file.name || 'document' });
+    tenantDocuments.push(saved);
+    if (linkTo){
+      var newLink = await entityLinkService.linkEntities('tenant_documents', saved.id, linkTo.table, linkTo.id, 'attached_to');
+      entityLinks.push(newLink);
+    }
+    return saved;
+  }
   async function confirmAddDocument(){
     if (!pendingDocFile) return;
     var tenantId = document.getElementById('doc-tenant').value;
@@ -6474,11 +6476,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var originalLabel = confirmBtn ? confirmBtn.textContent : '';
     if (confirmBtn){ confirmBtn.disabled = true; confirmBtn.textContent = 'Uploading…'; }
     try {
-      var storagePath = await storageService.uploadDocument(tenantId, pendingDocFile.file);
-      var saved = await tenantDocumentService.create({ tenantId: tenantId, docType: docType, storagePath: storagePath, fileName: pendingDocFile.fileName });
+      var saved = await uploadTenantDocument(tenantId, pendingDocFile.file, docType, pendingDocFile.fileName);
       saved.previewUrl = pendingDocFile.previewUrl;
       saved.kind = pendingDocFile.kind;
-      tenantDocuments.push(saved);
       pendingDocFile = null;
       document.getElementById('doc-modal').hidden = true;
       showToast('Document saved successfully.', 'success');
@@ -7014,13 +7014,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Bill types that arrive on a regular cycle ("other" doesn't) — see computeMissingInvoicePredictions. */
   var BILL_RECURRING_TYPES = ['electricity','water','hot_water','gas','internet'];
 
-  /** Which status color a bill maps to, reusing the same criteria as
-   *  billStatusBadge (see below) — so the timeline bar and the table badge
-   *  always match the same color for the same bill. */
-  var BILL_TIMELINE_STATUS_COLOR = { paid:'paid', pending:'due', overdue:'overdue', allocated:'upcoming', partially_allocated:'due', partially_paid:'due' };
-  var BILL_TIMELINE_STATUS_LABEL = { paid:'Paid', pending:'Pending', overdue:'Overdue', allocated:'Allocated', partially_allocated:'Partially allocated', partially_paid:'Partially paid' };
+  /** The timeline bar uses the same status table as the badges (BILL_STATUS_META). */
   function billTimelineColorVar(b){
-    return 'var(--status-' + (BILL_TIMELINE_STATUS_COLOR[billEffectiveStatus(b)] || 'upcoming') + ')';
+    var m = BILL_STATUS_META[billEffectiveStatus(b)];
+    return 'var(--status-' + (m ? m[0] : 'upcoming') + ')';
   }
 
   /** A real timeline (not a monthly grid) of the last 6 months by property ×
@@ -7060,7 +7057,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var left = pct(segStart);
       var width = Math.max(1.2, pct(stepDateIso(segEnd, 1)) - left);
       var tip = esc(b.provider) + ': ' + shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) +
-        ' • ' + money(b.amount) + ' • ' + (BILL_TIMELINE_STATUS_LABEL[billEffectiveStatus(b)] || billEffectiveStatus(b));
+        ' • ' + money(b.amount) + ' • ' + ((BILL_STATUS_META[billEffectiveStatus(b)] || [])[1] || billEffectiveStatus(b));
       return '<div title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
         'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+billTimelineColorVar(b)+';"></div>';
     }
@@ -9311,9 +9308,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   /** Staff-only "Attach document" control inside the maintenance modal (only shown once a
    *  request has a tenant_id — see openMaintenanceModal — since tenant_documents.tenant_id is
-   *  NOT NULL). Reuses confirmAddDocument's upload path (storageService.uploadDocument +
-   *  tenantDocumentService.create), then records the association via entityLinkService so the
-   *  document shows up here without any tenant_documents schema change. */
+   *  NOT NULL). Uploads through uploadTenantDocument, linked to the request (entity_links). */
   async function confirmAddMaintenanceDocument(){
     var requestId = maintenanceModalEditId;
     var m = requestId ? maintenanceRequests.find(function(x){ return x.id===requestId; }) : null;
@@ -9323,11 +9318,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!file) return;
     var docType = document.getElementById('maintenance-doc-type').value;
     try {
-      var storagePath = await storageService.uploadDocument(m.tenantId, file);
-      var saved = await tenantDocumentService.create({ tenantId: m.tenantId, docType: docType, storagePath: storagePath, fileName: file.name || 'document' });
-      tenantDocuments.push(saved);
-      var newLink = await entityLinkService.linkEntities('tenant_documents', saved.id, 'maintenance_requests', requestId, 'attached_to');
-      entityLinks.push(newLink);
+      await uploadTenantDocument(m.tenantId, file, docType, null, { table:'maintenance_requests', id:requestId });
       fileInput.value = '';
       renderMaintenanceDocumentsList(requestId);
       showToast('Document attached.', 'success');
@@ -10501,18 +10492,20 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.saveTrashForm = saveTrashForm;
 
-  async function deleteTrashEntryConfirm(){
-    if (!trashModalEditId) return;
-    if (!window.confirm('Remove this entry from the trash agenda?')) return;
-    try {
-      await trashService.remove(trashModalEditId);
-      trashSchedule = trashSchedule.filter(function(x){ return x.id!==trashModalEditId; });
-      closeTrashModal();
-      showToast('Removed.', 'success');
-      render();
-    } catch(err){
-      showToast('Could not remove. ' + friendlyErrorMessage(err), 'error');
-    }
+  function deleteTrashEntryConfirm(){
+    var id = trashModalEditId;
+    if (!id) return;
+    closeTrashModal();
+    openConfirmModal('Remove trash collection', 'Remove this entry from the trash agenda?', async function(){
+      try {
+        await trashService.remove(id);
+        trashSchedule = trashSchedule.filter(function(x){ return x.id!==id; });
+        showToast('Removed.', 'success');
+        render();
+      } catch(err){
+        return { blocked:true, message:'Could not remove. ' + friendlyErrorMessage(err) };
+      }
+    }, { confirmLabel:'Remove', danger:true });
   }
   window.deleteTrashEntryConfirm = deleteTrashEntryConfirm;
 
@@ -10627,22 +10620,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.createCleaningTaskFromFinding = createCleaningTaskFromFinding;
 
   /** Staff-only "Attach document" control per finding-tagged inspection comment (see
-   *  inspectionSectionHtml). Reuses confirmAddDocument's/confirmAddMaintenanceDocument's upload
-   *  path (storageService.uploadDocument + tenantDocumentService.create), then records the
-   *  association via entityLinkService so the document shows up here without any
-   *  tenant_documents schema change. Unlike Maintenance, inspection_comments.tenant_id is always
-   *  present (NOT NULL), so no tenant-id guard is needed. */
+   *  inspectionSectionHtml). Uploads through uploadTenantDocument, linked to the comment
+   *  (entity_links); inspection_comments.tenant_id is always present, so no tenant guard. */
   async function confirmAddInspectionDocument(commentId, tenantId){
     var fileInput = document.getElementById('inspection-doc-file-'+commentId);
     var file = fileInput && fileInput.files && fileInput.files[0];
     if (!file) return;
     var docType = document.getElementById('inspection-doc-type-'+commentId).value;
     try {
-      var storagePath = await storageService.uploadDocument(tenantId, file);
-      var saved = await tenantDocumentService.create({ tenantId: tenantId, docType: docType, storagePath: storagePath, fileName: file.name || 'document' });
-      tenantDocuments.push(saved);
-      var newLink = await entityLinkService.linkEntities('tenant_documents', saved.id, 'inspection_comments', commentId, 'attached_to');
-      entityLinks.push(newLink);
+      await uploadTenantDocument(tenantId, file, docType, null, { table:'inspection_comments', id:commentId });
       showToast('Document attached.', 'success');
       await refreshOperationsReadModels();
       openInspectionDetailModal(tenantId);
@@ -11293,6 +11279,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.closeEditUserModal = closeEditUserModal;
 
+  /** Shared check for the new-user and edit-user forms: a first name, and the login — a phone
+   *  number for tenants (they log in with it), an email for staff. Returns the message or ''. */
+  function userFormError(firstName, phone, email, logsInWithPhone, phoneMsg){
+    if (!firstName) return 'Add a first name.';
+    if (logsInWithPhone) return phoneDigitsOnly(phone).length < 8 ? phoneMsg : '';
+    return (!email || !email.includes('@')) ? 'Add a valid email.' : '';
+  }
   async function saveEditUserForm(){
     if (!editUserProfileId) return;
     var p = allProfiles.find(function(x){ return x.id===editUserProfileId; });
@@ -11303,22 +11296,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var email = document.getElementById('edit-user-email').value.trim();
     var phone = document.getElementById('edit-user-phone').value.trim();
     var errorEl = document.getElementById('edit-user-modal-error');
-    if (!firstName){
-      errorEl.textContent = 'Add a first name.';
-      errorEl.hidden = false;
-      return;
-    }
-    if (phoneLogin){
-      if (phoneDigitsOnly(phone).length < 8){
-        errorEl.textContent = 'Add a valid phone number, with country code.';
-        errorEl.hidden = false;
-        return;
-      }
-    } else if (!email || !email.includes('@')){
-      errorEl.textContent = 'Add a valid email.';
-      errorEl.hidden = false;
-      return;
-    }
+    var invalid = userFormError(firstName, phone, email, phoneLogin, 'Add a valid phone number, with country code.');
+    if (invalid){ errorEl.textContent = invalid; errorEl.hidden = false; return; }
     var saveBtn = document.querySelector('#edit-user-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
@@ -11338,20 +11317,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.saveEditUserForm = saveEditUserForm;
 
-  async function confirmDeleteUser(profileId){
+  function confirmDeleteUser(profileId){
     var p = allProfiles.find(function(x){ return x.id===profileId; });
     if (!p) return;
     var name = (p.firstName + ' ' + p.lastName).trim() || p.email || 'this user';
-    if (!window.confirm('Delete ' + name + '\'s login? This can\'t be undone. ' + (p.role==='tenant' ? 'Their tenant record and payment history stay — just the login is removed.' : ''))) return;
-    try {
-      var result = await profileService.deleteUser(profileId);
-      allProfiles = allProfiles.filter(function(x){ return x.id !== profileId; });
-      if (result && result.warning) showToast(result.warning, 'error');
-      else showToast('User deleted.', 'success');
-      render();
-    } catch(err){
-      showToast('Could not delete this user. ' + friendlyErrorMessage(err), 'error');
-    }
+    openConfirmModal('Delete login', 'Delete ' + name + '\'s login? This can\'t be undone. ' + (p.role==='tenant' ? 'Their tenant record and payment history stay — just the login is removed.' : ''), async function(){
+      try {
+        var result = await profileService.deleteUser(profileId);
+        allProfiles = allProfiles.filter(function(x){ return x.id !== profileId; });
+        if (result && result.warning) showToast(result.warning, 'error');
+        else showToast('User deleted.', 'success');
+        render();
+      } catch(err){
+        return { blocked:true, message:'Could not delete this user. ' + friendlyErrorMessage(err) };
+      }
+    }, { confirmLabel:'Delete', danger:true });
   }
   window.confirmDeleteUser = confirmDeleteUser;
 
@@ -11513,22 +11493,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var isTenant = role === 'tenant';
     var tenantId = isTenant ? (document.getElementById('user-tenant-link').value || null) : null;
     var errorEl = document.getElementById('user-modal-error');
-    if (!firstName){
-      errorEl.textContent = 'Add a first name.';
-      errorEl.hidden = false;
-      return;
-    }
-    if (isTenant){
-      if (phoneDigitsOnly(phone).length < 8){
-        errorEl.textContent = 'Add a valid phone number, with country code — that\'s what this tenant will log in with.';
-        errorEl.hidden = false;
-        return;
-      }
-    } else if (!email || !email.includes('@')){
-      errorEl.textContent = 'Add a valid email.';
-      errorEl.hidden = false;
-      return;
-    }
+    var invalid = userFormError(firstName, phone, email, isTenant, 'Add a valid phone number, with country code — that\'s what this tenant will log in with.');
+    if (invalid){ errorEl.textContent = invalid; errorEl.hidden = false; return; }
     if (!password || password.length < 8){
       errorEl.textContent = 'The initial password must be at least 8 characters.';
       errorEl.hidden = false;
@@ -15529,7 +15495,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** The topbar button (visible on any page, for any role) — confirms before
    *  signing out so an accidental tap doesn't kick someone out mid-task. */
   function confirmSignOut(){
-    if (window.confirm('Sign out?')) signOutAndReload();
+    openConfirmModal('Sign out', 'Sign out of the app on this device?', function(){ signOutAndReload(); }, { confirmLabel:'Sign out' });
   }
   window.confirmSignOut = confirmSignOut;
 
