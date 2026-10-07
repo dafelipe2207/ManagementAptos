@@ -1681,10 +1681,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var occupied = propRooms.filter(isRoomOccupied).length;
       var roomsHtml = propRooms.map(function(r){
         var t = currentTenantOf(r.id);
+        if (t && tenantHasMovedOut(t)) t = null; // only a past tenant left on record → the room is vacant
         var isPaying = t && t.rentAmount>0;
+        var movesIn = t && t.moveInDate && t.moveInDate > TODAY ? ' · moves in '+shortDate(t.moveInDate) : '';
         var tenantLabel = isPaying
-          ? esc(t.fullName)+' · $'+t.rentAmount+'/'+(t.rentFrequency==='weekly'?'week':t.rentFrequency)
-          : (t ? esc(t.fullName) : 'Vacant');
+          ? esc(t.fullName)+' · $'+t.rentAmount+'/'+(t.rentFrequency==='weekly'?'week':t.rentFrequency)+movesIn
+          : (t ? esc(t.fullName)+movesIn : 'Vacant');
         var inner = '<span class="rname">'+esc(r.name)+'</span><span class="rtenant">'+tenantLabel+'</span>';
         return isPaying
           ? '<a class="room-row linked" href="#/tenants/'+t.id+'">'+inner+'</a>'
@@ -15495,7 +15497,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * a viewer's writes too, and lib/supabaseClient.js blocks them in the browser — this is just
    * the friendly front layer. */
   var VIEW_ONLY_BLOCKED = /^(save|delete|remove|add|create|confirm|submit|mark|unmark|approve|reject|calculate|startMoveOut|startEdit|cancelMoveOut|changeMoveOutDate|changeUserRole|send|share(Bill|MoveOut)|upload|trigger|pick|handle|record|regenerate|reset|run(Local|Confirm)|end[A-Z]|discard|notify|quickAdd|import|rules(Add|Delete|Move|Set|Use)|toggle(User|Tenant|Recurring|Property|Allocation|ReviewRecurring)|update(Allocation|LeasePayment)|set(Allocation)|openSetPin|removeApp|requestAuth|welcomeUpload|openWeekReassign|openMoveOutDeduction|openImport|openAllocate|openCleaningSubmit|openInspectionSubmit|openBinOutComplete|openRentReport|openPaymentReport|openPartial|openChargePaid|openAllocPaid|openNotificationCompose|openReview|openRentReject|openRejectPayment|exitViewAs___none)/;
-  var VIEW_ONLY_ALLOWED = /^(confirmSignOut|signOutAndReload|saveChangePassword|toggleNotifRead|markDbNotifRead|copy|copyWifi)/;
+  // runConfirmModalAction: the confirm dialog's button — only reachable through an allowed action
+  // (sign out), since every blocked action is stopped before it can open the dialog.
+  var VIEW_ONLY_ALLOWED = /^(confirmSignOut|signOutAndReload|saveChangePassword|toggleNotifRead|markDbNotifRead|copy|copyWifi|runConfirmModalAction|closeConfirmModal)/;
   function viewOnlyBlockedCall(el){
     var code = el.getAttribute('onclick') || el.getAttribute('onchange') || el.getAttribute('onsubmit') || '';
     var names = code.replace(/event\.(stopPropagation|preventDefault)\(\);?/g, '').match(/[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\()/g) || [];
