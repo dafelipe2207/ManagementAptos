@@ -150,20 +150,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * services for "Rent calculations").
    */
   var rentService = (function(){
-    function stepDate(iso, days){
-      var d = new Date(iso + 'T00:00:00');
-      d.setDate(d.getDate() + days);
-      return toIsoLocal(d);
-    }
-    function addMonths(iso, months){
-      var d = new Date(iso + 'T00:00:00');
-      d.setMonth(d.getMonth() + months);
-      return toIsoLocal(d);
-    }
+    var stepDate = stepDateIso, addMonths = addMonthsIso; // shared date helpers (top level)
     function periodLengthDays(freq){
       return freq==='weekly' ? 7 : freq==='fortnightly' ? 14 : null;
     }
-    function round2(n){ return Math.round(n*100)/100; }
 
     /**
      * Generates ALL periods from `schedule.startDate` up to the first
@@ -536,17 +526,33 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Receipt icon on a paid rent period (Payments page): view the transfer receipt if there is one
    *  (attached to the payment, or sent by the tenant with a confirmed report), otherwise upload it
    *  onto the payment made that day. */
+  /** The receipt for a rent payment made on `date`: the one attached to the payment, else the
+   *  receipt the tenant sent with a confirmed "I paid" report for that date.
+   *  → { path, removeCall, pmt } (pmt = the payment row a new receipt would attach to). */
+  function rentReceiptForPaidDate(tenantId, date){
+    if (!date) return { path:null, removeCall:'', pmt:null };
+    var pmt = paymentRecords.find(function(x){ return x.tenantId===tenantId && x.date===date && x.receiptPath; }) ||
+              paymentRecords.find(function(x){ return x.tenantId===tenantId && x.date===date && x.method!=='bond_deduction'; });
+    if (pmt && pmt.receiptPath) return { path: pmt.receiptPath, removeCall: 'removePaymentReceipt(\''+pmt.id+'\')', pmt: pmt };
+    var rep = rentPaymentReports.find(function(r){ return r.tenantId===tenantId && r.status==='confirmed' && r.paymentDate===date && r.proofPath; });
+    if (rep) return { path: rep.proofPath, removeCall: 'removeReportProof(\''+rep.id+'\')', pmt: pmt || null };
+    return { path:null, removeCall:'', pmt: pmt || null };
+  }
+  /** Rent periods settled by ONE payment (same tenant, same paid date) as one group — one
+   *  transfer = one receipt. `list` must already be sorted by date. */
+  function groupChargesByPayment(list){
+    var groups = [];
+    list.forEach(function(c){
+      var last = groups[groups.length-1];
+      if (last && c.paidDate && last.paidDate === c.paidDate && last.tenantId === c.tenantId) last.items.push(c);
+      else groups.push({ paidDate:c.paidDate, tenantId:c.tenantId, items:[c] });
+    });
+    return groups;
+  }
   function paidChargeReceiptHtml(c){
     if (!c.paidDate) return '';
-    var pmt = paymentRecords.find(function(x){ return x.tenantId===c.tenantId && x.date===c.paidDate && x.receiptPath; }) ||
-              paymentRecords.find(function(x){ return x.tenantId===c.tenantId && x.date===c.paidDate && x.method!=='bond_deduction'; });
-    var path = pmt && pmt.receiptPath;
-    var removeCall = path ? 'removePaymentReceipt(\''+pmt.id+'\')' : '';
-    if (!path){
-      var rep = rentPaymentReports.find(function(r){ return r.tenantId===c.tenantId && r.status==='confirmed' && r.paymentDate===c.paidDate && r.proofPath; });
-      path = rep && rep.proofPath;
-      if (path) removeCall = 'removeReportProof(\''+rep.id+'\')';
-    }
+    var found = rentReceiptForPaidDate(c.tenantId, c.paidDate);
+    var pmt = found.pmt, path = found.path, removeCall = found.removeCall;
     // View + remove (with confirmation) — for when the wrong file was attached.
     if (path) return '<span style="display:inline-flex;gap:4px;align-items:center;">'+
       '<button type="button" class="rcpt-btn has" style="width:34px;height:34px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+path+'\')">'+RECEIPT_VIEW_ICON+'</button>'+
@@ -982,6 +988,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return cells;
   }
   var CALENDAR_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var MONTH_SHORT = CALENDAR_MONTH_NAMES.map(function(m){ return m.slice(0,3); }); // Jan … Dec
   var calendarMonth = TODAY.slice(0,7);
   function calendarShiftMonth(delta){
     var year = parseInt(calendarMonth.slice(0,4), 10);
@@ -2145,6 +2152,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.shiftTimeline = shiftTimeline;
   window.toggleTimelineAll = toggleTimelineAll;
 
+  /* ---- Shared by the tenancy and bills timelines ---- */
+  /** iso date → % position across a window of `totalDays` starting at `rangeStart` (clamped 0–100). */
+  function timelinePct(rangeStart, totalDays){
+    return function(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); };
+  }
+  function timelineTodayLineHtml(leftPct){
+    return '<div style="position:absolute;top:0;bottom:0;left:calc('+leftPct+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
+  }
+  function legendItem(colorVar, label){
+    return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
+      '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
+  }
+
   function tenantsTimelineHtml(list){
     // Only tenants who are active (living there now, or moving in soon) — not the ones who left.
     list = list.filter(function(t){ return t.isActive !== false && !tenantHasMovedOut(t); });
@@ -2163,10 +2183,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     list = list.filter(function(t){ return t.moveInDate <= rangeEnd && endOf(t) >= rangeStart; }); // only stays inside the window
     var totalDays = daysBetween(rangeStart, rangeEnd) + 1;
     if (totalDays <= 0) return '';
-    function pct(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); }
+    var pct = timelinePct(rangeStart, totalDays);
     function monthLabel(ym){
-      var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return names[parseInt(ym.slice(5,7),10)-1] + ' \'' + ym.slice(2,4);
+      return MONTH_SHORT[parseInt(ym.slice(5,7),10)-1] + ' \'' + ym.slice(2,4);
     }
     var months = [];
     var cursor = rangeStart.slice(0,7) + '-01';
@@ -2210,7 +2229,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     var todayLeft = pct(TODAY);
     var todayInWindow = TODAY >= rangeStart && TODAY <= rangeEnd;
-    var todayLineHtml = !todayInWindow ? '' : '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
+    var todayLineHtml = !todayInWindow ? '' : timelineTodayLineHtml(todayLeft);
     // One row per room — all stays that passed through that room are drawn
     // as bars within the SAME row (not a new row per tenant).
     function roomRowHtml(roomLabel, tenantsInRoom, hint){
@@ -2245,10 +2264,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var label = (i === 0 || ym.slice(5,7) === '01') ? monthLabel(ym) : monthLabel(ym).split(' ')[0];
       return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);white-space:nowrap;">'+label+'</span>';
     }).join('');
-    var legendItem = function(colorVar, label){
-      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
-        '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
-    };
     var navBtn = function(label, onclick, enabled, title){
       return '<button type="button" class="mini-btn" style="min-height:34px;padding:5px 11px;font-size:12px;" title="'+title+'" onclick="'+onclick+'"'+(enabled?'':' disabled')+'>'+label+'</button>';
     };
@@ -3696,13 +3711,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // across both lists instead of shifting with each badge's width.
     /** Receipt for a payment made on `date`: one attached to the payment, else the receipt the
      *  tenant sent with a confirmed "I paid" report for that date. */
-    function receiptForPaidDate(date){
-      if (!date) return null;
-      var pmt = paymentRecords.find(function(x){ return x.tenantId===tenantId && x.date===date && x.receiptPath; });
-      if (pmt) return pmt.receiptPath;
-      var rep = rentPaymentReports.find(function(r){ return r.tenantId===tenantId && r.status==='confirmed' && r.paymentDate===date && r.proofPath; });
-      return rep ? rep.proofPath : null;
-    }
+    function receiptForPaidDate(date){ return rentReceiptForPaidDate(tenantId, date).path; }
     function receiptIconHtml(path){
       return path ? '<button type="button" class="rcpt-btn has" style="width:34px;height:34px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+path+'\')">'+RECEIPT_VIEW_ICON+'</button>' : '';
     }
@@ -3727,12 +3736,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     // Periods settled by the same payment (same paid date) are merged into one row: the
     // combined date range, the total, and how many periods it covered.
-    var paidGroups = [];
-    paid.forEach(function(c){
-      var last = paidGroups[paidGroups.length-1];
-      if (last && c.paidDate && last.paidDate === c.paidDate) last.items.push(c);
-      else paidGroups.push({ paidDate:c.paidDate, items:[c] });
-    });
+    var paidGroups = groupChargesByPayment(paid);
     function paidGroupRow(g){
       if (g.items.length === 1) return row(g.items[0]);
       var first = g.items[g.items.length-1], lastItem = g.items[0]; // items are newest first
@@ -3749,13 +3753,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Last 5 payments first; every payment stays one tap away with "Show all" (never hidden for good).
     var PAID_CAP = rentHistoryShowAll[tenantId] ? Infinity : 5;
     var pendingShown = pending; // pending items are always shown in full, never truncated
-    var pendingExtra = 0;
     var paidShown = paidGroups.slice(0, PAID_CAP);
     var paidExtra = paidGroups.length - paidShown.length;
     return tenantRentReportsHtml(tenantId) + '<div class="card"><h2>Rent history</h2>'+
       '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:0 0 6px;">Due &amp; upcoming ('+pending.length+')</h3>'+
       (pendingShown.length ? '<div class="field-list">'+pendingShown.map(row).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0 0 10px;">Nothing due right now.</p>')+
-      (pendingExtra>0 ? '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">+'+pendingExtra+' more further out, not shown.</p>' : '')+
       '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
       (paidShown.length ? '<div class="field-list">'+paidShown.map(paidGroupRow).join('')+'</div>' : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">No payments recorded yet.</p>')+
       (paidGroups.length > 5 ? '<button type="button" class="show-more-btn" onclick="__rentHistoryAll(\''+tenantId+'\')">'+(rentHistoryShowAll[tenantId] ? 'Show fewer' : 'Show all '+paidGroups.length+' payments')+'</button>' : '')+
@@ -3789,7 +3791,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.copyPaymentRef = copyPaymentRef;
 
-  var RENT_METHOD_LABEL = { bank_transfer:'Bank transfer', cash:'Cash', card:'Card', other:'Other' };
   var RENT_REPORT_BADGE = { pending:['upcoming','Pending review'], confirmed:['paid','Confirmed'], rejected:['overdue','Rejected'] };
   /** The tenant's own recent rent payment reports (pending first), so they can see that the
    *  admin still has to confirm, or why one was rejected. Shown above Rent history. */
@@ -3805,7 +3806,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rows = pending.concat(recent).map(function(r){
       var b = RENT_REPORT_BADGE[r.status] || ['neutral', r.status];
       return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+money(r.amount)+' · paid '+shortDate(r.paymentDate)+
-        (r.paymentMethod ? ' · '+esc(RENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod) : '')+
+        (r.paymentMethod ? ' · '+esc(PAYMENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod) : '')+
         (r.status==='rejected' && r.rejectionReason ? '<br><span style="font-size:12px;color:var(--status-overdue);">Reason: '+esc(r.rejectionReason)+'</span>' : '')+
         '</span><span class="v" style="display:flex;gap:6px;align-items:center;">'+
         (r.proofPath ? '<button class="text-link" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">Receipt</button>' : '')+
@@ -3902,7 +3903,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var p = propertyOf(r.propertyId);
         return '<div class="review-row">'+
           '<div class="review-main"><div class="review-title">'+esc(t?t.fullName:'Tenant')+tenantRefChipHtml(t)+' · <b>'+money(r.amount)+'</b></div>'+
-          '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(RENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
+          '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(PAYMENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
             (r.reference?' · Ref: '+esc(r.reference)+(t && tenantPaymentRef(t) && r.reference.toUpperCase().indexOf(tenantPaymentRef(t))<0 ? ' <span style="color:var(--status-due);">(doesn\'t match '+esc(tenantPaymentRef(t))+')</span>' : ''):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
           '<div class="review-actions">'+
             (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>' : '<span style="font-size:11.5px;color:var(--text-faint);">No receipt</span>')+
@@ -4190,17 +4191,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<button class="mini-btn" style="padding:2px 8px;font-size:11px;" onclick="openPartialModal(\''+c.id+'\')">Partial</button>')+
         '</span></div>';
     }
-    /** Periods settled by ONE payment (same paid date) are one row: one transfer = one receipt.
-     *  Showing each period on its own row made a single upload look like several receipts. */
-    function groupPaidByPayment(list){
-      var groups = [];
-      list.forEach(function(c){
-        var last = groups[groups.length-1];
-        if (last && c.paidDate && last.paidDate === c.paidDate && last.tenantId === c.tenantId) last.items.push(c);
-        else groups.push({ paidDate:c.paidDate, tenantId:c.tenantId, items:[c] });
-      });
-      return groups;
-    }
     function paidGroupRow(g){
       if (g.items.length === 1) return paidRow(g.items[0]);
       var sorted = g.items.slice().sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
@@ -4366,7 +4356,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               : '<p style="font-size:12.5px;color:var(--text-faint);margin:0;">Nothing due right now.</p>'))+
             (newestFirst ? '' : upcomingHtml)+
             (!showPaid ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Paid ('+paid.length+')</h3>'+
-            limitedSection(groupPaidByPayment(paid), paidGroupRow, 'No payments recorded yet.', 'Paid', t.id))+
+            limitedSection(groupChargesByPayment(paid), paidGroupRow, 'No payments recorded yet.', 'Paid', t.id))+
             (!showBills ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Bills ('+owedBills.length+') · '+money(billsTotal)+'</h3>'+
             billsOverdueSummaryHtml(owedBills)+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
@@ -5643,6 +5633,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   var allocationDraft = null; // { billId, method, periodDays, rows:[{tenantId,name,days,amount}] }
 
+  /** Splitting a bill day by day leaves fractions of a cent; the remainder goes on the largest
+   *  row so the rows always add up to the bill exactly. */
+  function fixRoundingRemainder(rows, total){
+    var diff = round2(total - round2(rows.reduce(function(s,r){ return s + r.amount; }, 0)));
+    if (diff !== 0 && rows.length){
+      var maxIdx = 0;
+      for (var j=1; j<rows.length; j++){ if (rows[j].amount > rows[maxIdx].amount) maxIdx = j; }
+      rows[maxIdx].amount = round2(rows[maxIdx].amount + diff);
+    }
+    return rows;
+  }
+  /** The administrator's own row in a bill split (empty days, excluded tenants' shares). */
+  function adminAllocationRow(amount, extra){
+    return Object.assign({ tenantId: null, isAdmin: true, name: 'Administrator (you)', amount: round2(amount) }, extra || {});
+  }
+
   /** Splits `total` across `weights` (proportionally), adjusting the rounding on the row with the highest weight so the sum comes out exact. */
   function splitByWeights(total, weights){
     var sumW = weights.reduce(function(s,w){ return s+w; }, 0);
@@ -5720,19 +5726,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         days: t ? occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd) : 0,
         amount: round2(totals[tenantId]) };
     });
-    if (adminTotal > 0.004){
-      rows.push({ tenantId: null, isAdmin: true, name: 'Administrator (you)', days: null, amount: round2(adminTotal) });
-    }
-    // Adjusts the rounding (61 days split into fractions of a cent can throw off the total by
-    // a few cents) on the largest row, so the sum matches the bill exactly.
-    var sum = round2(rows.reduce(function(s,r){ return s + r.amount; }, 0));
-    var diff = round2(bill.amount - sum);
-    if (diff !== 0 && rows.length){
-      var maxIdx = 0;
-      for (var j=1; j<rows.length; j++){ if (rows[j].amount > rows[maxIdx].amount) maxIdx = j; }
-      rows[maxIdx].amount = round2(rows[maxIdx].amount + diff);
-    }
-    return rows;
+    if (adminTotal > 0.004) rows.push(adminAllocationRow(adminTotal, { days: null }));
+    return fixRoundingRemainder(rows, bill.amount);
   }
 
   /** Day-prorated split by each present tenant's bill_occupancy_factor (spec:
@@ -5762,19 +5757,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return { tenantId: tenantId, name: t ? t.fullName : tenantId,
         occupancyFactor: t ? t.billOccupancyFactor : 1, amount: round2(totals[tenantId]) };
     });
-    if (adminTotal > 0.004){
-      rows.push({ tenantId: null, isAdmin: true, name: 'Administrator (you)', amount: round2(adminTotal) });
-    }
-    // Same largest-row rounding-remainder fix as computeDailyRoomAllocationRows, so the sum
-    // always matches the bill's amount exactly regardless of how the cents fell.
-    var sum = round2(rows.reduce(function(s,r){ return s + r.amount; }, 0));
-    var diff = round2(bill.amount - sum);
-    if (diff !== 0 && rows.length){
-      var maxIdx = 0;
-      for (var j=1; j<rows.length; j++){ if (rows[j].amount > rows[maxIdx].amount) maxIdx = j; }
-      rows[maxIdx].amount = round2(rows[maxIdx].amount + diff);
-    }
-    return rows;
+    if (adminTotal > 0.004) rows.push(adminAllocationRow(adminTotal));
+    return fixRoundingRemainder(rows, bill.amount);
   }
 
   function computeAllocationRows(bill, method){
@@ -5803,7 +5787,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
     });
     if (adminAmount > 0){
-      rows.push({ tenantId: null, isAdmin: true, name: 'Administrator (you)', days: null, amount: adminAmount });
+      rows.push(adminAllocationRow(adminAmount, { days: null }));
     }
     return rows;
   }
@@ -6018,7 +6002,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // tenant.excludedBillTypes) the way a newly created bill would.
     var existingRows = (bill.allocations && bill.allocations.length)
       ? bill.allocations.map(function(a){
-          if (a.isAdmin) return { tenantId:null, isAdmin:true, name:'Administrator (you)', days:null, amount:a.amount };
+          if (a.isAdmin) return adminAllocationRow(a.amount, { days: null });
           var t = tenantOf(a.tenantId);
           return { tenantId:a.tenantId, name:t?t.fullName:a.tenantId,
             days: t?occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd):0, amount:a.amount };
@@ -6072,7 +6056,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       allocationDraft.rows.splice(idx, 1);
     } else {
       allocationDraft.method = 'custom';
-      allocationDraft.rows.push({ tenantId:null, isAdmin:true, name:'Administrator (you)', days:null, amount:0 });
+      allocationDraft.rows.push(adminAllocationRow(0, { days: null }));
     }
     renderAllocateModal();
   }
@@ -7109,12 +7093,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rangeStart = months[0] + '-01';
     var rangeEnd = stepDateIso(addMonthsIso(months[months.length-1] + '-01', 1), -1); // last day of the last month
     var totalDays = daysBetween(rangeStart, rangeEnd) + 1;
-    function pct(iso){ return Math.max(0, Math.min(100, 100 * daysBetween(rangeStart, iso) / totalDays)); }
+    var pct = timelinePct(rangeStart, totalDays);
     var tickEvery = Math.ceil(months.length / 12); // keep the month labels readable on long ranges
     var spansYears = months[0].slice(0,4) !== months[months.length-1].slice(0,4);
     function monthLabel(ym, i){
-      var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      var m = names[parseInt(ym.slice(5,7),10)-1];
+      var m = MONTH_SHORT[parseInt(ym.slice(5,7),10)-1];
       return (spansYears && (i === 0 || ym.slice(5,7) === '01')) ? m + ' ' + ym.slice(2,4) : m;
     }
 
@@ -7154,7 +7137,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // so it stays perfectly aligned row by row without relying on measuring the layout with JS.
     var todayLeft = pct(TODAY);
     var todayInWindow = TODAY >= rangeStart && TODAY <= rangeEnd;
-    var todayLineHtml = !todayInWindow ? '' : '<div style="position:absolute;top:0;bottom:0;left:calc('+todayLeft+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
+    var todayLineHtml = !todayInWindow ? '' : timelineTodayLineHtml(todayLeft);
     function timelineTrackRowHtml(label, faint, list, propertyId, billType){
       var picked = billsPropertyFilter === propertyId && billsTypeFilter === billType;
       var labelStyle = 'font-size:'+(faint?'10px':'11.5px')+';color:'+(picked?'var(--accent)':faint?'var(--text-faint)':'var(--text-dim)')+';'+
@@ -7219,10 +7202,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<input type="month" value="'+range.to+'" min="'+range.from+'" onchange="setBillsTimelineRange(\'to\', this.value)" style="min-height:32px;padding:4px 8px;font-size:12.5px;"></label>'+
       '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+preset(6,'6 months')+preset(12,'12 months')+preset(24,'2 years')+'</div>'+
       '</div>';
-    var legendItem = function(colorVar, label){
-      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
-        '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
-    };
     var openNow = billsTimelineOpen !== null ? billsTimelineOpen : true; // first thing on the page, open by default
     return '<details class="card collapsible-card"'+(openNow?' open':'')+' ontoggle="__setBillsTimelineOpen(this.open)">'+
       '<summary><span>Invoice timeline</span><span class="cc-hint">'+esc(rangeLabel)+' · tap a property or service to filter · tap a bar to open the bill</span></summary>'+
@@ -7250,8 +7229,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function billsTimelineMonths(){ return billsTimelineRange || billsTimelineDefault(6); }
   function monthLabelLong(ym){
-    var names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return names[parseInt(ym.slice(5,7),10)-1] + ' ' + ym.slice(0,4);
+    return MONTH_SHORT[parseInt(ym.slice(5,7),10)-1] + ' ' + ym.slice(0,4);
   }
   function monthsBetween(a, b){ return (parseInt(b.slice(0,4),10) - parseInt(a.slice(0,4),10)) * 12 + parseInt(b.slice(5,7),10) - parseInt(a.slice(5,7),10); }
   function setBillsTimelineRange(which, value){
@@ -12233,10 +12211,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   };
 
 
-  var MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   function monthYearLabel(ym){
     var parts = (ym||'').split('-');
-    var name = MONTH_NAMES_FULL[parseInt(parts[1],10)-1] || '';
+    var name = CALENDAR_MONTH_NAMES[parseInt(parts[1],10)-1] || '';
     return name + ' ' + parts[0];
   }
 
