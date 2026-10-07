@@ -1558,9 +1558,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return header + emptyState('building', 'No properties yet', 'Add a property to start tracking operations.', '');
     }
     function taskLink(r){
-      var opener = r.category === 'maintenance' ? 'openMaintenanceModal'
-        : r.category === 'bin_out' ? 'openBinOutDetailModal'
-        : 'openCleaningDetailModal';
+      var opener = taskOpenerName(r);
       return '<div class="task-row"><a href="#" onclick="event.preventDefault();event.stopPropagation();'+opener+'(\''+r.sourceId+'\')">'+(TASK_CATEGORY_ICON[r.category]||'')+' '+esc(r.title)+'</a></div>';
     }
     var sections = properties.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(p){
@@ -5732,7 +5730,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   /** Automatically splits a newly saved bill among the tenants who currently pay rent at that
-   *  property (by days occupied), used both when saving a bill from the review modal
+   *  property (day by day, weighted by each tenant's occupancy factor), used both when saving a bill from the review modal
    *  and when generating one automatically from a recurring bill. */
   async function autoAllocateNewBill(newBill){
     var propTenantsForBill = tenantsOfProperty(newBill.propertyId);
@@ -8186,7 +8184,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
   function billAllocationCard(b){
     var p = propertyOf(b.propertyId);
-    var methodLabel = { equal:'Equal split', days:'By days occupied', custom:'Custom' };
+    var methodLabel = { equal:'Equal split', days:'By days occupied', occupancy:'By occupancy factor', custom:'Custom' };
     // The admin's own payment to the provider — a second leg, separate from each tenant's
     // allocation, only unlocked once every tenant has paid their share.
     var adminReady = billReadyForAdminPayment(b);
@@ -8292,7 +8290,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
       '<h2 style="margin:0;">Allocation</h2>'+
       '<button class="mini-btn primary" onclick="openAllocateModal(\''+b.id+'\')">Allocate</button></div>'+
-      '<p style="font-size:13px;color:var(--text-dim);margin:0;">Split this bill between the property\'s tenants — equally, by days occupied, or a custom amount.</p></div>'+
+      '<p style="font-size:13px;color:var(--text-dim);margin:0;">Split this bill between the property\'s tenants — equally, by days occupied, by occupancy factor, or a custom amount.</p></div>'+
       adminSectionHtml;
   }
 
@@ -13550,6 +13548,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function closeSearchModal(){
     document.getElementById('search-modal').hidden = true;
   }
+  /** Name of the global function that opens a task_index row's detail window. */
+  function taskOpenerName(r){
+    return r.category === 'maintenance' ? 'openMaintenanceModal'
+      : r.category === 'bin_out' ? 'openBinOutDetailModal'
+      : 'openCleaningDetailModal';
+  }
   function runSearch(query){
     var box = document.getElementById('search-modal-results');
     var q = query.trim().toLowerCase();
@@ -13569,15 +13573,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<span class="srch-icon">'+svg('tenants')+'</span>'+
         '<span><div class="name">'+esc(t.fullName)+'</div><div class="meta">'+esc(p?p.name:'')+'</div></span></a>';
     });
-    // Task dispatch mirrors Phase 0's Dashboard taskLink() category → opener mapping exactly
-    // (that function is a local closure inside renderPropertyOperations and isn't reachable
-    // from here, so the same dispatch logic is reproduced rather than re-derived).
     var taskMatches = (taskIndexRows||[]).filter(function(r){
       return (r.title||'').toLowerCase().indexOf(q) > -1;
     }).map(function(r){
-      var opener = r.category === 'maintenance' ? 'openMaintenanceModal'
-        : r.category === 'bin_out' ? 'openBinOutDetailModal'
-        : 'openCleaningDetailModal';
+      var opener = taskOpenerName(r);
       var p = propertyOf(r.propertyId);
       return '<a class="search-result-row" href="#" onclick="event.preventDefault();closeSearchModal();'+opener+'(\''+r.sourceId+'\')">'+
         '<span class="srch-icon">'+svg('document')+'</span>'+
@@ -13613,10 +13612,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (type === 'date' && window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches) return;
     if (typeof el.showPicker !== 'function') return;
     try { el.showPicker(); } catch (err) { /* picker already open or not allowed — ignore */ }
-  });
-
-  document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape' && !document.getElementById('search-modal').hidden) closeSearchModal();
   });
 
   /** The four flat hashes still exist (notification deep-links, old bookmarks) and preset
