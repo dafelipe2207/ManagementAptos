@@ -395,26 +395,36 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     adminPayReceiptStatusId = statusId;
     document.getElementById('admin-pay-receipt-input').click();
   }
-  async function handleAdminPayReceiptFile(event){
+  /** The file picked in a hidden <input type=file> (cleared so the same file can be picked again). */
+  function pickedFile(event){
     var file = event.target.files && event.target.files[0];
     event.target.value = '';
+    return file || null;
+  }
+  /** Uploads a transfer receipt for a form that's still open, showing progress on its status
+   *  line. Resolves to the storage path, or null if it failed (the form can still be sent). */
+  async function uploadProofWithStatus(file, statusEl, pathPrefix){
+    if (statusEl) statusEl.textContent = 'Uploading…';
+    try {
+      var path = await storageService.uploadReceipt(pathPrefix, file);
+      if (statusEl) statusEl.textContent = '✓ ' + (file.name || 'Receipt attached');
+      return path;
+    } catch(err){
+      if (statusEl) statusEl.textContent = 'Could not attach it — try again.';
+      showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
+      return null;
+    }
+  }
+  function refPrefix(t){ var ref = t ? tenantPaymentRef(t) : ''; return ref ? ref + '-' : ''; }
+  async function handleAdminPayReceiptFile(event){
+    var file = pickedFile(event);
     if (!file) return;
-    var status = document.getElementById(adminPayReceiptStatusId);
     var chargeId = chargePaidModalChargeId || partialModalChargeId;
     var charge = rentCharges.find(function(c){ return c.id===chargeId; });
     var payTenantId = charge ? charge.tenantId : (allocPaidModalTarget ? allocPaidModalTarget.tenantId : null);
-    var ref = payTenantId ? tenantPaymentRef(tenantOf(payTenantId)) : '';
-    var kind = charge ? 'rent' : 'bill';
-    if (status) status.textContent = 'Uploading…';
-    try {
-      adminPayReceiptUpload = storageService.uploadReceipt((ref ? ref + '-' : '') + kind, file);
-      adminPayReceiptPath = await adminPayReceiptUpload;
-      if (status) status.textContent = '✓ ' + (file.name || 'Receipt attached');
-    } catch(err){
-      adminPayReceiptPath = null;
-      if (status) status.textContent = 'Could not attach it — try again.';
-      showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
-    }
+    adminPayReceiptUpload = uploadProofWithStatus(file, document.getElementById(adminPayReceiptStatusId),
+      refPrefix(payTenantId && tenantOf(payTenantId)) + (charge ? 'rent' : 'bill'));
+    adminPayReceiptPath = await adminPayReceiptUpload;
   }
   window.pickAdminPayReceipt = pickAdminPayReceipt;
   window.handleAdminPayReceiptFile = handleAdminPayReceiptFile;
@@ -575,13 +585,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('payment-receipt-input').click();
   }
   async function handlePaymentReceiptFile(event){
-    var file = event.target.files && event.target.files[0];
-    event.target.value = '';
+    var file = pickedFile(event);
     var p = paymentRecords.find(function(x){ return x.id===paymentReceiptTargetId; });
     if (!file || !p) return;
-    var ref = tenantPaymentRef(tenantOf(p.tenantId));
     try {
-      var path = await storageService.uploadReceipt((ref ? ref + '-' : '') + 'rent', file);
+      var path = await storageService.uploadReceipt(refPrefix(tenantOf(p.tenantId)) + 'rent', file);
       var saved = await paymentService.setReceipt(p.id, path);
       p.receiptPath = saved.receiptPath;
       showToast('Receipt attached.', 'success');
@@ -969,10 +977,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             href: '#/properties/' + p.id
           });
         }
-
       });
     }
     return events;
+  }
+  /** ‹ Month Year › Today — the month calendars' header; `shiftFn`/`todayFn` are global names. */
+  function calendarToolbarHtml(shiftFn, todayFn, label){
+    return '<div class="cal-toolbar">'+
+      '<button class="mini-btn" type="button" onclick="'+shiftFn+'(-1)" aria-label="Previous month">‹</button>'+
+      '<div class="cal-month-label">'+label+'</div>'+
+      '<button class="mini-btn" type="button" onclick="'+shiftFn+'(1)" aria-label="Next month">›</button>'+
+      '<button class="mini-btn" type="button" onclick="'+todayFn+'()" style="margin-left:auto;">Today</button>'+
+      '</div>';
+  }
+  function calendarWeekdayHtml(){
+    return '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){ return '<div class="cal-weekday">'+w+'</div>'; }).join('') + '</div>';
   }
   function pad2(n){ return n < 10 ? '0'+n : ''+n; }
   /** Grid for a calendar month ('YYYY-MM'): null = empty filler cell; Monday as the first day of the week. */
@@ -1913,8 +1932,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var leaseReceiptTargetId = null;
   function pickLeaseReceipt(id){ leaseReceiptTargetId = id; document.getElementById('lease-receipt-input').click(); }
   async function handleLeaseReceiptFile(event){
-    var file = event.target.files && event.target.files[0];
-    event.target.value = '';
+    var file = pickedFile(event);
     var x = leasePayments.find(function(r){ return r.id === leaseReceiptTargetId; });
     if (!file || !x) return;
     try {
@@ -3842,20 +3860,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     rentReportChargeId = null; rentReportProofPath = null;
   }
   async function handleRentReportProofFile(event){
-    var file = event.target.files && event.target.files[0];
-    event.target.value = '';
+    var file = pickedFile(event);
     if (!file) return;
-    var status = document.getElementById('rent-report-proof-status');
-    status.textContent = 'Uploading…';
-    try {
-      var rt = myTenantRecord();
-      rentReportProofPath = await storageService.uploadReceipt((tenantPaymentRef(rt) ? tenantPaymentRef(rt) + '-' : '') + 'rent', file);
-      status.textContent = '✓ ' + (file.name || 'Receipt attached');
-    } catch(err){
-      rentReportProofPath = null;
-      status.textContent = 'Could not attach it — try again.';
-      showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
-    }
+    rentReportProofPath = await uploadProofWithStatus(file, document.getElementById('rent-report-proof-status'), refPrefix(myTenantRecord()) + 'rent');
   }
   async function submitRentReport(){
     var charge = rentCharges.find(function(c){ return c.id===rentReportChargeId; });
@@ -6372,8 +6379,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('receipt-input').click();
   }
   async function handleReceiptFile(event){
-    var file = event.target.files && event.target.files[0];
-    event.target.value = '';
+    var file = pickedFile(event);
     var target = receiptUploadTarget;
     receiptUploadTarget = null;
     if (!file || !target) return;
@@ -8365,16 +8371,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var monthLabel = CALENDAR_MONTH_NAMES[month] + ' ' + year;
     var cells = buildMonthGrid(calendarMonth);
 
-    var toolbarHtml = '<div class="cal-toolbar">'+
-      '<button class="mini-btn" type="button" onclick="calendarShiftMonth(-1)" aria-label="Previous month">‹</button>'+
-      '<div class="cal-month-label">'+monthLabel+'</div>'+
-      '<button class="mini-btn" type="button" onclick="calendarShiftMonth(1)" aria-label="Next month">›</button>'+
-      '<button class="mini-btn" type="button" onclick="calendarGoToday()" style="margin-left:auto;">Today</button>'+
-      '</div>';
+    var toolbarHtml = calendarToolbarHtml('calendarShiftMonth', 'calendarGoToday', monthLabel);
 
-    var weekdayHtml = '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){
-      return '<div class="cal-weekday">'+w+'</div>';
-    }).join('') + '</div>';
+    var weekdayHtml = calendarWeekdayHtml();
 
     var cellsHtml = '<div class="cal-grid cal-days">' + cells.map(function(iso){
       if (!iso) return '<div class="cal-daycell empty"></div>';
@@ -9798,15 +9797,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var year = parseInt(cleaningCalendarMonth.slice(0,4), 10);
     var month = parseInt(cleaningCalendarMonth.slice(5,7), 10) - 1;
     var monthLabel = CALENDAR_MONTH_NAMES[month] + ' ' + year;
-    var toolbarHtml = '<div class="cal-toolbar">'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(-1)" aria-label="Previous month">‹</button>'+
-      '<div class="cal-month-label">'+monthLabel+'</div>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(1)" aria-label="Next month">›</button>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarGoToday()" style="margin-left:auto;">Today</button>'+
-      '</div>';
-    var weekdayHtml = '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){
-      return '<div class="cal-weekday">'+w+'</div>';
-    }).join('') + '</div>';
+    var toolbarHtml = calendarToolbarHtml('cleaningCalendarShiftMonth', 'cleaningCalendarGoToday', monthLabel);
+    var weekdayHtml = calendarWeekdayHtml();
     var legendHtml = '<div class="cal-legend">'+
       '<span><span class="dot" style="background:var(--status-paid);"></span>Cleaning</span>'+
       '<span><span class="dot" style="background:var(--status-upcoming);"></span>Bin OUT</span>'+
@@ -10023,15 +10015,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var year = parseInt(cleaningCalendarMonth.slice(0,4), 10);
     var month = parseInt(cleaningCalendarMonth.slice(5,7), 10) - 1;
-    var toolbarHtml = '<div class="cal-toolbar">'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(-1)" aria-label="Previous month">‹</button>'+
-      '<div class="cal-month-label">'+CALENDAR_MONTH_NAMES[month]+' '+year+'</div>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarShiftMonth(1)" aria-label="Next month">›</button>'+
-      '<button class="mini-btn" type="button" onclick="cleaningCalendarGoToday()" style="margin-left:auto;">Today</button>'+
-      '</div>';
-    var weekdayHtml = '<div class="cal-grid">' + ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(w){
-      return '<div class="cal-weekday">'+w+'</div>';
-    }).join('') + '</div>';
+    var toolbarHtml = calendarToolbarHtml('cleaningCalendarShiftMonth', 'cleaningCalendarGoToday', CALENDAR_MONTH_NAMES[month]+' '+year);
+    var weekdayHtml = calendarWeekdayHtml();
     var legendHtml = '<div class="cal-legend">'+
       '<span><span class="dot" style="background:var(--accent);"></span>Your turn</span>'+
       '<span>🧹&nbsp;Cleaning</span>'+
@@ -12306,21 +12291,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('payment-report-proof-input').click();
   }
   async function handlePaymentReportProofFile(event){
-    var file = event.target.files && event.target.files[0];
-    event.target.value = '';
+    var file = pickedFile(event);
     if (!file || !paymentReportModalTarget) return;
-    var status = document.getElementById('payment-report-proof-status');
-    status.textContent = 'Uploading…';
-    try {
-      var bt = tenantOf(paymentReportModalTarget.tenantId);
-      var path = await storageService.uploadReceipt((tenantPaymentRef(bt) ? tenantPaymentRef(bt) + '-' : '') + 'bill-' + paymentReportModalTarget.allocationId, file);
-      paymentReportModalProofPath = path;
-      status.textContent = '✓ ' + (file.name || 'Receipt attached');
-    } catch(err){
-      paymentReportModalProofPath = null;
-      status.textContent = 'Could not attach it — try again.';
-      showToast('Could not attach the proof. ' + friendlyErrorMessage(err), 'error');
-    }
+    paymentReportModalProofPath = await uploadProofWithStatus(file, document.getElementById('payment-report-proof-status'),
+      refPrefix(tenantOf(paymentReportModalTarget.tenantId)) + 'bill-' + paymentReportModalTarget.allocationId);
   }
   async function submitPaymentReport(){
     var target = paymentReportModalTarget;
