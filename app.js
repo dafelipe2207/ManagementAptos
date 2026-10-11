@@ -923,7 +923,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       events.push({
         date: c.dueDate,
         kind: c.status === 'overdue' ? 'overdue' : 'due',
-        title: t.fullName + ' — Rent due',
+        title: t.fullName + ' — Rent ' + money(c.remaining) + ' (' + shortDate(c.periodStart) + ' – ' + shortDate(c.periodEnd) + ')',
+        what: 'Rent',
         href: '#/payments'
       });
     });
@@ -940,7 +941,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           events.push({
             date: b.dueDate,
             kind: kind,
-            title: t.fullName + ' owes ' + money(a.amount) + ' — ' + b.provider,
+            title: t.fullName + ' — ' + billTypeLabel(b.billType) + ' ' + money(a.amount) + ' (' + b.provider + ')',
+            what: billTypeLabel(b.billType),
             href: tenantMode ? '#/bills' : ('#/bills/' + b.id)
           });
         });
@@ -948,21 +950,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         events.push({
           date: b.dueDate,
           kind: kind,
-          title: b.provider + ' — Bill due',
+          title: b.provider + ' — ' + billTypeLabel(b.billType) + ' bill due ' + money(b.amount),
+          what: billTypeLabel(b.billType),
           href: tenantMode ? '#/bills' : ('#/bills/' + b.id)
         });
       }
     });
     tenants.forEach(function(t){
       if (t.rentAmount <= 0) return; // owner: doesn't generate tenancy events
-      events.push({ date: t.moveInDate, kind: 'move', title: t.fullName + ' — Move-in', href: tenantMode ? '#/payments' : ('#/tenants/' + t.id) });
+      events.push({ date: t.moveInDate, kind: 'move', title: t.fullName + ' — Move-in', what: 'Move-in', href: tenantMode ? '#/payments' : ('#/tenants/' + t.id) });
       var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
-      if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', href: tenantMode ? '#/payments' : ('#/tenants/' + t.id) });
+      if (moveOut) events.push({ date: moveOut, kind: 'move', title: t.fullName + ' — Move-out', what: 'Move-out', href: tenantMode ? '#/payments' : ('#/tenants/' + t.id) });
     });
     realEstateInspections.forEach(function(i){
       if (i.status !== 'scheduled') return;
       var p = propertyOf(i.propertyId);
-      events.push({ date: i.date, kind: 'overdue', title: (tenantMode ? '' : (p?p.name+' — ':'')) + (tenantMode ? '🏠 Property inspection' : '🏢 Real estate inspection') + (i.startTime ? ' ' + reiTimeText(i) : ''), href: tenantMode ? '#/' : '#/inspection' });
+      events.push({ date: i.date, kind: 'overdue', what: 'Inspection', title: (tenantMode ? '' : (p?p.name+' — ':'')) + (tenantMode ? '🏠 Property inspection' : '🏢 Real estate inspection') + (i.startTime ? ' ' + reiTimeText(i) : ''), href: tenantMode ? '#/' : '#/inspection' });
     });
     if (!tenantMode){
       // The landlord's own lease payments/inspections with the real estate agent — never a
@@ -974,6 +977,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             date: nextDue,
             kind: daysBetween(TODAY, nextDue) <= 2 ? 'overdue' : 'due',
             title: p.name + ' — Rent due to real estate' + (p.leasePaymentAmount!=null ? ' (' + money(p.leasePaymentAmount) + ')' : ''),
+            what: 'Lease',
             href: '#/properties/' + p.id
           });
         }
@@ -1009,14 +1013,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var CALENDAR_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   var MONTH_SHORT = CALENDAR_MONTH_NAMES.map(function(m){ return m.slice(0,3); }); // Jan … Dec
   var calendarMonth = TODAY.slice(0,7);
+  var calendarSelectedDate = TODAY;   // the day whose agenda is listed under the calendar
+  var calendarKindFilter = 'all';     // 'all' | 'overdue' | 'due' | 'move'
   function calendarShiftMonth(delta){
     var year = parseInt(calendarMonth.slice(0,4), 10);
     var month = parseInt(calendarMonth.slice(5,7), 10) - 1;
     var d = new Date(year, month + delta, 1);
     calendarMonth = d.getFullYear() + '-' + pad2(d.getMonth()+1);
+    calendarSelectedDate = calendarMonth === TODAY.slice(0,7) ? TODAY : calendarMonth + '-01';
     renderPreservingScroll();
   }
-  function calendarGoToday(){ calendarMonth = TODAY.slice(0,7); renderPreservingScroll(); }
+  function calendarGoToday(){ calendarMonth = TODAY.slice(0,7); calendarSelectedDate = TODAY; renderPreservingScroll(); }
+  function calendarSelectDay(iso){ calendarSelectedDate = iso; renderPreservingScroll(); }
+  function setCalendarKindFilter(k){ calendarKindFilter = k; renderPreservingScroll(); }
+  window.calendarSelectDay = calendarSelectDay;
+  window.setCalendarKindFilter = setCalendarKindFilter;
   window.calendarShiftMonth = calendarShiftMonth;
   window.calendarGoToday = calendarGoToday;
 
@@ -8463,48 +8474,86 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.closeRejectPaymentReportModal = closeRejectPaymentReportModal;
   window.confirmRejectPaymentReport = confirmRejectPaymentReport;
 
+  var CAL_KIND_LABEL = { overdue:'Overdue', due:'Due', move:'Move-in / out' };
+  /** Short "who · what" for the small calendar labels (e.g. "Alvin · Rent"). */
+  function calendarShortLabel(e){
+    var who = e.title.split(' — ')[0];
+    if (e.what) who = who.split(' ')[0] + ' · ' + e.what;
+    return who;
+  }
+  var CAL_KIND_RANK = { overdue:0, due:1, move:2 };
+  /** One agenda row: who/what in bold, the detail underneath, the status on the right. */
+  function calendarAgendaRowHtml(e){
+    var cut = e.title.indexOf(' — ');
+    var main = cut > -1 ? e.title.slice(0, cut) : e.title;
+    var sub = cut > -1 ? e.title.slice(cut + 3) : '';
+    return '<a class="cal-agenda-row '+e.kind+'" href="'+e.href+'">'+
+      '<span class="cal-agenda-main"><b>'+esc(main)+'</b>'+(sub ? '<span>'+esc(sub)+'</span>' : '')+'</span>'+
+      '<span class="cal-agenda-kind '+e.kind+'">'+CAL_KIND_LABEL[e.kind]+'</span></a>';
+  }
   function renderCalendar(){
-    var events = buildCalendarEvents();
+    var allEvents = buildCalendarEvents();
+    var monthEvents = allEvents.filter(function(e){ return e.date && e.date.slice(0,7) === calendarMonth; });
+    var counts = { overdue:0, due:0, move:0 };
+    monthEvents.forEach(function(e){ counts[e.kind]++; });
+    var events = calendarKindFilter === 'all' ? allEvents : allEvents.filter(function(e){ return e.kind === calendarKindFilter; });
     var byDate = {};
     events.forEach(function(e){ (byDate[e.date] = byDate[e.date] || []).push(e); });
+    Object.keys(byDate).forEach(function(d){ byDate[d].sort(function(a,b){ return CAL_KIND_RANK[a.kind] - CAL_KIND_RANK[b.kind]; }); });
+    if (calendarSelectedDate.slice(0,7) !== calendarMonth) calendarSelectedDate = calendarMonth === TODAY.slice(0,7) ? TODAY : calendarMonth + '-01';
 
     var year = parseInt(calendarMonth.slice(0,4), 10);
     var month = parseInt(calendarMonth.slice(5,7), 10) - 1;
     var monthLabel = CALENDAR_MONTH_NAMES[month] + ' ' + year;
     var cells = buildMonthGrid(calendarMonth);
 
-    var toolbarHtml = calendarToolbarHtml('calendarShiftMonth', 'calendarGoToday', monthLabel);
+    // Month summary — also the filter: tap Overdue to see only what's overdue, etc.
+    var filterHtml = '<div class="cal-filter">'+[['all','All', monthEvents.length], ['overdue','Overdue',counts.overdue], ['due','Due',counts.due], ['move','Moves',counts.move]].map(function(f){
+      return '<button type="button" class="cal-filter-btn '+f[0]+(calendarKindFilter===f[0]?' active':'')+'" onclick="setCalendarKindFilter(\''+f[0]+'\')">'+
+        (f[0]==='all' ? '' : '<span class="dot '+f[0]+'"></span>')+f[1]+' <b>'+f[2]+'</b></button>';
+    }).join('')+'</div>';
 
-    var weekdayHtml = calendarWeekdayHtml();
-
+    // Each day: its number, then (phone) one coloured dot per item, or (wider screens) the names.
+    // Tapping a day lists everything on it, in full, under the calendar.
     var cellsHtml = '<div class="cal-grid cal-days">' + cells.map(function(iso){
       if (!iso) return '<div class="cal-daycell empty"></div>';
       var dayNum = parseInt(iso.slice(8,10), 10);
-      var isToday = iso === TODAY;
-      var dayEvents = (byDate[iso] || []).slice().sort(function(a,b){
-        var rank = { overdue:0, due:1, move:2 };
-        return rank[a.kind] - rank[b.kind];
-      });
-      var shown = dayEvents.slice(0, 3);
-      var extra = dayEvents.length - shown.length;
-      var pillsHtml = shown.map(function(e){
-        return '<a class="cal-pill '+e.kind+'" href="'+e.href+'" title="'+esc(e.title)+'">'+esc(e.title)+'</a>';
-      }).join('') + (extra > 0 ? '<div class="cal-more">+'+extra+' more</div>' : '');
-      return '<div class="cal-daycell'+(isToday ? ' today' : '')+'"><div class="cal-daynum">'+dayNum+'</div>'+pillsHtml+'</div>';
+      var dayEvents = byDate[iso] || [];
+      var shown = dayEvents.slice(0, 3), extra = dayEvents.length - shown.length;
+      var pillsHtml = shown.map(function(e){ return '<span class="cal-pill '+e.kind+'">'+esc(calendarShortLabel(e))+'</span>'; }).join('') +
+        (extra > 0 ? '<div class="cal-more">+'+extra+' more</div>' : '');
+      var dotsHtml = dayEvents.length ? '<span class="cal-dots">'+dayEvents.slice(0, 4).map(function(e){ return '<i class="'+e.kind+'"></i>'; }).join('')+
+        (dayEvents.length > 4 ? '<em>+'+(dayEvents.length-4)+'</em>' : '')+'</span>' : '';
+      var cls = 'cal-daycell cal-day-btn'+(iso === TODAY ? ' today' : '')+(iso === calendarSelectedDate ? ' selected' : '')+(dayEvents.length ? ' has-events' : '')+
+        (dayEvents.some(function(e){ return e.kind==='overdue'; }) ? ' has-overdue' : '');
+      return '<button type="button" class="'+cls+'" onclick="calendarSelectDay(\''+iso+'\')" aria-label="'+esc(fullDate(iso))+(dayEvents.length ? ', '+dayEvents.length+' item'+(dayEvents.length===1?'':'s') : '')+'">'+
+        '<span class="cal-daynum">'+dayNum+'</span>'+dotsHtml+'<span class="cal-pills">'+pillsHtml+'</span></button>';
     }).join('') + '</div>';
 
-    var legendHtml = '<div class="cal-legend">'+
-      '<span><span class="dot overdue"></span>Overdue</span>'+
-      '<span><span class="dot due"></span>Due</span>'+
-      '<span><span class="dot move"></span>Move-in / Move-out</span>'+
+    // Agenda: the selected day in full, then the rest of the month at a glance.
+    var dayList = byDate[calendarSelectedDate] || [];
+    var dayTitle = new Date(calendarSelectedDate + 'T00:00:00').toLocaleDateString('en-AU', { weekday:'long', day:'numeric', month:'long' });
+    var rel = calendarSelectedDate === TODAY ? 'Today' : relativeDateLabel(calendarSelectedDate);
+    var laterDays = Object.keys(byDate).filter(function(d){ return d.slice(0,7) === calendarMonth && d > calendarSelectedDate; }).sort();
+    var agendaHtml = '<div class="card cal-agenda">'+
+      '<div class="cal-agenda-head"><div><div class="cal-agenda-date">'+esc(dayTitle)+'</div><div class="cal-agenda-rel">'+esc(rel)+'</div></div>'+
+        '<span class="cal-agenda-count">'+dayList.length+' item'+(dayList.length===1?'':'s')+'</span></div>'+
+      (dayList.length ? dayList.map(calendarAgendaRowHtml).join('')
+        : '<p class="cal-agenda-empty">Nothing on this day'+(calendarKindFilter==='all' ? '' : ' for this filter')+'.</p>')+
+      (laterDays.length ? '<h3 class="cal-agenda-later">Later in '+esc(CALENDAR_MONTH_NAMES[month])+'</h3>'+
+        laterDays.map(function(d){
+          return '<button type="button" class="cal-later-day" onclick="calendarSelectDay(\''+d+'\')">'+
+            '<span class="cal-later-date"><b>'+parseInt(d.slice(8,10),10)+'</b>'+esc(new Date(d+'T00:00:00').toLocaleDateString('en-AU',{weekday:'short'}))+'</span>'+
+            '<span class="cal-later-items">'+byDate[d].map(function(e){ return '<span class="cal-later-item '+e.kind+'">'+esc(calendarShortLabel(e))+'</span>'; }).join('')+'</span></button>';
+        }).join('') : '')+
       '</div>';
 
-    var monthHasEvents = Object.keys(byDate).some(function(d){ return d.slice(0,7) === calendarMonth; });
-    var monthEmptyNote = monthHasEvents ? '' :
+    var monthEmptyNote = monthEvents.length ? '' :
       '<p style="font-size:12.5px;color:var(--text-faint);text-align:center;margin:12px 0 0;">Nothing due or scheduled in '+monthLabel+'.</p>';
 
-    return pageHeader('Calendar', 'Rent due dates, payments, overdue charges, move-ins/move-outs and bills — all in one place.') +
-      '<div class="card">'+toolbarHtml+weekdayHtml+cellsHtml+legendHtml+monthEmptyNote+'</div>';
+    return pageHeader('Calendar', 'Rent due dates, overdue charges, bills and move-ins/move-outs — tap a day to see everything on it.') +
+      '<div class="card cal-card">'+calendarToolbarHtml('calendarShiftMonth', 'calendarGoToday', monthLabel)+filterHtml+calendarWeekdayHtml()+cellsHtml+monthEmptyNote+'</div>'+
+      agendaHtml;
   }
 
   /* ---------- PHASE 11: Reports ---------- */

@@ -2088,3 +2088,72 @@ body.view-only .mini-btn.danger, body.view-only .icon-mini-btn.danger, body.view
 h2.modal-title{text-transform:none;letter-spacing:0;font-size:15px;}
 label.modal-hint{font-size:11.5px;color:var(--text-faint);display:block;margin:8px 0 2px;}
 p.modal-sub{font-size:12.5px;color:var(--text-dim);margin:0;}
+
+/* ===== Calendar page: bigger, tappable days + agenda of the selected day ===== */
+.cal-card .cal-toolbar{margin-bottom:12px;}
+.cal-card .cal-month-label{font-size:17px;}
+.cal-filter{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;}
+.cal-filter-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-dim);
+  border-radius:999px;padding:7px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;min-height:36px;}
+.cal-filter-btn b{color:var(--text);font-variant-numeric:tabular-nums;}
+.cal-filter-btn.active{background:var(--text);color:var(--bg-elevated);border-color:var(--text);}
+.cal-filter-btn.active b{color:inherit;}
+.cal-filter-btn .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+.cal-filter-btn .dot.overdue, .cal-dots i.overdue{background:var(--status-overdue);}
+.cal-filter-btn .dot.due, .cal-dots i.due{background:var(--status-due);}
+.cal-filter-btn .dot.move, .cal-dots i.move{background:var(--status-move);}
+.cal-card .cal-weekday{font-size:12px;}
+button.cal-day-btn{font:inherit;text-align:left;cursor:pointer;color:inherit;width:100%;min-height:64px;padding:6px;align-items:stretch;}
+button.cal-day-btn:hover{border-color:var(--accent);}
+button.cal-day-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.cal-day-btn .cal-daynum{font-size:15px;color:var(--text);font-family:inherit;}
+.cal-day-btn.has-overdue .cal-daynum{color:var(--status-overdue);}
+.cal-day-btn.today .cal-daynum{color:var(--accent);}
+.cal-day-btn.selected{background:var(--accent);border-color:var(--accent);box-shadow:0 4px 14px rgba(46,77,110,.28);}
+.cal-day-btn.selected .cal-daynum{color:var(--bg-elevated);}
+.cal-day-btn.selected .cal-dots i{box-shadow:0 0 0 1.5px var(--bg-elevated);}
+.cal-day-btn.selected .cal-dots em{color:var(--bg-elevated);}
+.cal-dots{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-top:auto;}
+.cal-dots i{width:9px;height:9px;border-radius:50%;display:block;}
+.cal-dots em{font-style:normal;font-size:10.5px;font-weight:700;color:var(--text-dim);}
+.cal-pills{display:none;flex-direction:column;gap:3px;min-width:0;}
+.cal-day-btn .cal-pill{cursor:inherit;}
+@media (min-width:900px){
+  button.cal-day-btn{min-height:104px;}
+  .cal-day-btn .cal-dots{display:none;}
+  .cal-day-btn .cal-pills{display:flex;}
+  .cal-day-btn.selected .cal-pill{box-shadow:0 0 0 1px rgba(255,255,255,.7);}
+}
+.cal-agenda{margin-top:14px;}
+.cal-agenda-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.cal-agenda-date{font-size:18px;font-weight:750;letter-spacing:-.01em;}
+.cal-agenda-rel{font-size:12.5px;color:var(--text-dim);margin-top:2px;}
+.cal-agenda-count{font-size:12px;font-weight:700;color:var(--text-dim);background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:4px 10px;white-space:nowrap;}
+.cal-agenda-row{display:flex;align-items:center;gap:10px;padding:12px 12px 12px 14px;margin:0 0 8px;border-radius:12px;
+  background:var(--bg);border:1px solid var(--border);border-left:4px solid var(--border);text-decoration:none;color:var(--text);}
+.cal-agenda-row.overdue{border-left-color:var(--status-overdue);}
+.cal-agenda-row.due{border-left-color:var(--status-due);}
+.cal-agenda-row.move{border-left-color:var(--status-move);}
+.cal-agenda-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.cal-agenda-main b{font-size:15px;line-height:1.3;}
+.cal-agenda-main span{font-size:13px;color:var(--text-dim);line-height:1.35;}
+.cal-agenda-kind{flex-shrink:0;font-size:11.5px;font-weight:700;border-radius:999px;padding:3px 9px;}
+.cal-agenda-kind.overdue{background:var(--status-overdue-bg);color:var(--status-overdue);}
+.cal-agenda-kind.due{background:var(--status-due-bg);color:var(--status-due);}
+.cal-agenda-kind.move{background:var(--status-move-bg);color:var(--status-move);}
+.cal-agenda-empty{font-size:13.5px;color:var(--text-dim);margin:4px 0 6px;}
+.cal-agenda-later{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin:16px 0 8px;}
+.cal-later-day{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;
+  background:none;border:none;border-top:1px solid var(--border);padding:10px 2px;}
+.cal-later-date{width:42px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;font-size:11px;color:var(--text-dim);text-transform:uppercase;}
+.cal-later-date b{font-size:18px;color:var(--text);line-height:1.1;}
+.cal-later-items{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:5px;}
+.cal-later-item{font-size:12.5px;font-weight:600;border-radius:7px;padding:3px 8px;}
+.cal-later-item.overdue{background:var(--status-overdue-bg);color:var(--status-overdue);}
+.cal-later-item.due{background:var(--status-due-bg);color:var(--status-due);}
+.cal-later-item.move{background:var(--status-move-bg);color:var(--status-move);}
+@media (max-width:480px){
+  .cal-filter{flex-wrap:nowrap;overflow-x:auto;gap:5px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .cal-filter::-webkit-scrollbar{display:none;}
+  .cal-filter-btn{padding:6px 10px;font-size:12.5px;white-space:nowrap;flex-shrink:0;}
+}
