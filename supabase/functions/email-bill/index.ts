@@ -4,8 +4,9 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // PUBLIC webhook (verify_jwt: false), protected by a secret token in the URL:
 //   https://<project>.supabase.co/functions/v1/email-bill?token=<INBOUND_EMAIL_TOKEN>
 //
-// A bill forwarded by email (Postmark inbound JSON, or a multipart form from SendGrid Inbound
-// Parse / Mailgun routes) → every PDF/image attachment is:
+// A bill received by email — sent by the Gmail Apps Script in tools/gmail-bills.gs (emails
+// labelled "Bills"), or by an inbound service (Postmark/CloudMailin JSON, SendGrid/Mailgun
+// multipart) → every PDF/image attachment is:
 //   1. skipped if the very same file was already received (SHA-256 of its bytes),
 //   2. stored in the private `receipts` bucket (under the Super Admin's folder),
 //   3. read by the existing analyze-bill function (Azure first, Gemini backup),
@@ -59,6 +60,18 @@ async function readEmail(req: Request): Promise<{ from: string; subject: string;
   if (ct.includes("application/json")) {
     // Postmark inbound: { From, FromFull:{Email}, Subject, Attachments:[{Name, Content(base64), ContentType}] }
     const body = await req.json();
+    if (Array.isArray(body.attachments)) {
+      // Our own Gmail Apps Script ({from, subject, attachments:[{name, type, contentBase64}]}) and
+      // CloudMailin JSON ({headers:{from,subject}, attachments:[{file_name, content_type, content}]}).
+      return {
+        from: String(body.from || body.headers?.from || body.envelope?.from || ""),
+        subject: String(body.subject || body.headers?.subject || ""),
+        attachments: body.attachments.map((a: Record<string, string>) => {
+          const name = a.name || a.file_name || "bill";
+          return { name, type: guessType(name, a.type || a.content_type || ""), bytes: b64ToBytes(a.contentBase64 || a.content || "") };
+        })
+      };
+    }
     const atts = Array.isArray(body.Attachments) ? body.Attachments : [];
     return {
       from: (body.FromFull?.Email || body.From || "").toString(),
