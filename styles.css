@@ -314,6 +314,11 @@
     padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
   .alloc-row:last-child{border-bottom:none;}
   .alloc-row .meta{font-size:11.5px;color:var(--text-faint);}
+  .factor-step{display:inline-flex;align-items:center;gap:6px;margin-top:3px;white-space:nowrap;}
+  .factor-step b{min-width:24px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums;}
+  .factor-step button{width:26px;height:26px;border-radius:50%;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font-size:15px;line-height:1;padding:0;cursor:pointer;}
+  .factor-step button:disabled{opacity:.35;cursor:default;}
   .alloc-amount-input{
     width:96px;padding:6px 8px;border-radius:7px;border:1px solid var(--border);
     background:var(--bg);color:var(--text);font-size:13px;text-align:right;
