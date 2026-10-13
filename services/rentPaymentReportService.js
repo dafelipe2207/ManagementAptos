@@ -64,3 +64,10 @@ export async function clearProof(id) {
   const { error } = await supabase.from('rent_payment_reports').update({ proof_path: null }).eq('id', id);
   if (error) throw error;
 }
+
+/** Attaches a proof file to a report — used by staff when the tenant didn't attach their receipt. */
+export async function setProof(id, proofPath) {
+  const { data, error } = await supabase.from('rent_payment_reports').update({ proof_path: proofPath }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}

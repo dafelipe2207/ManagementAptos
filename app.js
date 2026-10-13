@@ -24,7 +24,7 @@ import * as profileService from './services/profileService.js?v=7';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as paymentReportService from './services/paymentReportService.js?v=2';
-import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=3';
+import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=4';
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
@@ -4068,12 +4068,33 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(PAYMENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
             (r.reference?' · Ref: '+esc(r.reference)+(t && tenantPaymentRef(t) && r.reference.toUpperCase().indexOf(tenantPaymentRef(t))<0 ? ' <span style="color:var(--status-due);">(doesn\'t match '+esc(tenantPaymentRef(t))+')</span>' : ''):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
           '<div class="review-actions">'+
-            (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>' : '<span style="font-size:11.5px;color:var(--text-faint);">No receipt</span>')+
+            (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>'
+              : '<label class="mini-btn" title="The tenant didn\'t attach one — attach the receipt yourself">📎 Attach receipt'+
+                '<input type="file" accept="image/*,application/pdf" hidden onchange="attachRentReportProof(\''+r.id+'\', event, this)"></label>')+
             '<button class="mini-btn" onclick="openRentRejectModal(\''+r.id+'\')">Reject</button>'+
             '<button class="mini-btn primary" onclick="confirmRentReport(\''+r.id+'\', this)">Confirm paid</button>'+
           '</div></div>';
       }).join('')+'</div>';
   }
+  /** Staff attach the transfer screenshot to a pending rent report when the tenant didn't. */
+  async function attachRentReportProof(reportId, event, input){
+    var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
+    var file = pickedFile(event);
+    if (!r || !file) return;
+    var label = input && input.parentNode;
+    if (label) label.firstChild.textContent = 'Uploading…';
+    try {
+      var path = await storageService.uploadReceipt(refPrefix(tenantOf(r.tenantId)) + 'rent', file);
+      var updated = await rentPaymentReportService.setProof(r.id, path);
+      Object.assign(r, updated);
+      showToast('Receipt attached.', 'success');
+      render();
+    } catch(err){
+      if (label) label.firstChild.textContent = '📎 Attach receipt';
+      showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.attachRentReportProof = attachRentReportProof;
   async function confirmRentReport(reportId, btn){
     var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
     if (!r || r.status!=='pending') return;
