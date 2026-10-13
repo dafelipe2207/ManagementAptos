@@ -610,7 +610,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var path = await storageService.uploadReceipt(refPrefix(tenantOf(p.tenantId)) + 'rent', file);
       var saved = await paymentService.setReceipt(p.id, path);
       p.receiptPath = saved.receiptPath;
-      showToast('Receipt attached.', 'success');
+      showToast(labelText === 'Change' ? 'Receipt replaced.' : 'Receipt attached.', 'success');
       if (historyModalTenantId) renderHistoryModalBody();
       renderPreservingScroll();
     } catch(err){ showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error'); }
@@ -2450,7 +2450,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var discounts = (bond.discounts || []).map(function(d){ return (d.id && d.id === target.entryId) ? Object.assign({}, d, { receiptPath: path }) : d; });
       var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts }));
       Object.assign(bond, saved);
-      showToast('Receipt attached.', 'success');
+      showToast(labelText === 'Change' ? 'Receipt replaced.' : 'Receipt attached.', 'success');
       render();
     } catch(err){ showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error'); }
   }
@@ -4068,7 +4068,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(PAYMENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
             (r.reference?' · Ref: '+esc(r.reference)+(t && tenantPaymentRef(t) && r.reference.toUpperCase().indexOf(tenantPaymentRef(t))<0 ? ' <span style="color:var(--status-due);">(doesn\'t match '+esc(tenantPaymentRef(t))+')</span>' : ''):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
           '<div class="review-actions">'+
-            (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>'
+            (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>'+
+                '<label class="mini-btn" title="Replace it with the right receipt">Change'+
+                '<input type="file" accept="image/*,application/pdf" hidden onchange="attachRentReportProof(\''+r.id+'\', event, this)"></label>'+
+                '<button class="mini-btn" title="Delete this receipt" aria-label="Delete this receipt" onclick="deleteRentReportProof(\''+r.id+'\')">✕</button>'
               : '<label class="mini-btn" title="The tenant didn\'t attach one — attach the receipt yourself">📎 Attach receipt'+
                 '<input type="file" accept="image/*,application/pdf" hidden onchange="attachRentReportProof(\''+r.id+'\', event, this)"></label>')+
             '<button class="mini-btn" onclick="openRentRejectModal(\''+r.id+'\')">Reject</button>'+
@@ -4082,19 +4085,26 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var file = pickedFile(event);
     if (!r || !file) return;
     var label = input && input.parentNode;
+    var labelText = label ? label.firstChild.textContent : '';
     if (label) label.firstChild.textContent = 'Uploading…';
     try {
       var path = await storageService.uploadReceipt(refPrefix(tenantOf(r.tenantId)) + 'rent', file);
       var updated = await rentPaymentReportService.setProof(r.id, path);
       Object.assign(r, updated);
-      showToast('Receipt attached.', 'success');
+      showToast(labelText === 'Change' ? 'Receipt replaced.' : 'Receipt attached.', 'success');
       render();
     } catch(err){
-      if (label) label.firstChild.textContent = '📎 Attach receipt';
+      if (label) label.firstChild.textContent = labelText;
       showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
     }
   }
   window.attachRentReportProof = attachRentReportProof;
+  /** Staff: delete a wrong receipt from a pending rent report (asks first). */
+  function deleteRentReportProof(reportId){
+    if (!confirm('Delete this receipt? You can attach the right one afterwards.')) return;
+    removeReportProof(reportId);
+  }
+  window.deleteRentReportProof = deleteRentReportProof;
   async function confirmRentReport(reportId, btn){
     var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
     if (!r || r.status!=='pending') return;
