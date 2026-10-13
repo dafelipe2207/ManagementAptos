@@ -8666,8 +8666,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (r.factor != null) parts.push('factor ' + r.factor.toFixed(1));
       return parts.join(' · ');
     }
-    var anyDetail = rows.some(function(r){ return rowDetail(r); });
-    var rowH = anyDetail ? 96 : 64, headerH = 250, tableH = rows.length * rowH + 60, totalH = 90, footH = 70;
+    // Each tenant is a tile: name + ref on top, days/factor below, amount on the right with a
+    // PAID / TO PAY tag under it (a paid share still shows how much was paid).
+    var rowH = 118, rowGap = 14, headerH = 250, tableH = rows.length * (rowH + rowGap) + 50, totalH = 90, footH = 70;
     var docH = docCanvas ? Math.round(docCanvas.height * (W - 2*pad) / docCanvas.width) + 70 : 0;
     var H = 32 + headerH + tableH + totalH + footH + docH + 40;
     var card = imageCard(W, H), g = card.g, rr = card.rr;
@@ -8682,18 +8683,30 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     g.fillStyle = '#b7791f'; g.font = '700 26px ' + font; g.fillText('EACH TENANT PAYS', L, y);
     g.fillStyle = '#e5e7eb'; g.fillRect(L, y + 16, R - L, 2);
     y += 30;
+    function pill(text, xRight, yTop, bg, fg){
+      g.font = '700 22px ' + font;
+      var w = g.measureText(text).width + 28;
+      rr(xRight - w, yTop, w, 36, 18, bg);
+      g.fillStyle = fg; g.textAlign = 'center'; g.fillText(text, xRight - w/2, yTop + 26); g.textAlign = 'left';
+    }
     rows.forEach(function(r){
-      var mid = y + 42;
-      g.fillStyle = r.paid ? '#9aa1ad' : '#1d2433'; g.font = '500 34px ' + font;
-      g.fillText(r.name + (r.ref ? '  ' : ''), L, mid);
-      if (r.ref){ var w = g.measureText(r.name + '  ').width; g.fillStyle = '#6b7280'; g.font = '400 26px ' + font; g.fillText('ref ' + r.ref, L + w, mid); }
+      rr(L - 12, y, R - L + 24, rowH, 18, r.paid ? '#effaf3' : '#f6f7f9');
+      var top = y + 48;
+      g.fillStyle = '#1d2433'; g.font = '600 34px ' + font;
+      g.fillText(r.name, L + 8, top);
+      if (r.ref){
+        var w = g.measureText(r.name).width;
+        g.fillStyle = '#6b7280'; g.font = '400 25px ' + font; g.fillText('ref ' + r.ref, L + 8 + w + 16, top);
+      }
       var detail = rowDetail(r);
-      if (detail){ g.fillStyle = r.paid ? '#b4bac4' : '#6b7280'; g.font = '400 25px ' + font; g.fillText(detail, L, mid + 34); }
-      g.textAlign = 'right'; g.font = '700 34px ' + font; g.fillStyle = r.paid ? '#137a45' : '#1d2433';
-      g.fillText(r.paid ? 'Paid ✓' : money(r.amount), R, mid); g.textAlign = 'left';
-      y += rowH;
+      if (detail){ g.fillStyle = '#4b5563'; g.font = '400 27px ' + font; g.fillText(detail, L + 8, top + 42); }
+      g.textAlign = 'right'; g.font = '800 38px ' + font; g.fillStyle = r.paid ? '#137a45' : '#1d2433';
+      g.fillText(money(r.amount), R - 6, top); g.textAlign = 'left';
+      if (r.paid) pill('PAID ✓', R - 6, top + 16, '#d3f2df', '#137a45');
+      else pill('TO PAY', R - 6, top + 16, '#fdecc8', '#8a5a00');
+      y += rowH + rowGap;
     });
-    y += 20;
+    y += 6;
     var owed = round2(rows.filter(function(r){ return !r.paid; }).reduce(function(s, r){ return s + r.amount; }, 0));
     rr(L - 12, y, R - L + 24, 76, 18, '#fff7e6');
     g.fillStyle = '#8a5a00'; g.font = '600 30px ' + font; g.fillText('Still to pay', L + 12, y + 49);
