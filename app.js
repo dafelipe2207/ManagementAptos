@@ -1734,31 +1734,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<span class="ln-ic">🏢</span><span class="ln-main"><b>'+esc(title)+'</b><span>'+esc(sub)+'</span></span>'+
       '<span class="ln-amt">'+esc(total)+'</span></button>';
   }
-  /** Top of the Properties page: every property's next real estate payment in date order, and the
-   *  total due in the next 30 days (anything overdue included). */
-  function leasePaymentsOverviewHtml(ordered){
-    var rows = ordered.map(function(p){ return { p:p, st: leasePaymentStatus(p) }; }).filter(function(x){ return x.st; });
-    if (!rows.length) return '';
-    var horizon = stepDateIso(TODAY, 30), total = 0, missingAmount = false;
-    rows.forEach(function(x){
-      // every unpaid period that starts by the horizon (overdue ones included)
-      var periods = [], d = x.st.next, guard = 0;
-      while (d <= horizon && guard++ < 60){ periods.push(d); d = x.p.leasePaymentFrequency === 'fortnightly' ? stepDateIso(d, 14) : addMonthsIso(d, 1); }
-      if (x.st.amount == null){ if (periods.length) missingAmount = true; return; }
-      total += x.st.amount * periods.length;
-    });
-    return '<div class="card lease-overview"><div class="lo-head"><div><div class="lo-label">Due to the real estate · next 30 days</div>'+
-      '<div class="lo-total">'+money(round2(total))+(missingAmount ? '<small> + amounts not set</small>' : '')+'</div></div></div>'+
-      rows.map(function(x){
-        var st = x.st, d = st.days;
-        var when = st.dueNowCount ? (d < 0 ? 'Overdue ' + (-d) + ' d' : 'Today') : (d === 1 ? 'Tomorrow' : 'In ' + d + ' d');
-        return '<a class="lo-row'+(st.dueNowCount ? ' bad' : (d <= 3 ? ' warn' : ''))+'" href="#/properties/'+x.p.id+'">'+
-          '<span class="lo-date"><b>'+parseInt(st.next.slice(8,10),10)+'</b>'+MONTH_SHORT[parseInt(st.next.slice(5,7),10)-1]+'</span>'+
-          '<span class="lo-name"><b>'+esc(x.p.name)+'</b><span>'+when+(st.dueNowCount > 1 ? ' · '+st.dueNowCount+' payments' : '')+'</span></span>'+
-          '<span class="lo-amt">'+(st.amount != null ? money(st.dueNowCount > 1 ? st.dueNowTotal : st.amount) : '—')+'</span></a>';
-      }).join('')+'</div>';
-  }
-
   function renderProperties(){
     if (properties.length === 0){
       return '<div class="detail-head" style="align-items:center;">'+
@@ -1805,7 +1780,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<div class="detail-head" style="align-items:center;">'+
       pageHeader('Properties', 'Manage your properties, rooms and occupancy.')+
       '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openPropertyModal()">+ Add property</button></div>'+
-      leasePaymentsOverviewHtml(ordered)+
       cards;
   }
 
