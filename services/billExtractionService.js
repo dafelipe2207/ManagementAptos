@@ -6,12 +6,11 @@
 // page reload.
 //
 // Until the table exists (migration supabase/migrations/20261006_bill_extractions.sql) every
-// call quietly does nothing and `isAvailable()` turns false — the import flow keeps working,
+// call quietly does nothing — the import flow keeps working,
 // just without the saved record.
 import { supabase } from '../lib/supabaseClient.js';
 
 let available = true;
-export function isAvailable() { return available; }
 
 function isMissingTable(error) {
   if (!error) return false;

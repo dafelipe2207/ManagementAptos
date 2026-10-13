@@ -78,3 +78,6 @@ drop policy if exists "Viewer can read files" on storage.objects;
 create policy "Viewer can read files" on storage.objects for select to authenticated
   using (public.is_viewer() and bucket_id in ('inspection-photos','cleaning-photos','move-out-evidence',
     'maintenance-photos','documents','receipts','bin-out-evidence','house-rules'));
+
+-- Keep the new policies fast (see 20261013_fast_rls.sql).
+select public.optimize_rls_policies();

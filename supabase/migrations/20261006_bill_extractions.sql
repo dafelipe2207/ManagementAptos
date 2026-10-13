@@ -71,3 +71,6 @@ $$;
 drop trigger if exists bill_extractions_touch on public.bill_extractions;
 create trigger bill_extractions_touch before update on public.bill_extractions
   for each row execute function public.bill_extractions_touch();
+
+-- Keep the new policies fast (see 20261013_fast_rls.sql).
+select public.optimize_rls_policies();

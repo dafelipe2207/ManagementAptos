@@ -13,7 +13,51 @@
 <meta name="theme-color" content="#2e4d6e">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap">
+<link rel="preconnect" href="https://iikdscwhwtkhlzzmqwur.supabase.co" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
+     file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
+<link rel="modulepreload" href="app.js?v=243">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
+<link rel="modulepreload" href="lib/auth.js">
+<link rel="modulepreload" href="lib/db.js">
+<link rel="modulepreload" href="lib/errors.js?v=2">
+<link rel="modulepreload" href="lib/supabaseClient.js">
+<link rel="modulepreload" href="services/propertyService.js?v=4">
+<link rel="modulepreload" href="services/roomService.js?v=3">
+<link rel="modulepreload" href="services/tenantService.js?v=10">
+<link rel="modulepreload" href="services/bondService.js?v=2">
+<link rel="modulepreload" href="services/rentScheduleService.js">
+<link rel="modulepreload" href="services/paymentService.js?v=2">
+<link rel="modulepreload" href="services/billService.js?v=6">
+<link rel="modulepreload" href="services/billAllocationService.js?v=4">
+<link rel="modulepreload" href="services/tenantDocumentService.js">
+<link rel="modulepreload" href="services/storageService.js?v=3">
+<link rel="modulepreload" href="services/aiService.js?v=4">
+<link rel="modulepreload" href="services/billExtractionService.js?v=1">
+<link rel="modulepreload" href="services/profileService.js?v=7">
+<link rel="modulepreload" href="services/maintenanceService.js">
+<link rel="modulepreload" href="services/notificationService.js">
+<link rel="modulepreload" href="services/paymentReportService.js?v=2">
+<link rel="modulepreload" href="services/rentPaymentReportService.js?v=3">
+<link rel="modulepreload" href="services/houseRulesService.js">
+<link rel="modulepreload" href="services/maintenanceLogService.js">
+<link rel="modulepreload" href="services/realEstateInspectionService.js">
+<link rel="modulepreload" href="services/leasePaymentService.js?v=1">
+<link rel="modulepreload" href="services/auditService.js?v=2">
+<link rel="modulepreload" href="services/recurringBillService.js?v=3">
+<link rel="modulepreload" href="services/cleaningService.js?v=3">
+<link rel="modulepreload" href="services/trashService.js">
+<link rel="modulepreload" href="services/inspectionService.js">
+<link rel="modulepreload" href="services/dutyService.js?v=1">
+<link rel="modulepreload" href="services/binOutTaskService.js?v=5">
+<link rel="modulepreload" href="services/moveOutSettlementService.js?v=2">
+<link rel="modulepreload" href="services/taskIndexService.js?v=1">
+<link rel="modulepreload" href="services/activityLogService.js?v=1">
+<link rel="modulepreload" href="services/entityLinkService.js">
+<link rel="modulepreload" href="services/roomIncludedBillService.js">
+<!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="styles.css?v=88">
 </head>
 <body>
@@ -1296,11 +1340,10 @@
     <p class="pdfv-error" id="pdfv-error" hidden></p>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
 <input id="admin-pay-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleAdminPayReceiptFile(event)" />
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=242"></script>
+<script type="module" src="app.js?v=243"></script>
 </body>
 </html>

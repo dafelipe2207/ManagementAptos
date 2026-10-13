@@ -3,7 +3,7 @@
 // from artifact/index.html, preserved as closely as possible; the main
 // structural change is that persistence now goes through the async
 // services/* modules instead of synchronous localStorage.
-import * as auth from './lib/auth.js?v=3';
+import * as auth from './lib/auth.js'; // same URL the services use — one copy of the module, not two
 import { friendlyErrorMessage } from './lib/errors.js?v=2';
 import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
   // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
@@ -20,7 +20,7 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=3';
 import * as aiService from './services/aiService.js?v=4';
 import * as billExtractionService from './services/billExtractionService.js?v=1';
-import * as profileService from './services/profileService.js?v=6';
+import * as profileService from './services/profileService.js?v=7';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js';
 import * as paymentReportService from './services/paymentReportService.js?v=2';
@@ -45,10 +45,28 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 (function(){
   "use strict";
 
-  // pdf.js (loaded as a plain global script in index.html, before this module) needs to know
-  // where its worker script lives — same CDN build/version, so it always matches this pdfjsLib.
-  if (typeof pdfjsLib !== 'undefined'){
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.worker.min.js';
+  // pdf.js (~320 KB) is only needed to view or draw a PDF bill, so it's no longer downloaded
+  // before the app can start: loadPdfJs() fetches it on first use, and once the app is on screen
+  // it's preloaded quietly in the background so the PDF viewer still opens instantly.
+  var PDFJS_BASE = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/';
+  var pdfJsPromise = null;
+  function loadPdfJs(){
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (!pdfJsPromise){
+      pdfJsPromise = new Promise(function(resolve, reject){
+        var s = document.createElement('script');
+        s.src = PDFJS_BASE + 'pdf.min.js';
+        s.async = true;
+        s.onload = function(){
+          if (!window.pdfjsLib){ pdfJsPromise = null; reject(new Error('pdf.js not available')); return; }
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_BASE + 'pdf.worker.min.js';
+          resolve(window.pdfjsLib);
+        };
+        s.onerror = function(){ pdfJsPromise = null; s.remove(); reject(new Error('pdf.js failed to load')); };
+        document.head.appendChild(s);
+      });
+    }
+    return pdfJsPromise;
   }
 
   /* ============ "Today" — the real current date, computed once at load ============ */
@@ -8184,7 +8202,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var type = file.type || '';
     var isPdf = /pdf/i.test(type) || /\.pdf$/i.test(file.name || '');
     if (isPdf){
-      if (typeof pdfjsLib === 'undefined') return { canvas:null, pages:0, note:'' };
+      var pdfjsLib = await loadPdfJs().catch(function(){ return null; });
+      if (!pdfjsLib) return { canvas:null, pages:0, note:'' };
       var doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
       var page = await doc.getPage(1);
       var base = page.getViewport({ scale: 1 });
@@ -14368,7 +14387,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   async function openPdfViewer(url, fileName){
     var overlay = document.getElementById('pdfv-overlay');
     if (!overlay) return;
-    if (typeof pdfjsLib === 'undefined'){
+    if (!window.pdfjsLib) await loadPdfJs().catch(function(){});
+    if (!window.pdfjsLib){
       // pdf.js didn't load (CDN blocked/offline) — fall back to a plain new tab instead of
       // showing a broken, uncloseable viewer.
       window.open(url, '_blank', 'noopener');
@@ -15226,7 +15246,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       houseRulesService.getAll().catch(function(e){ console.error('house rules', e); return []; }),
       maintenanceLogService.getAll().catch(function(e){ console.error('maintenance log', e); return []; }),
       realEstateInspectionService.getAll().catch(function(e){ console.error('real estate inspections', e); return []; }),
-      (isTenantRole() ? Promise.resolve([]) : leasePaymentService.getAll().catch(function(e){ console.error('lease payments', e); return []; }))
+      (isTenantRole() ? Promise.resolve([]) : leasePaymentService.getAll().catch(function(e){ console.error('lease payments', e); return []; })),
+      // Super Admin only: everyone's accounts and property assignments — fetched in the same batch
+      // instead of a second round trip after it.
+      (isSuperAdmin() ? profileService.getAll().catch(function(){ return []; }) : Promise.resolve(null)),
+      (isSuperAdmin() ? profileService.getPropertyAssignments().catch(function(){ return []; }) : Promise.resolve(null))
     ]);
     // Fingerprint of everything just loaded — a background refresh that brings back exactly the
     // same data doesn't redraw the page (no flicker, no lost scroll, no swallowed taps).
@@ -15267,13 +15291,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     maintenanceLog = results[29];
     realEstateInspections = results[30];
     leasePayments = results[31];
-    if (isSuperAdmin()){
-      var sa = await Promise.all([
-        profileService.getAll().catch(function(){ return []; }),
-        profileService.getPropertyAssignments().catch(function(){ return []; })
-      ]);
-      allProfiles = sa[0]; propertyAssignments = sa[1];
-    }
+    if (isSuperAdmin()){ allProfiles = results[32]; propertyAssignments = results[33]; }
     recomputeRentCharges();
     refreshStaticSelects();
     if (opts && opts.skipMaintenance) return;
@@ -15459,9 +15477,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     window.addEventListener('pageshow', function(e){
       if (e.persisted) refreshAllData();
     });
+    // Realtime (below) already pushes every change the moment it happens; this is only a safety
+    // net, so every 5 minutes instead of every minute (each refresh reads all ~34 tables).
     setInterval(function(){
       if (document.visibilityState === 'visible') refreshAllData();
-    }, 60000);
+    }, 5*60000);
     window.addEventListener('online', function(){ refreshAllData(); });
     setupRealtimeSync();
     // Pick up newly published versions of the app on its own (phones keep the old page cached,
@@ -15721,6 +15741,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.querySelector('.shell').hidden = false;
     startRouter();
     setupAutoRefresh();
+    setTimeout(function(){ loadPdfJs().catch(function(){}); }, 5000); // PDF viewer ready before anyone needs it
     auditService.logLogin(deviceLabel()).catch(function(){}); // sign-in entry for the Audit log
     // Upkeep (recurring bills, duties, automatic notifications) runs after the app is on screen,
     // then the page quietly redraws with anything it created.

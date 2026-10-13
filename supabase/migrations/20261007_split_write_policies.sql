@@ -12,3 +12,6 @@ drop policy if exists rei_write on public.real_estate_inspections;
 create policy rei_insert on public.real_estate_inspections for insert with check (public.can_manage_property(property_id));
 create policy rei_update on public.real_estate_inspections for update using (public.can_manage_property(property_id)) with check (public.can_manage_property(property_id));
 create policy rei_delete on public.real_estate_inspections for delete using (public.can_manage_property(property_id));
+
+-- Keep the new policies fast (see 20261013_fast_rls.sql).
+select public.optimize_rls_policies();

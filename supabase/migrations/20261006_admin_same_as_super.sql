@@ -28,3 +28,6 @@ drop policy if exists notifications_delete on public.notifications;
 create policy notifications_delete on public.notifications for delete to authenticated
   using (auth_user_id = auth.uid() or public.is_super_admin()
          or (property_id is not null and public.can_manage_property(property_id)));
+
+-- Keep the new policies fast (see 20261013_fast_rls.sql).
+select public.optimize_rls_policies();

@@ -25,10 +25,13 @@ function fromRow(row) {
 /** The signed-in user's own profile (their role, name, active status), or null if none exists
  *  yet (shouldn't happen for an account created the normal way, but handled defensively). */
 export async function getMyProfile() {
-  const { data: userData, error: userErr } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  if (!userData.user) return null;
-  const { data, error } = await supabase.from('profiles').select('*').eq('auth_user_id', userData.user.id).maybeSingle();
+  // The session is read locally (no round trip to the auth server); the database still checks
+  // the token on the profiles query itself.
+  const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+  if (sessErr) throw sessErr;
+  const user = sessionData && sessionData.session && sessionData.session.user;
+  if (!user) return null;
+  const { data, error } = await supabase.from('profiles').select('*').eq('auth_user_id', user.id).maybeSingle();
   if (error) throw error;
   return data ? fromRow(data) : null;
 }
