@@ -8282,9 +8282,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (isTenantHiddenProvider(bill.provider)){ showToast('Bills from this provider are never sent to tenants.', 'error'); return; }
     var property = propertyOf(bill.propertyId);
     if (!property || !property.whatsappGroupLink){ showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error'); return; }
+    var hasPeriod = !!(bill.billingPeriodStart && bill.billingPeriodEnd);
+    var periodDays = hasPeriod ? daysBetween(bill.billingPeriodStart, bill.billingPeriodEnd) + 1 : null;
     var rows = bill.allocations.filter(function(a){ return !a.isAdmin && a.tenantId; }).map(function(a){
       var t = tenantOf(a.tenantId);
-      return { name: t ? t.fullName : 'Tenant', ref: tenantPaymentRef(t), amount: a.amount, paid: !!a.paid };
+      return { name: t ? t.fullName : 'Tenant', ref: tenantPaymentRef(t), amount: a.amount, paid: !!a.paid,
+        // Days charged in the bill's period and the occupancy factor frozen on the allocation —
+        // shown under each name on the group image so tenants can see how their share was worked out.
+        days: (t && hasPeriod) ? occupiedDaysInRange(t, bill.billingPeriodStart, bill.billingPeriodEnd) : null,
+        periodDays: periodDays,
+        factor: a.occupancyFactor != null ? Number(a.occupancyFactor) : null };
     }).sort(function(x, y){ return x.name.localeCompare(y.name); });
     if (!rows.length){ showToast('No tenant shares on this bill to send.', 'error'); return; }
 
@@ -8622,7 +8629,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  any chat theme. */
   function billSplitImageBlob(bill, property, rows, docCanvas, docNote){
     var W = 1080, pad = 64, font = IMG_FONT;
-    var rowH = 64, headerH = 250, tableH = rows.length * rowH + 60, totalH = 90, footH = 70;
+    // Second line under each name: "30 of 31 days · factor 1.0" (whichever parts are known).
+    function rowDetail(r){
+      var parts = [];
+      if (r.days != null) parts.push(r.periodDays ? r.days + ' of ' + r.periodDays + ' days' : r.days + ' day' + (r.days === 1 ? '' : 's'));
+      if (r.factor != null) parts.push('factor ' + r.factor.toFixed(1));
+      return parts.join(' · ');
+    }
+    var anyDetail = rows.some(function(r){ return rowDetail(r); });
+    var rowH = anyDetail ? 96 : 64, headerH = 250, tableH = rows.length * rowH + 60, totalH = 90, footH = 70;
     var docH = docCanvas ? Math.round(docCanvas.height * (W - 2*pad) / docCanvas.width) + 70 : 0;
     var H = 32 + headerH + tableH + totalH + footH + docH + 40;
     var card = imageCard(W, H), g = card.g, rr = card.rr;
@@ -8642,6 +8657,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       g.fillStyle = r.paid ? '#9aa1ad' : '#1d2433'; g.font = '500 34px ' + font;
       g.fillText(r.name + (r.ref ? '  ' : ''), L, mid);
       if (r.ref){ var w = g.measureText(r.name + '  ').width; g.fillStyle = '#6b7280'; g.font = '400 26px ' + font; g.fillText('ref ' + r.ref, L + w, mid); }
+      var detail = rowDetail(r);
+      if (detail){ g.fillStyle = r.paid ? '#b4bac4' : '#6b7280'; g.font = '400 25px ' + font; g.fillText(detail, L, mid + 34); }
       g.textAlign = 'right'; g.font = '700 34px ' + font; g.fillStyle = r.paid ? '#137a45' : '#1d2433';
       g.fillText(r.paid ? 'Paid ✓' : money(r.amount), R, mid); g.textAlign = 'left';
       y += rowH;
