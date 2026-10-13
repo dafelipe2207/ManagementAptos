@@ -853,7 +853,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var sent = collectSentMap();
     var items = [];
     tenants.forEach(function(t){
-      var rent = tenantRentOwed(t);
+      var rent = tenantRentOverdue(t);
       var billsDue = unpaidBillAllocationsFor(t.id).filter(function(o){
         return !isTenantHiddenProvider(o.bill.provider) && o.bill.dueDate && o.bill.dueDate <= TODAY;
       });
@@ -4520,7 +4520,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             billsOverdueSummaryHtml(owedBills)+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
             '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:10px;">'+
-              ((pendingTotal > 0 || billsTotal > 0 || tenantRentOwed(t).length) ? '<button type="button" class="mini-btn icon-label-btn" onclick="sendTenantOwedStatement(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send what they owe</button>' : '')+
+              ((pendingTotal > 0 || billsTotal > 0 || tenantRentOverdue(t).length) ? '<button type="button" class="mini-btn icon-label-btn" onclick="sendTenantOwedStatement(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send what they owe</button>' : '')+
               '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button></div>'+
             '</details>';
         }).join('');
@@ -8528,9 +8528,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return c.tenantId === t.id && c.remaining > 0.004 && (c.periodStart <= TODAY || (c.dueDate && c.dueDate <= TODAY));
     }).sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
   }
+  /** Rent the tenant is actually behind on: only periods that have already started. A period
+   *  that starts later isn't asked for yet (it's left out of "What you owe" and the to-collect
+   *  list). Bank matching still uses tenantRentOwed, so rent paid early still matches. */
+  function tenantRentOverdue(t){
+    return tenantRentOwed(t).filter(function(c){ return c.periodStart <= TODAY; });
+  }
   function sendTenantOwedStatement(tenantId){
     var t = tenantOf(tenantId); if (!t) return;
-    var rent = tenantRentOwed(t);
+    var rent = tenantRentOverdue(t);
     var billItems = unpaidBillAllocationsFor(t.id).filter(function(o){ return !isTenantHiddenProvider(o.bill.provider); });
     if (!rent.length && !billItems.length){ showToast(t.fullName + ' doesn\'t owe anything right now.', 'info'); return; }
     sendTenantStatement(t, rent, billItems, 'Send ' + t.fullName + ' what they owe', function(){ markCollectSent(t.id); });
