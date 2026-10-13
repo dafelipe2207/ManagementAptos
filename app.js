@@ -831,71 +831,52 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     };
   }
   /** Individual bill shares that are still unpaid whose bill is already overdue (for the dashboard and, later, Reports). */
-  function getOverdueUnpaidBillShares(){
+  function getNeedsAttention(){
+    return getCollectToday().concat(getUpcomingLeasePayments());
+  }
+  /** "Who to collect from today": ONE row per tenant (not one per week or per bill) with
+   *  everything they owe right now — rent periods already started/due plus bill shares due
+   *  today or earlier — so each tenant is a single tap to WhatsApp their statement. Tenants
+   *  already messaged today sink to the bottom with a "Sent today" mark. */
+  var COLLECT_SENT_KEY = 'ma.collectSent';
+  function collectSentMap(){
+    try { var m = JSON.parse(localStorage.getItem(COLLECT_SENT_KEY) || '{}'); return (m && typeof m === 'object') ? m : {}; } catch(_e){ return {}; }
+  }
+  function markCollectSent(tenantId){
+    var m = collectSentMap(); m[tenantId] = TODAY;
+    Object.keys(m).forEach(function(k){ if (daysBetween(m[k], TODAY) > 30) delete m[k]; }); // keep it small
+    try { localStorage.setItem(COLLECT_SENT_KEY, JSON.stringify(m)); } catch(_e){ /* private mode — just not remembered */ }
+    renderPreservingScroll();
+  }
+  function collectLastSent(tenantId){ return collectSentMap()[tenantId] || null; }
+  function getCollectToday(){
+    var sent = collectSentMap();
     var items = [];
-    bills.forEach(function(b){
-      if (!b.allocations || !b.allocations.length) return;
-      if (billEffectiveStatus(b) !== 'overdue') return;
-      var property = properties.find(function(p){ return p.id === b.propertyId; });
-      b.allocations.forEach(function(a){
-        if (a.paid) return;
-        var tenant = tenants.find(function(t){ return t.id===a.tenantId; });
-        items.push({
-          type: 'bill',
-          billId: b.id,
-          tenantId: a.tenantId,
-          tenantName: tenant ? tenant.fullName : 'Unknown tenant',
-          propertyName: property ? property.name : '—',
-          provider: b.provider,
-          amountRemaining: a.amount,
-          daysOverdue: Math.max(0, daysBetween(b.dueDate, TODAY))
-        });
+    tenants.forEach(function(t){
+      var rent = tenantRentOwed(t);
+      var billsDue = unpaidBillAllocationsFor(t.id).filter(function(o){
+        return !isTenantHiddenProvider(o.bill.provider) && o.bill.dueDate && o.bill.dueDate <= TODAY;
+      });
+      if (!rent.length && !billsDue.length) return;
+      var oldest = [];
+      if (rent.length) oldest.push(rent[0].periodStart <= TODAY ? rent[0].periodStart : rent[0].dueDate);
+      if (billsDue.length) oldest.push(billsDue[0].bill.dueDate);
+      oldest.sort();
+      var room = roomOf(t.roomId), property = propertyOf(t.propertyId);
+      items.push({
+        type: 'collect', tenantId: t.id, tenantName: t.fullName,
+        propertyName: property ? property.name : '—', roomName: room ? room.name : '—',
+        rent: rent, bills: billsDue,
+        total: round2(rent.reduce(function(s,c){ return s + c.remaining; }, 0) + billsDue.reduce(function(s,o){ return s + o.alloc.amount; }, 0)),
+        daysOverdue: Math.max(0, daysBetween(oldest[0], TODAY)),
+        sentToday: sent[t.id] === TODAY
       });
     });
-    return items;
-  }
-  function getNeedsAttention(){
-    // A tenant who is several months behind now has many overdue periods in rentCharges
-    // (one per week/fortnight, see generateChargesForTenant) — "Needs attention" keeps only
-    // the most recent one per tenant so it doesn't repeat a row for every week; the full
-    // week-by-week breakdown lives in Payments (with the filter by tenant).
-    var mostRecentByTenant = {};
-    rentCharges
-      .filter(function(c){ return c.status==='overdue' || c.status==='partially_paid'; })
-      .forEach(function(c){
-        var existing = mostRecentByTenant[c.tenantId];
-        if (!existing || c.periodStart > existing.periodStart) mostRecentByTenant[c.tenantId] = c;
-      });
-    var rentItems = Object.keys(mostRecentByTenant)
-      .map(function(tenantId){ return mostRecentByTenant[tenantId]; })
-      .map(function(c){
-        var tenant = tenants.find(function(t){ return t.id===c.tenantId; });
-        var room = rooms.find(function(r){ return r.id === (tenant && tenant.roomId); });
-        var property = properties.find(function(p){ return p.id === (tenant && tenant.propertyId); });
-        return {
-          type: 'rent',
-          chargeId: c.id,
-          tenantId: c.tenantId,
-          tenantName: tenant ? tenant.fullName : 'Unknown tenant',
-          propertyName: property ? property.name : '—',
-          roomName: room ? room.name : '—',
-          amountRemaining: c.remaining,
-          status: c.status,
-          daysOverdue: c.status==='overdue' ? Math.max(0, daysBetween(c.periodStart, TODAY)) : 0
-        };
-      })
-      .sort(function(a,b){
-        if (a.status !== b.status) return a.status==='overdue' ? -1 : 1;
-        if (a.status==='overdue') return b.daysOverdue - a.daysOverdue;
-        return b.amountRemaining - a.amountRemaining;
-      });
-    var billItems = getOverdueUnpaidBillShares()
-      .sort(function(a,b){
-        if (a.daysOverdue !== b.daysOverdue) return b.daysOverdue - a.daysOverdue;
-        return b.amountRemaining - a.amountRemaining;
-      });
-    var leaseItems = getUpcomingLeasePayments();
-    return rentItems.concat(billItems).concat(leaseItems);
+    return items.sort(function(a,b){
+      if (a.sentToday !== b.sentToday) return a.sentToday ? 1 : -1;
+      if (a.daysOverdue !== b.daysOverdue) return b.daysOverdue - a.daysOverdue;
+      return b.total - a.total;
+    });
   }
   /** Properties whose ADMIN-to-real-estate rent payment is due today, tomorrow, or the day
    *  after tomorrow (warns 2 days ahead, as requested) — or that is ALREADY overdue and wasn't
@@ -1294,7 +1275,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var NEEDS_LIMIT = 5;
     var needsShown = dashNeedsShowAll ? needs : needs.slice(0, NEEDS_LIMIT);
+    var collectCount = needs.filter(function(i){ return i.type === 'collect'; }).length;
+    var sentCount = needs.filter(function(i){ return i.type === 'collect' && i.sentToday; }).length;
     var needsHtml = '<div class="card needs-card"><h2>Needs attention'+(needs.length?' <span class="count-pill">'+needs.length+'</span>':'')+'</h2>' +
+      (collectCount ? '<p class="modal-hint" style="margin:-4px 0 8px;">To collect today: '+collectCount+' tenant'+(collectCount===1?'':'s')+(sentCount ? ' · '+sentCount+' already messaged' : '')+'. Tap WhatsApp to send each one their statement.</p>' : '') +
       (needs.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing needs attention right now.</p>'
         : needsShown.map(function(item){
@@ -1307,27 +1291,26 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
                 '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/properties/'+item.propertyId+'\'">View</button>'+
                 '</div></div>';
             }
-            if (item.type === 'bill'){
-              var billBadge = badge('overdue', item.daysOverdue+' days overdue');
-              return '<div class="row"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
-                '<div class="meta">'+esc(item.propertyName)+' • '+esc(item.provider)+' bill</div></div>'+
-                '<div style="display:flex;align-items:center;gap:10px;">'+
-                '<div class="amount">'+money(item.amountRemaining)+'<br/>'+billBadge+'</div>'+
-                '<div style="display:flex;flex-direction:column;gap:6px;">'+
-                '<button class="view-btn" onclick="openAllocPaidModal(\''+item.billId+'\',\''+item.tenantId+'\')">Mark as paid</button>'+
-                '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/bills/'+item.billId+'\'">View</button>'+
-                '</div></div></div>';
-            }
-            var b = item.status==='overdue'
-              ? badge('overdue', item.daysOverdue+' days overdue')
-              : badge('due', 'Partially Paid');
-            return '<div class="row"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
-              '<div class="meta">'+esc(item.propertyName)+' • '+esc(item.roomName)+'</div></div>'+
+            // One row per tenant: what they owe, one tap to WhatsApp it, and "Mark as paid" when
+            // there's just one thing owed (otherwise View has the breakdown).
+            var parts = [];
+            if (item.rent.length) parts.push('Rent' + (item.rent.length > 1 ? ' ×' + item.rent.length : '') + ' ' + money(item.rent.reduce(function(s,c){ return s + c.remaining; }, 0)));
+            item.bills.forEach(function(o){ parts.push(billTypeLabel(o.bill.billType) + ' ' + money(o.alloc.amount)); });
+            var status = item.daysOverdue > 0 ? badge('overdue', item.daysOverdue + ' day' + (item.daysOverdue === 1 ? '' : 's') + ' overdue') : badge('due', 'Due today');
+            var single = item.rent.length + item.bills.length === 1;
+            var markPaid = !single ? '' : item.rent.length
+              ? '<button class="text-link" style="margin:0;text-align:center;" onclick="openChargePaidModal(\''+item.rent[0].id+'\')">Mark paid</button>'
+              : '<button class="text-link" style="margin:0;text-align:center;" onclick="openAllocPaidModal(\''+item.bills[0].bill.id+'\',\''+item.tenantId+'\')">Mark paid</button>';
+            return '<div class="row collect-row'+(item.sentToday ? ' is-sent' : '')+'"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
+              '<div class="meta">'+esc(item.propertyName)+' • '+esc(item.roomName)+'</div>'+
+              '<div class="meta collect-parts">'+esc(parts.join(' · '))+'</div>'+
+              (function(){ var last = !item.sentToday && collectLastSent(item.tenantId); return last ? '<div class="meta" style="color:var(--text-faint);">Last messaged '+shortDate(last)+'</div>' : ''; })()+
+              '</div>'+
               '<div style="display:flex;align-items:center;gap:10px;">'+
-              '<div class="amount">'+money(item.amountRemaining)+'<br/>'+b+'</div>'+
+              '<div class="amount">'+money(item.total)+'<br/>'+(item.sentToday ? badge('paid', '✓ Sent today') : status)+'</div>'+
               '<div style="display:flex;flex-direction:column;gap:6px;">'+
-              '<button class="view-btn" onclick="openChargePaidModal(\''+item.chargeId+'\')">Mark as paid</button>'+
-              '<button class="text-link" style="margin:0;text-align:center;" onclick="viewTenantPayments(\''+item.tenantId+'\')">View</button>'+
+              '<button class="view-btn wa-btn" onclick="sendTenantOwedStatement(\''+item.tenantId+'\')">'+(item.sentToday ? 'Resend' : 'WhatsApp')+'</button>'+
+              (markPaid || '<button class="text-link" style="margin:0;text-align:center;" onclick="viewTenantPayments(\''+item.tenantId+'\')">View</button>')+
               '</div></div></div>';
           }).join('') +
           (needs.length > NEEDS_LIMIT ? '<button type="button" class="show-more-btn" onclick="__dashNeedsAll()">'+(dashNeedsShowAll ? 'Show less' : 'Show all '+needs.length)+'</button>' : '')
@@ -4554,8 +4537,316 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   function renderPayments(){
-    return pageHeader('Payments', "What tenants owe on rent and shared bills, what they've paid, and what's outstanding.") + renderPaymentsRentTab();
+    var head = pageHeader('Payments', "What tenants owe on rent and shared bills, what they've paid, and what's outstanding.");
+    if (!isViewer()) head = '<div class="detail-head" style="align-items:center;">' + head +
+      '<button class="mini-btn" style="white-space:nowrap;" onclick="openBankImport()">🏦 Import bank statement</button></div>';
+    return head + renderPaymentsRentTab();
   }
+
+  /* ---------- Bank statement import ----------
+   * The bank's CSV export → only the deposits → each one matched to a tenant (payment reference
+   * first, then name, then a unique amount) → a review list → recorded as rent and/or bill shares
+   * paid on the bank's date. Deposits already recorded (same tenant, same date, same total) are
+   * flagged and left unticked, so importing the same statement twice never doubles anything. */
+  var bankImport = null; // { fileName, rows:[{id,date,desc,amount,tenantId,how,mode,checked,dup}], debits }
+  function bankModal(){
+    var m = document.getElementById('bank-import-modal');
+    if (!m){
+      m = document.createElement('div');
+      m.className = 'modal-overlay'; m.id = 'bank-import-modal';
+      m.addEventListener('click', function(e){ if (e.target === m) closeBankImport(); });
+      document.body.appendChild(m);
+    }
+    return m;
+  }
+  function openBankImport(){
+    bankImport = null;
+    var m = bankModal();
+    m.innerHTML = '<div class="card modal-card" style="max-width:760px;">'+
+      '<div class="modal-actions" style="justify-content:space-between;align-items:center;margin:0 0 8px;">'+
+      '<h2 class="modal-title" style="margin:0;">Import bank statement</h2>'+
+      '<button type="button" class="mini-btn" onclick="closeBankImport()">Close</button></div>'+
+      '<div id="bank-import-body">'+
+        '<p class="modal-hint">Export your account transactions as <b>CSV</b> from your bank\'s website (CommBank, ANZ, Westpac, NAB… all have it) and pick the file. Only the deposits are used. Each one is matched to a tenant by their payment reference (e.g. ALEJ106), their name, or the amount — you check the list before anything is saved.</p>'+
+        '<input type="file" id="bank-import-file" accept=".csv,text/csv" style="display:none" onchange="handleBankImportFile(event)">'+
+        '<button type="button" class="mini-btn primary" onclick="document.getElementById(\'bank-import-file\').click()">Choose CSV file</button>'+
+      '</div></div>';
+    m.hidden = false;
+  }
+  function closeBankImport(){ var m = document.getElementById('bank-import-modal'); if (m) m.hidden = true; bankImport = null; }
+
+  function bankParseCsv(text){
+    var rows = [], row = [], cell = '', q = false;
+    text = text.replace(/^﻿/, '');
+    for (var i = 0; i < text.length; i++){
+      var ch = text[i];
+      if (q){
+        if (ch === '"'){ if (text[i+1] === '"'){ cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ',' || ch === ';' || ch === '\t'){ row.push(cell.trim()); cell = ''; }
+      else if (ch === '\n' || ch === '\r'){
+        if (ch === '\r' && text[i+1] === '\n') i++;
+        row.push(cell.trim()); cell = '';
+        if (row.some(function(c){ return c !== ''; })) rows.push(row);
+        row = [];
+      } else cell += ch;
+    }
+    row.push(cell.trim());
+    if (row.some(function(c){ return c !== ''; })) rows.push(row);
+    return rows;
+  }
+  var BANK_MONTHS = { JAN:1, FEB:2, MAR:3, APR:4, MAY:5, JUN:6, JUL:7, AUG:8, SEP:9, OCT:10, NOV:11, DEC:12 };
+  function bankParseDate(s){
+    s = (s || '').trim();
+    var m, y, mo, d;
+    if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))){ y = +m[1]; mo = +m[2]; d = +m[3]; }
+    else if ((m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/))){ d = +m[1]; mo = +m[2]; y = +m[3]; } // Australian banks: day first
+    else if ((m = s.match(/^(\d{1,2})[\s-]([A-Za-z]{3})[A-Za-z]*[\s-](\d{2,4})$/))){ d = +m[1]; mo = BANK_MONTHS[m[2].toUpperCase()]; y = +m[3]; }
+    else return null;
+    if (y < 100) y += 2000;
+    if (!mo || mo > 12 || !d || d > 31) return null;
+    return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+  }
+  function bankParseAmount(s){
+    s = (s || '').trim();
+    if (!s || !/\d/.test(s) || /[A-BE-Za-bd-z]/.test(s.replace(/\b(CR|DR)\b/i, ''))) return null;
+    var neg = /^\(.*\)$/.test(s) || /^-/.test(s) || /\bDR\b/i.test(s) || /^\$?\s*-/.test(s);
+    var n = parseFloat(s.replace(/[^0-9.]/g, ''));
+    if (isNaN(n)) return null;
+    return neg ? -n : n;
+  }
+  /** Rows of the CSV → deposits {date, desc, amount}. Works with a header row (Date / Description
+   *  or Narrative / Amount or Credit / Debit / Balance) or without one (CommBank: date, amount,
+   *  description, balance). */
+  function bankExtractCredits(table){
+    var out = [], debits = 0;
+    if (!table.length) return { credits: out, debits: 0 };
+    var first = table[0];
+    var hasHeader = !first.some(function(c){ return bankParseDate(c); });
+    if (hasHeader){
+      var h = first.map(function(c){ return c.toLowerCase(); });
+      var find = function(re, not){ for (var i = 0; i < h.length; i++) if (re.test(h[i]) && !(not && not.test(h[i]))) return i; return -1; };
+      var iDate = find(/date/);
+      var iCredit = find(/credit|deposit|money in|paid in/);
+      var iDebit = find(/debit|withdraw|money out|paid out/);
+      var iAmount = find(/amount|value/, /balance|debit|credit/);
+      var iDesc = find(/desc|narrat|detail|memo|particular|transaction|reference|payee/, /date|amount|type/);
+      table.slice(1).forEach(function(r){
+        var date = bankParseDate(r[iDate]);
+        if (!date) return;
+        var amt = iCredit >= 0 ? bankParseAmount(r[iCredit]) : (iAmount >= 0 ? bankParseAmount(r[iAmount]) : null);
+        if (iCredit >= 0 && !(amt > 0) && iDebit >= 0 && bankParseAmount(r[iDebit])) { debits++; return; }
+        if (!(amt > 0)){ if (amt) debits++; return; }
+        var desc = iDesc >= 0 ? r[iDesc] : r.filter(function(c, i){ return i !== iDate && bankParseAmount(c) == null; }).join(' ');
+        out.push({ date: date, desc: desc || '', amount: round2(amt) });
+      });
+    } else {
+      table.forEach(function(r){
+        var iDate = -1;
+        for (var i = 0; i < r.length; i++) if (bankParseDate(r[i])){ iDate = i; break; }
+        if (iDate < 0) return;
+        var nums = [], texts = [];
+        r.forEach(function(c, i){
+          if (i === iDate || bankParseDate(c)) return;
+          var n = bankParseAmount(c);
+          if (n != null) nums.push(n); else if (c) texts.push(c);
+        });
+        var amt = nums[0];
+        if (!(amt > 0)){ if (amt) debits++; return; }
+        texts.sort(function(a, b){ return b.length - a.length; });
+        out.push({ date: bankParseDate(r[iDate]), desc: texts[0] || '', amount: round2(amt) });
+      });
+    }
+    return { credits: out, debits: debits };
+  }
+
+  function bankNorm(s){ return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+  function bankTenantBills(t){ return unpaidBillAllocationsFor(t.id).filter(function(o){ return !isTenantHiddenProvider(o.bill.provider); }); }
+  function bankMatchTenant(desc, amount){
+    var nd = bankNorm(desc), words = ' ' + (desc || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ') + ' ';
+    var prefer = function(list){ // a current tenant beats a moved-out one with the same name
+      if (list.length <= 1) return list;
+      var live = list.filter(function(t){ return !tenantHasMovedOut(t); });
+      return live.length ? live : list;
+    };
+    var byRef = tenants.filter(function(t){ var r = bankNorm(tenantPaymentRef(t)); return r.length >= 4 && nd.indexOf(r) >= 0; });
+    if (byRef.length === 1) return { tenantId: byRef[0].id, how: 'reference' };
+    var byName = prefer(tenants.filter(function(t){
+      var parts = (t.fullName || '').toUpperCase().split(/\s+/).filter(function(w){ return w.length >= 3; });
+      var hits = parts.filter(function(w){ return words.indexOf(' ' + w + ' ') >= 0; }).length;
+      return parts.length >= 2 ? hits >= 2 : (parts.length === 1 && hits === 1);
+    }));
+    if (byName.length === 1) return { tenantId: byName[0].id, how: 'name' };
+    var near = function(a, b){ return Math.abs(a - b) < 0.01; };
+    var byAmount = tenants.filter(function(t){
+      if (tenantHasMovedOut(t) && !bankTenantBills(t).length && !tenantRentOwed(t).length) return false;
+      var rent = tenantRentOwed(t), bl = bankTenantBills(t);
+      var rentOwed = rent.reduce(function(s, c){ return s + c.remaining; }, 0);
+      var billsOwed = bl.reduce(function(s, o){ return s + o.alloc.amount; }, 0);
+      return (t.rentAmount > 0 && near(amount, t.rentAmount)) || (rent[0] && near(amount, rent[0].remaining)) ||
+        (rentOwed > 0 && near(amount, rentOwed)) || near(amount, rentOwed + billsOwed) ||
+        bl.some(function(o){ return near(amount, o.alloc.amount); });
+    });
+    if (byAmount.length === 1) return { tenantId: byAmount[0].id, how: 'amount' };
+    return { tenantId: '', how: '' };
+  }
+  /** Already in the app? Rent payments + bill shares marked paid for that tenant on that date add
+   *  up to this deposit. */
+  function bankIsDuplicate(tenantId, date, amount){
+    if (!tenantId) return false;
+    var total = paymentRecords.filter(function(p){ return p.tenantId === tenantId && p.date === date && p.method !== 'bond_deduction'; })
+      .reduce(function(s, p){ return s + p.amount; }, 0);
+    bills.forEach(function(b){ (b.allocations || []).forEach(function(a){
+      if (a.tenantId === tenantId && a.paid && a.paidDate === date && a.paidVia !== 'bond_deduction') total += a.amount;
+    }); });
+    return total > 0 && Math.abs(total - amount) < 0.01;
+  }
+  /** Rent only, or bills: an exact bill-share match (one share, or the oldest ones adding up to it)
+   *  is paid; otherwise bills oldest-first while the money lasts and the rest goes to rent. */
+  function bankDefaultMode(t, amount){
+    var bl = bankTenantBills(t);
+    if (!bl.length) return 'rent';
+    if (bl.some(function(o){ return Math.abs(o.alloc.amount - amount) < 0.01; })) return 'bills';
+    var cum = 0;
+    for (var i = 0; i < bl.length; i++){ cum += bl[i].alloc.amount; if (Math.abs(cum - amount) < 0.01) return 'bills'; }
+    var rentOwed = tenantRentOwed(t).reduce(function(s, c){ return s + c.remaining; }, 0);
+    if (Math.abs(rentOwed + cum - amount) < 0.01) return 'bills';
+    return 'rent';
+  }
+  function bankPlan(row, used){
+    var t = tenantOf(row.tenantId);
+    if (!t || row.mode === 'skip') return null;
+    if (row.mode === 'rent') return { bills: [], rent: row.amount };
+    var bl = bankTenantBills(t).filter(function(o){ return !used[o.alloc.id]; });
+    var exact = bl.filter(function(o){ return Math.abs(o.alloc.amount - row.amount) < 0.01; })[0];
+    var picked = [];
+    if (exact) picked = [exact];
+    else {
+      var cum = 0;
+      bl.forEach(function(o){ if (cum + o.alloc.amount <= row.amount + 0.005){ picked.push(o); cum += o.alloc.amount; } });
+    }
+    var billsSum = picked.reduce(function(s, o){ return s + o.alloc.amount; }, 0);
+    return { bills: picked, rent: round2(row.amount - billsSum) };
+  }
+
+  async function handleBankImportFile(event){
+    var file = pickedFile(event);
+    if (!file) return;
+    var text = await file.text();
+    var parsed = bankExtractCredits(bankParseCsv(text));
+    if (!parsed.credits.length){
+      showToast('No deposits found in that file — is it the CSV export of your transactions?', 'error');
+      return;
+    }
+    var seen = {};
+    var rows = parsed.credits.sort(function(a, b){ return a.date.localeCompare(b.date); }).map(function(c, i){
+      var match = bankMatchTenant(c.desc, c.amount);
+      var t = tenantOf(match.tenantId);
+      var dup = bankIsDuplicate(match.tenantId, c.date, c.amount);
+      var key = c.date + '|' + c.amount + '|' + bankNorm(c.desc);
+      var repeated = !!seen[key]; seen[key] = true;
+      return { id: i, date: c.date, desc: c.desc, amount: c.amount, tenantId: match.tenantId, how: match.how,
+        mode: t ? bankDefaultMode(t, c.amount) : 'skip', checked: !!t && !dup && !repeated, dup: dup, repeated: repeated };
+    });
+    bankImport = { fileName: file.name, rows: rows, debits: parsed.debits };
+    renderBankImport();
+  }
+  function bankImportSet(id, field, value){
+    var r = bankImport && bankImport.rows[id]; if (!r) return;
+    if (field === 'checked') r.checked = !!value;
+    else if (field === 'mode') r.mode = value;
+    else if (field === 'tenantId'){
+      r.tenantId = value; r.how = value ? 'manual' : '';
+      var t = tenantOf(value);
+      r.mode = t ? bankDefaultMode(t, r.amount) : 'skip';
+      r.dup = bankIsDuplicate(value, r.date, r.amount);
+      r.checked = !!t && !r.dup;
+    }
+    renderBankImport();
+  }
+  function renderBankImport(){
+    var body = document.getElementById('bank-import-body');
+    if (!body || !bankImport) return;
+    var tenantOpts = tenants.slice().sort(function(a, b){ return (a.fullName || '').localeCompare(b.fullName || ''); });
+    var used = {}, totalRec = 0, countRec = 0;
+    var HOW = { reference: 'by reference', name: 'by name', amount: 'by amount — check', manual: 'picked by you' };
+    var rowsHtml = bankImport.rows.map(function(r){
+      var plan = r.checked ? bankPlan(r, used) : null;
+      if (plan){ plan.bills.forEach(function(o){ used[o.alloc.id] = true; }); totalRec += r.amount; countRec++; }
+      var planText = '';
+      if (plan){
+        var bits = plan.bills.map(function(o){ return billTypeLabel(o.bill.billType) + ' ' + money(o.alloc.amount); });
+        if (plan.rent > 0.004) bits.push('Rent ' + money(plan.rent));
+        planText = '→ ' + bits.join(' + ');
+      }
+      var note = r.dup ? '<span class="bank-flag">Already recorded</span>' : r.repeated ? '<span class="bank-flag">Same as a row above</span>' : '';
+      return '<div class="bank-row'+(r.checked ? '' : ' off')+'">'+
+        '<label class="bank-check"><input type="checkbox" '+(r.checked ? 'checked' : '')+(r.tenantId ? '' : ' disabled')+' onchange="bankImportSet('+r.id+',\'checked\',this.checked)"></label>'+
+        '<div class="bank-main">'+
+          '<div class="bank-top"><b>'+money(r.amount)+'</b><span>'+shortDate(r.date)+'</span>'+note+'</div>'+
+          '<div class="bank-desc">'+esc(r.desc)+'</div>'+
+          '<div class="bank-ctrls">'+
+            '<select onchange="bankImportSet('+r.id+',\'tenantId\',this.value)"><option value="">— Not a tenant payment —</option>'+
+              tenantOpts.map(function(t){ return '<option value="'+t.id+'"'+(t.id === r.tenantId ? ' selected' : '')+'>'+esc(t.fullName)+(tenantPaymentRef(t) ? ' · '+esc(tenantPaymentRef(t)) : '')+'</option>'; }).join('')+
+            '</select>'+
+            (r.tenantId ? '<select onchange="bankImportSet('+r.id+',\'mode\',this.value)">'+
+              [['rent','Rent'],['bills','Bills first, rest to rent']].map(function(o){ return '<option value="'+o[0]+'"'+(r.mode === o[0] ? ' selected' : '')+'>'+o[1]+'</option>'; }).join('')+
+            '</select>' : '')+
+          '</div>'+
+          (r.tenantId && r.how ? '<div class="bank-how">Matched '+HOW[r.how]+(planText ? ' · '+esc(planText) : '')+'</div>' : '')+
+        '</div></div>';
+    }).join('');
+    var unmatched = bankImport.rows.filter(function(r){ return !r.tenantId; }).length;
+    body.innerHTML =
+      '<p class="modal-hint">'+esc(bankImport.fileName)+' · '+bankImport.rows.length+' deposit'+(bankImport.rows.length === 1 ? '' : 's')+
+        (bankImport.debits ? ' ('+bankImport.debits+' withdrawals ignored)' : '')+
+        (unmatched ? ' · '+unmatched+' not matched — pick the tenant if it\'s theirs' : '')+'. Ticked rows are saved with the bank\'s date.</p>'+
+      '<div class="bank-list">'+rowsHtml+'</div>'+
+      '<div class="modal-actions">'+
+        '<button class="mini-btn" onclick="closeBankImport()">Cancel</button>'+
+        '<button class="mini-btn primary" id="bank-import-save" onclick="applyBankImport()"'+(countRec ? '' : ' disabled')+'>Record '+countRec+' payment'+(countRec === 1 ? '' : 's')+(countRec ? ' · '+money(round2(totalRec)) : '')+'</button>'+
+      '</div>';
+  }
+  async function applyBankImport(){
+    if (!bankImport) return;
+    var btn = document.getElementById('bank-import-save');
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    var used = {}, rentCount = 0, billCount = 0, failed = 0;
+    for (var i = 0; i < bankImport.rows.length; i++){
+      var r = bankImport.rows[i];
+      if (!r.checked) continue;
+      // Re-check right before saving — in case it was recorded meanwhile (another device).
+      if (bankIsDuplicate(r.tenantId, r.date, r.amount)) continue;
+      var plan = bankPlan(r, used);
+      if (!plan) continue;
+      for (var b = 0; b < plan.bills.length; b++){
+        var o = plan.bills[b];
+        used[o.alloc.id] = true;
+        if (await markAllocationPaid(o.bill.id, r.tenantId, r.date, 'cash', true)) billCount++; else failed++;
+      }
+      if (plan.rent > 0.004){
+        try {
+          var saved = await paymentService.create({ tenantId: r.tenantId, amount: plan.rent, date: r.date, method: 'cash' });
+          paymentRecords.push(saved);
+          rentCount++;
+        } catch(err){ console.error('bank import rent', err); failed++; }
+      }
+    }
+    recomputeRentCharges();
+    closeBankImport();
+    render();
+    var parts = [];
+    if (rentCount) parts.push(rentCount + ' rent payment' + (rentCount === 1 ? '' : 's'));
+    if (billCount) parts.push(billCount + ' bill share' + (billCount === 1 ? '' : 's'));
+    showToast(failed ? 'Saved ' + (parts.join(' and ') || 'nothing') + ', but ' + failed + ' couldn\'t be saved — check your connection and import again (saved ones are skipped).'
+      : parts.length ? 'Recorded ' + parts.join(' and ') + ' from the bank statement.' : 'Nothing new to record.', failed ? 'error' : 'success');
+  }
+  window.openBankImport = openBankImport;
+  window.closeBankImport = closeBankImport;
+  window.handleBankImportFile = handleBankImportFile;
+  window.bankImportSet = bankImportSet;
+  window.applyBankImport = applyBankImport;
 
   var billsFilter = 'all';
   var billsPropertyFilter = 'all';
@@ -5022,6 +5313,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         extractor: r.extractor,
         reviewStatus: r.status,
         skippedAi: r.extractor === 'known_account',
+        fromEmail: data.source === 'email',
         aiError: r.extractor === 'failed' ? (data.error || 'Couldn\'t read the bill automatically.') : null
       };
       item.extracted = data.extraction ? extractedFormValues(data, null)
@@ -5050,6 +5342,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     removeImportQueueItem(id);
   }
   window.discardImportQueueItem = discardImportQueueItem;
+  /** "New bill by email" notification → Bills list, where "Pending review" shows it. */
+  function openEmailedBills(){
+    billsViewTab = 'list';
+    location.hash = '#/bills';
+    restoreExtractionQueue();
+  }
+  window.openEmailedBills = openEmailedBills;
   function removeImportQueueItem(id){
     var item = importQueue.find(function(i){ return i.id===id; });
     if (item && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
@@ -5072,7 +5371,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         : '';
       return '<div class="row" style="border:none;padding:8px 0;">'+
         '<div class="who"><div class="name">'+esc(item.fileName)+'</div>'+
-        '<div class="meta">added '+shortDate(item.addedAt)+esc(readBy)+(item.aiError?(' • '+esc(item.aiError)):'')+'</div></div>'+
+        '<div class="meta">'+(item.fromEmail ? '📧 by email · ' : 'added ')+shortDate(item.addedAt)+esc(readBy)+(item.aiError?(' • '+esc(item.aiError)):'')+'</div></div>'+
         '<div style="display:flex;align-items:center;gap:8px;">'+statusBit+actionBtn+
         '<button class="del" title="Remove" onclick="discardImportQueueItem(\''+item.id+'\')">✕</button></div></div>';
     }).join('');
@@ -6320,11 +6619,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   /** Marks a tenant's share of a bill as paid (with the actual date the admin specifies,
    *  not always today), and recomputes the bill's overall status. */
-  async function markAllocationPaid(billId, tenantId, date, paidVia){
+  async function markAllocationPaid(billId, tenantId, date, paidVia, quiet){
     var bill = billOf(billId);
-    if (!bill || !bill.allocations) return;
+    if (!bill || !bill.allocations) return false;
     var alloc = bill.allocations.find(function(a){ return a.tenantId===tenantId; });
-    if (!alloc) return;
+    if (!alloc) return false;
     var paidDate = date || TODAY;
     try {
       var savedAlloc = await billAllocationService.markPaid(alloc.id, paidDate, paidVia);
@@ -6341,14 +6640,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       // after the write above succeeded (we're still inside the try), so a failed write never
       // auto-confirms a report.
       try { await autoConfirmPendingPaymentReport(alloc.id); } catch(_e){ console.error('autoConfirmPendingPaymentReport failed', _e); }
+      if (quiet) return true; // batch callers (bank import) toast + render once at the end
       if (alloc.paidVia === 'bond_deduction'){
         showToast('Bill share settled from the bond.', 'success');
       } else {
         showToast('Marked as paid.', 'success', { label:'Undo', onClick: function(){ unmarkAllocationPaid(billId, tenantId); } });
       }
       render();
+      return true;
     } catch(err){
       showToast('Could not mark this as paid. ' + friendlyErrorMessage(err), 'error');
+      return false;
     }
   }
   /** If this allocation has a 'pending' payment_reports row, resolves it to 'confirmed' and
@@ -7484,6 +7786,44 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
     }
 
+    // Real estate (lease) payments — staff only, never tenants: the day before, on the day, and
+    // once overdue (then a weekly reminder while it stays unpaid). Goes to the Super Admin(s) and
+    // the Administrators assigned to that property; an Administrator's own load covers just them
+    // (they can't see the other profiles). One dedup key per property, period and stage.
+    var leaseRecipients = function(propertyId){
+      var ids = {};
+      if (currentProfile.authUserId) ids[currentProfile.authUserId] = true;
+      if (isSuperAdmin()){
+        allProfiles.forEach(function(pr){
+          if (!pr.authUserId || pr.isActive === false) return;
+          if (pr.role === 'super_admin') ids[pr.authUserId] = true;
+          else if (pr.role === 'administrator' && propertyAssignments.some(function(a){ return a.profileId === pr.id && a.propertyId === propertyId; })) ids[pr.authUserId] = true;
+        });
+      }
+      return Object.keys(ids);
+    };
+    for (var lp=0; lp<properties.length; lp++){
+      var prop = properties[lp];
+      var periods = leaseDuePeriods(prop);
+      var amt = prop.leasePaymentAmount != null ? money(prop.leasePaymentAmount) : 'the rent';
+      var alerts = [];
+      periods.forEach(function(d){
+        var late = daysBetween(d, TODAY);
+        if (late === -1) alerts.push({ key: d + ':before', title: 'Real estate payment tomorrow — ' + prop.name, body: 'Pay ' + amt + ' to the real estate tomorrow (' + fullDate(d) + ').' });
+        else if (late === 0) alerts.push({ key: d + ':today', title: 'Real estate payment due today — ' + prop.name, body: 'Pay ' + amt + ' to the real estate today and mark it as paid in the app.' });
+        else if (late > 0) alerts.push({ key: d + ':overdue:' + Math.floor((late - 1) / 7), title: 'Real estate payment OVERDUE — ' + prop.name, body: amt + ' was due ' + fullDate(d) + ' (' + late + ' day' + (late === 1 ? '' : 's') + ' ago). Pay it and mark it as paid in the app.' });
+      });
+      if (!alerts.length) continue;
+      var who = leaseRecipients(prop.id);
+      for (var la=0; la<alerts.length; la++){
+        for (var lr=0; lr<who.length; lr++){
+          await notificationService.notifyOnce(who[lr], 'lease_due:' + prop.id + ':' + alerts[la].key,
+            alerts[la].title, alerts[la].body, 'properties', prop.id,
+            { category: 'rent', propertyId: prop.id, createdByProfileId: createdByProfileId });
+        }
+      }
+    }
+
     // Cleaning: notify the current occupant of a room whose turn is today/tomorrow, or whose
     // turn has just become overdue. Stops once the task is completed (or closed not_completed).
     for (var n=0; n<cleaningTasks.length; n++){
@@ -8082,6 +8422,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function groupSendCopyImage(b){
     var st = groupSendState; if (!st || !st.imageBlob) return;
+    groupSendMarkSent(); // copying/saving it means it's being sent
     navigator.clipboard.write([new ClipboardItem({ 'image/png': st.imageBlob })]).then(function(){
       flashTileDone(b, 'Copied');
       showToast('Image copied — now open the chat and paste it.', 'success');
@@ -8092,6 +8433,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function groupSendCopyMessage(b){
     var st = groupSendState; if (!st) return;
+    groupSendMarkSent(); // copying/saving it means it's being sent
     copyTextReliably(st.message).then(function(ok){
       if (ok) flashTileDone(b, 'Copied');
       showToast(ok ? 'Message copied — paste it in the chat and send.' : 'Couldn\'t copy — open "Message" above and copy it by hand.', ok ? 'success' : 'error');
@@ -8099,6 +8441,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function groupSendDownloadImage(){
     var st = groupSendState; if (!st || !st.imageUrl) return;
+    groupSendMarkSent(); // copying/saving it means it's being sent
     var a = document.createElement('a'); a.href = st.imageUrl; a.download = st.imageName; document.body.appendChild(a); a.click(); a.remove();
   }
   function groupSendDownloadBill(){
@@ -8153,10 +8496,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var rent = tenantRentOwed(t);
     var billItems = unpaidBillAllocationsFor(t.id).filter(function(o){ return !isTenantHiddenProvider(o.bill.provider); });
     if (!rent.length && !billItems.length){ showToast(t.fullName + ' doesn\'t owe anything right now.', 'info'); return; }
-    sendTenantStatement(t, rent, billItems, 'Send ' + t.fullName + ' what they owe');
+    sendTenantStatement(t, rent, billItems, 'Send ' + t.fullName + ' what they owe', function(){ markCollectSent(t.id); });
   }
   window.sendTenantOwedStatement = sendTenantOwedStatement;
-  async function sendTenantStatement(t, rent, billItems, title){
+  async function sendTenantStatement(t, rent, billItems, title, onSent){
     var property = propertyOf(t.propertyId);
     var m = groupSendModalShell(title, 'Preparing the statement…');
     var ref = tenantPaymentRef(t);
@@ -8186,7 +8529,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total);
     var chatUrl = waChatUrl(t.phone, message);
     showGroupSend(m, { message: message, imageBlob: imageBlob, imageName: 'owed-' + first + '-' + TODAY + '.png',
-      chatUrl: chatUrl, chatPrefilled: !!chatUrl, recipientName: first,
+      chatUrl: chatUrl, chatPrefilled: !!chatUrl, recipientName: first, onSent: onSent,
       note: chatUrl ? '' : 'No phone number on file for ' + t.fullName + ' — copy the image and message and send them yourself.' });
   }
 
@@ -9097,6 +9440,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       openCall = isTenantRole() ? 'location.hash=\'#/\'' : 'location.hash=\'#/inspection\'';
     } else if (n.relatedTable === 'house_rules'){
       openCall = 'location.hash=\'#/rules\'';
+    } else if (n.relatedTable === 'bill_extractions' && !isTenantRole()){
+      openCall = 'openEmailedBills()';
+    } else if (n.relatedTable === 'properties' && n.relatedId && !isTenantRole()){
+      openCall = 'goPropertyInfo(\''+n.relatedId+'\',\'lease\')';
     }
     if (!openCall) return '';
     return ' onclick="markDbNotifRead(\''+n.id+'\');'+openCall+'"';
@@ -15527,7 +15874,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Realtime (below) already pushes every change the moment it happens; this is only a safety
     // net, so every 5 minutes instead of every minute (each refresh reads all ~34 tables).
     setInterval(function(){
-      if (document.visibilityState === 'visible') refreshAllData();
+      if (document.visibilityState === 'visible'){ refreshAllData(); restoreExtractionQueue(); } // + bills that arrived by email
     }, 5*60000);
     window.addEventListener('online', function(){ refreshAllData(); });
     setupRealtimeSync();

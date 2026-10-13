@@ -1,3 +1,4 @@
+-- APPLIED to the live project on 2026-10-13.
 -- Bill extraction records: one row per uploaded bill document, from the moment it's read until
 -- the administrator confirms it as a bill (or discards it). Keeps an audit trail of what the
 -- readers detected versus what was finally confirmed, and lets the "Pending review" queue
@@ -35,6 +36,8 @@ create table if not exists public.bill_extractions (
 
 create index if not exists bill_extractions_status_idx on public.bill_extractions (status);
 create index if not exists bill_extractions_bill_idx on public.bill_extractions (bill_id);
+-- Bills received by email (email-bill function) are de-duplicated by the file's SHA-256.
+create index if not exists bill_extractions_hash_idx on public.bill_extractions ((extracted->>'sourceHash'));
 
 alter table public.bill_extractions enable row level security;
 
