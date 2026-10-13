@@ -2206,3 +2206,8 @@ button.cal-day-btn:focus-visible{outline:2px solid var(--accent);outline-offset:
 .mini-btn.soft-danger{color:var(--status-overdue);border-color:color-mix(in srgb, var(--status-overdue) 35%, var(--border));}
 .mini-btn.soft-danger:hover{background:color-mix(in srgb, var(--status-overdue) 10%, transparent);}
 .mini-btn.attn{color:var(--accent);border-color:color-mix(in srgb, var(--accent) 45%, var(--border));border-style:dashed;}
+
+/* App-wide button icons (added by decorateButtons in app.js) */
+.mini-btn.has-ic{display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+.mini-btn.has-ic[hidden]{display:none;}
+.mini-btn .btn-ic{width:16px;height:16px;flex:none;}

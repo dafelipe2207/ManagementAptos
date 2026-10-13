@@ -16680,6 +16680,129 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.addEventListener('scroll', function(e){ if (datePopEl && !datePopEl.contains(e.target) && Date.now() - datePopOpenedAt > 300) closeDatePop(); }, true);
   window.addEventListener('hashchange', closeDatePop);
 
+
+  /* ── Button icons, app-wide ────────────────────────────────────────────────────────────────
+   * Every text button (.mini-btn) gets a small line icon in front of its label, picked from
+   * what the label says, so the same action always shows the same drawing on every screen.
+   * Runs after each render (MutationObserver), so buttons added later are covered too. A button
+   * that already has its own <svg>, or is icon-only (✕, ✎, ‹ …), is left alone. A leading emoji
+   * or "+ " in the label is dropped, since the icon replaces it. */
+  var BTN_ICONS = {
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    back: '<path d="M19 12H5"/><path d="m11 18-6-6 6-6"/>',
+    trash: '<path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v5.5M14 11v5.5"/>',
+    reject: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+    undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+    check: '<circle cx="12" cy="12" r="9"/><path d="m8 12.3 2.7 2.7L16 9.7"/>',
+    save: '<path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/><path d="M8 3v5h7V3"/><path d="M8 21v-7h8v7"/>',
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    minus: '<path d="M5 12h14"/>',
+    send: '<path d="M21 3 10 14"/><path d="m21 3-7 18-4-7-7-4z"/>',
+    eye: '<path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+    attach: '<path d="M20.5 11.5 12.4 19.6a5 5 0 0 1-7-7l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5"/>',
+    camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+    copy: '<rect x="8" y="8" width="13" height="13" rx="2.5"/><path d="M16 8V5.5A2.5 2.5 0 0 0 13.5 3h-8A2.5 2.5 0 0 0 3 5.5v8A2.5 2.5 0 0 0 5.5 16H8"/>',
+    download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+    upload: '<path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>',
+    logout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h11"/>',
+    login: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
+    door: '<path d="M5 21V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v17"/><path d="M3 21h18"/><path d="M12.5 12h.01"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>',
+    key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M15 8l2 2"/>',
+    refresh: '<path d="M20 11a8 8 0 0 0-14.5-4.5L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.5 4.5L20 16"/><path d="M20 20v-4h-4"/>',
+    swap: '<path d="M4 9h13l-3.5-3.5"/><path d="M20 15H7l3.5 3.5"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    split: '<path d="M12 3v7"/><path d="M12 10 5 17v4M12 10l7 7v4"/>',
+    money: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v5M18 9.5v5"/>',
+    half: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/>',
+    calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15v3M8 18h.01M12 18h.01"/>',
+    list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+    doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
+    bank: '<path d="M3 10h18L12 4z"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 20h18"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    building: '<rect x="5" y="3" width="14" height="18" rx="1"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1M11 21v-3h2v3"/>',
+    comment: '<path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/>',
+    broom: '<path d="M19 3 11 11"/><path d="M11 11c-2.5-1-5 0-6 2l-2 7c2 .5 6 .3 8-2s1.5-6 0-7z"/>',
+    wrench: '<path d="M14.5 6.5a4 4 0 0 0 5 5L12 19a2.1 2.1 0 0 1-3-3l7.5-7.5a4 4 0 0 0-2-2z"/>',
+    box: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>',
+    bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+    megaphone: '<path d="M3 10v4h4l8 5V5L7 10z"/><path d="M18 9a4 4 0 0 1 0 6"/>',
+    queue: '<path d="M4 6h16M4 12h10M4 18h7"/><path d="M18 15v6M15 18h6"/>',
+    tag: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/>',
+    sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+    bin: '<path d="M5 7h14l-1 13H6z"/><path d="M3 7h18M9 4h6"/><path d="M12 4v-1"/>'
+  };
+  // First match wins, so more specific labels come before general ones.
+  var BTN_ICON_RULES = [
+    [/^(sign out|log out)/, 'logout'], [/^(sign in|log in)/, 'login'], [/^unlock/, 'unlock'],
+    [/^exit/, 'logout'], [/^(back|‹ back)/, 'back'],
+    [/^save/, 'save'],
+    [/reset password|reset link/, 'key'], [/pin\b|password$|^change password/, 'lock'],
+    [/^(cancel move-out|cancel inspection)/, 'reject'],
+    [/^(cancel|close|discard|skip)\b/, 'x'],
+    [/mark as unpaid|mark not completed/, 'undo'],
+    [/^reject/, 'reject'],
+    [/^(delete|remove)\b|^− remove/, 'trash'], [/^archive/, 'box'],
+    [/^approve|^accept/, 'check'],
+    [/^mark .*(paid|completed)|^confirm|^i paid|^i made this payment|^mark read|^pay$/, 'check'],
+    [/^partial/, 'half'], [/^record .*payment|^add payment/, 'money'],
+    [/^re-?allocate|^allocate/, 'split'],
+    [/^change date|schedule|^today|^date:/, 'calendar'],
+    [/^edit|^change\b/, 'edit'],
+    [/whatsapp|^send/, 'send'],
+    [/^copy/, 'copy'],
+    [/^export|download/, 'download'], [/^open the full/, 'doc'],
+    [/^import|bank statement/, 'bank'], [/csv/, 'upload'],
+    [/^submit photos/, 'camera'],
+    [/attach|receipt|my transfer|^add document/, 'attach'],
+    [/view as tenant|^switch tenant/, 'user'],
+    [/^view|^show|^review/, 'eye'],
+    [/history/, 'clock'], [/active tenants/, 'list'],
+    [/calculate/, 'calc'], [/^start move-out/, 'door'],
+    [/^email/, 'mail'], [/^regenerate/, 'refresh'],
+    [/^publish/, 'megaphone'], [/add to queue/, 'queue'],
+    [/maintenance/, 'wrench'], [/cleaning/, 'broom'], [/bin out/, 'bin'],
+    [/^add comment/, 'comment'], [/discount|deduction/, 'tag'],
+    [/starter set|start blank/, 'sparkle'],
+    [/^\+|^add|^create|^new/, 'plus']
+  ];
+  var BTN_LEAD_RE = /^(?:[☀-➿️]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDC00-\uDFFF]|[+−\u2039])\s*/;
+  function btnIconFor(label){
+    var t = label.toLowerCase().replace(BTN_LEAD_RE, '').trim();
+    for (var i = 0; i < BTN_ICON_RULES.length; i++) if (BTN_ICON_RULES[i][0].test(t)) return BTN_ICONS[BTN_ICON_RULES[i][1]];
+    return null;
+  }
+  function decorateButton(b){
+    if (b.querySelector('svg')) return;
+    var label = (b.textContent || '').trim();
+    if (label.length < 2 || !/[a-z]/i.test(label)) return; // icon-only (✕, ✎, ‹ …) or empty
+    var icon = btnIconFor(label);
+    if (!icon) return;
+    // Drop a leading emoji / "+ " from the first text node — the icon takes its place.
+    var first = b.firstChild;
+    while (first && first.nodeType === 1 && !first.textContent.trim()) first = first.nextSibling;
+    if (first && first.nodeType === 3) first.textContent = first.textContent.replace(BTN_LEAD_RE, '').replace(/^\s+/, '');
+    b.insertAdjacentHTML('afterbegin', '<svg class="btn-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icon+'</svg>');
+    b.classList.add('has-ic');
+  }
+  function decorateButtons(root){
+    (root || document).querySelectorAll('.mini-btn').forEach(decorateButton);
+  }
+  var btnDecorateQueued = false;
+  function queueDecorateButtons(){
+    if (btnDecorateQueued) return;
+    btnDecorateQueued = true;
+    requestAnimationFrame(function(){ btnDecorateQueued = false; decorateButtons(document); });
+  }
+  if (window.MutationObserver){
+    new MutationObserver(queueDecorateButtons).observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+  decorateButtons(document);
+
   requireConfirm('rulesDeleteRule', 'Delete this rule?', function(pid, si, ri){
     var r = rulesDraftFor(pid).sections[si].rules[ri];
     return (r && (r.text||'').trim()) ? '"' + r.text.trim().slice(0, 120) + '" will be removed when you publish.' : null;
