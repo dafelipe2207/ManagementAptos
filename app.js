@@ -6437,14 +6437,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       : [];
     // Always opens on "By occupancy factor" (the admin's default). The amounts already saved are
     // kept aside so choosing "Custom" starts from them instead of from the factor split.
-    // Factors changed by hand on an earlier occupancy split of this bill are kept, so reopening
-    // the modal shows the same split instead of going back to each tenant's default.
+    // Always starts from each tenant's default factor; any by-hand change (− / +) applies only
+    // while the modal is open and is saved on this bill's allocation when confirmed.
     var factorOverrides = {};
-    if (bill.allocationMethod === 'occupancy'){
-      (bill.allocations || []).forEach(function(a){
-        if (!a.isAdmin && a.tenantId && a.occupancyFactor != null) factorOverrides[a.tenantId] = Number(a.occupancyFactor);
-      });
-    }
     allocationDraft = { billId: billId, method: 'occupancy', periodDays: totalDays, factorOverrides: factorOverrides,
       rows: computeAllocationRows(bill, 'occupancy', factorOverrides), savedRows: existingRows };
     document.getElementById('allocate-modal-sub').textContent =
@@ -6472,13 +6467,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     renderAllocateModal();
   }
   /** − / + next to a tenant's factor in the "By occupancy factor" split: changes that tenant's
-   *  factor for this bill only (steps of 0.5, between 0 and 10) and re-splits the amounts. */
+   *  factor for this bill only (steps of 0.1, between 0 and 10) and re-splits the amounts. */
   function stepAllocationFactor(tenantId, delta){
     if (!allocationDraft || allocationDraft.method !== 'occupancy') return;
     var bill = billOf(allocationDraft.billId);
     var row = allocationDraft.rows.find(function(r){ return r.tenantId === tenantId; });
     var current = row && row.occupancyFactor != null ? row.occupancyFactor : 1;
-    var next = Math.round((current + delta) * 2) / 2;
+    var next = Math.round((current + delta) * 10) / 10;
     next = Math.min(10, Math.max(0, next));
     if (next === current) return;
     allocationDraft.factorOverrides = allocationDraft.factorOverrides || {};
@@ -6528,9 +6523,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var metaText = row.isAdmin ? "Paid by you, not the tenants"
         : (allocationDraft.method === 'occupancy'
           ? ('<span class="factor-step">Factor '+
-              '<button type="button" aria-label="Lower factor" onclick="stepAllocationFactor(\''+row.tenantId+'\',-0.5)"'+(f <= 0 ? ' disabled' : '')+'>−</button>'+
+              '<button type="button" aria-label="Lower factor" onclick="stepAllocationFactor(\''+row.tenantId+'\',-0.1)"'+(f <= 0 ? ' disabled' : '')+'>−</button>'+
               '<b>'+f.toFixed(1)+'</b>'+
-              '<button type="button" aria-label="Raise factor" onclick="stepAllocationFactor(\''+row.tenantId+'\',0.5)"'+(f >= 10 ? ' disabled' : '')+'>+</button></span>')
+              '<button type="button" aria-label="Raise factor" onclick="stepAllocationFactor(\''+row.tenantId+'\',0.1)"'+(f >= 10 ? ' disabled' : '')+'>+</button></span>')
           : (row.days+' / '+allocationDraft.periodDays+' days occupied'));
       return '<div class="alloc-row"><div class="who"><div>'+esc(row.name)+'</div>'+
         '<div class="meta">'+metaText+'</div></div>'+
