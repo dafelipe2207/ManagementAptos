@@ -1653,12 +1653,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       tile('Owed now', money(owed), owed>0.004?'bad':'good', 'goPropertyInfo('+pid+',\'payments\')',
         billsLater>0 ? '+'+money(billsLater)+' not due yet' : '');
     var chips = [];
-    var nextLease = nextLeaseDueDate(p, TODAY);
-    if (nextLease){
-      var d = daysBetween(TODAY, nextLease);
-      chips.push(chip(d < 0 ? 'bad' : (d<=3 ? 'warn' : ''), d < 0 ? '💳 Real estate overdue '+(-d)+' d' : '💳 Real estate '+(d===0?'due today':'in '+d+' d'),
-        'goPropertyInfo('+pid+',\'lease\')'));
-    }
     if (!lease) chips.push(chip('warn', '💳 Lease amount missing — add it', 'goPropertyInfo('+pid+',\'lease\')'));
     var insp = upcomingRealEstateInspections(p.id)[0];
     if (insp) chips.push(chip(daysBetween(TODAY, insp.date)<=7 ? 'warn' : '', '🏢 Inspection '+shortDate(insp.date), 'openReiModal(\''+insp.id+'\')'));
@@ -1697,6 +1691,74 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.goPropertyInfo = goPropertyInfo;
 
+  /** What's owed to the real estate for a property right now: every period already started and
+   *  not paid (overdue / due today) plus the next one, with the amount per payment. */
+  function leasePaymentStatus(p){
+    var next = nextLeaseDueDate(p, TODAY);
+    if (!next) return null;
+    var periods = leaseDuePeriods(p);
+    var dueNow = periods.filter(function(d){ return d <= TODAY; });
+    var amount = p.leasePaymentAmount != null ? Number(p.leasePaymentAmount) : null;
+    return {
+      next: next, days: daysBetween(TODAY, next), amount: amount,
+      dueNowCount: dueNow.length, dueNowTotal: amount != null ? round2(amount * dueNow.length) : null,
+      upcoming: periods.filter(function(d){ return d > TODAY; })[0] || null,
+      freq: p.leasePaymentFrequency === 'fortnightly' ? 'fortnightly' : 'monthly'
+    };
+  }
+  /** Banner on each property card: when the next real estate payment is due and how much it is. */
+  function leaseNextPaymentHtml(p){
+    var st = leasePaymentStatus(p);
+    var pid = '\''+p.id+'\'';
+    if (!st){
+      return p.leasePaymentAmount != null || p.leasePaymentDay ? '' :
+        '<button type="button" class="lease-next none" onclick="goPropertyInfo('+pid+',\'lease\')"><span class="ln-ic">🏢</span>'+
+        '<span class="ln-main"><b>Real estate payment not set up</b><span>Add the lease amount and payment day</span></span></button>';
+    }
+    var amt = st.amount != null ? money(st.amount) : 'Amount not set';
+    var tone, title, sub;
+    if (st.dueNowCount > 1){
+      tone = 'bad'; title = st.dueNowCount + ' real estate payments overdue';
+      sub = 'Since ' + fullDate(st.next) + ' · ' + money(st.amount || 0) + ' each';
+    } else if (st.dueNowCount === 1){
+      tone = st.days < 0 ? 'bad' : 'warn';
+      title = st.days < 0 ? 'Real estate payment overdue ' + (-st.days) + ' day' + (st.days===-1?'':'s') : 'Real estate payment due today';
+      sub = 'Was due ' + fullDate(st.next) + (st.upcoming ? ' · next one ' + shortDate(st.upcoming) : '');
+    } else {
+      tone = st.days <= 3 ? 'warn' : '';
+      title = 'Next real estate payment ' + (st.days === 1 ? 'tomorrow' : 'in ' + st.days + ' days');
+      sub = fullDate(st.next) + ' · ' + st.freq;
+    }
+    var total = st.dueNowCount > 1 && st.dueNowTotal != null ? money(st.dueNowTotal) : amt;
+    return '<button type="button" class="lease-next'+(tone?' '+tone:'')+'" onclick="goPropertyInfo('+pid+',\'lease\')">'+
+      '<span class="ln-ic">🏢</span><span class="ln-main"><b>'+esc(title)+'</b><span>'+esc(sub)+'</span></span>'+
+      '<span class="ln-amt">'+esc(total)+'</span></button>';
+  }
+  /** Top of the Properties page: every property's next real estate payment in date order, and the
+   *  total due in the next 30 days (anything overdue included). */
+  function leasePaymentsOverviewHtml(ordered){
+    var rows = ordered.map(function(p){ return { p:p, st: leasePaymentStatus(p) }; }).filter(function(x){ return x.st; });
+    if (!rows.length) return '';
+    var horizon = stepDateIso(TODAY, 30), total = 0, missingAmount = false;
+    rows.forEach(function(x){
+      // every unpaid period that starts by the horizon (overdue ones included)
+      var periods = [], d = x.st.next, guard = 0;
+      while (d <= horizon && guard++ < 60){ periods.push(d); d = x.p.leasePaymentFrequency === 'fortnightly' ? stepDateIso(d, 14) : addMonthsIso(d, 1); }
+      if (x.st.amount == null){ if (periods.length) missingAmount = true; return; }
+      total += x.st.amount * periods.length;
+    });
+    return '<div class="card lease-overview"><div class="lo-head"><div><div class="lo-label">Due to the real estate · next 30 days</div>'+
+      '<div class="lo-total">'+money(round2(total))+(missingAmount ? '<small> + amounts not set</small>' : '')+'</div></div></div>'+
+      rows.map(function(x){
+        var st = x.st, d = st.days;
+        var when = st.dueNowCount ? (d < 0 ? 'Overdue ' + (-d) + ' d' : 'Today') : (d === 1 ? 'Tomorrow' : 'In ' + d + ' d');
+        return '<a class="lo-row'+(st.dueNowCount ? ' bad' : (d <= 3 ? ' warn' : ''))+'" href="#/properties/'+x.p.id+'">'+
+          '<span class="lo-date"><b>'+parseInt(st.next.slice(8,10),10)+'</b>'+MONTH_SHORT[parseInt(st.next.slice(5,7),10)-1]+'</span>'+
+          '<span class="lo-name"><b>'+esc(x.p.name)+'</b><span>'+when+(st.dueNowCount > 1 ? ' · '+st.dueNowCount+' payments' : '')+'</span></span>'+
+          '<span class="lo-amt">'+(st.amount != null ? money(st.dueNowCount > 1 ? st.dueNowTotal : st.amount) : '—')+'</span></a>';
+      }).join('')+'</div>';
+  }
+
   function renderProperties(){
     if (properties.length === 0){
       return '<div class="detail-head" style="align-items:center;">'+
@@ -1705,7 +1767,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           'Add your first property to start tracking rooms, tenants and rent.',
           '<button class="mini-btn primary" onclick="openPropertyModal()">+ Add property</button>');
     }
-    var cards = properties.map(function(p){
+    // The property whose real estate payment comes up next goes first (overdue ones on top);
+    // properties with no lease schedule set go last, by name.
+    var ordered = properties.slice().sort(function(a,b){
+      var da = nextLeaseDueDate(a, TODAY), db = nextLeaseDueDate(b, TODAY);
+      if (da && db && da !== db) return da.localeCompare(db);
+      if (da && !db) return -1;
+      if (!da && db) return 1;
+      return (a.name||'').localeCompare(b.name||'');
+    });
+    var cards = ordered.map(function(p){
       var propRooms = roomsOf(p.id);
       var occupied = propRooms.filter(isRoomOccupied).length;
       var roomsHtml = propRooms.map(function(r){
@@ -1727,12 +1798,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="prop-meta">'+p.bedrooms+' bedrooms • '+p.bathrooms+' bathrooms</div></div>'+
         '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
         '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div></a>'+
+        leaseNextPaymentHtml(p)+
         propertySummaryHtml(p)+
         roomsHtml+'</div>';
     }).join('');
     return '<div class="detail-head" style="align-items:center;">'+
       pageHeader('Properties', 'Manage your properties, rooms and occupancy.')+
       '<button class="mini-btn primary" style="white-space:nowrap;" onclick="openPropertyModal()">+ Add property</button></div>'+
+      leasePaymentsOverviewHtml(ordered)+
       cards;
   }
 

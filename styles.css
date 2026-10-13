@@ -2157,3 +2157,31 @@ button.cal-day-btn:focus-visible{outline:2px solid var(--accent);outline-offset:
   .cal-filter::-webkit-scrollbar{display:none;}
   .cal-filter-btn{padding:6px 10px;font-size:12.5px;white-space:nowrap;flex-shrink:0;}
 }
+
+/* ===== Properties: real estate payments ===== */
+.lease-overview{padding-bottom:8px;}
+.lo-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px;}
+.lo-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);}
+.lo-total{font-size:26px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums;}
+.lo-total small{font-size:12px;font-weight:600;color:var(--text-dim);}
+.lo-row{display:flex;align-items:center;gap:12px;padding:10px 4px;border-top:1px solid var(--border);text-decoration:none;color:var(--text);}
+.lo-date{width:40px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;font-size:11px;text-transform:uppercase;color:var(--text-dim);}
+.lo-date b{font-size:18px;line-height:1.1;color:var(--text);}
+.lo-name{flex:1;min-width:0;display:flex;flex-direction:column;}
+.lo-name b{font-size:14.5px;}
+.lo-name span{font-size:12.5px;color:var(--text-dim);}
+.lo-row.warn .lo-name span{color:var(--status-due);font-weight:600;}
+.lo-row.bad .lo-name span, .lo-row.bad .lo-date b{color:var(--status-overdue);font-weight:700;}
+.lo-amt{font-weight:750;font-size:15px;font-variant-numeric:tabular-nums;}
+.lease-next{display:flex;align-items:center;gap:10px;width:100%;margin:10px 0 4px;padding:11px 12px;border-radius:12px;
+  border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;text-align:left;cursor:pointer;}
+.lease-next .ln-ic{font-size:20px;flex-shrink:0;}
+.lease-next .ln-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+.lease-next .ln-main b{font-size:14px;}
+.lease-next .ln-main span{font-size:12.5px;color:var(--text-dim);}
+.lease-next .ln-amt{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.lease-next.warn{background:var(--status-due-bg);border-color:var(--status-due);}
+.lease-next.warn .ln-main b{color:var(--status-due);}
+.lease-next.bad{background:var(--status-overdue-bg);border-color:var(--status-overdue);}
+.lease-next.bad .ln-main b, .lease-next.bad .ln-amt{color:var(--status-overdue);}
+.lease-next.none .ln-main b{color:var(--text-dim);}
