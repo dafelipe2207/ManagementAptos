@@ -2199,3 +2199,10 @@ button.cal-day-btn:focus-visible{outline:2px solid var(--accent);outline-offset:
 
 #bank-import-modal .modal-actions > .mini-btn { flex: none; width: auto; }
 #bank-import-modal .modal-title { color: var(--text); }
+
+/* Rent payments to review — icon buttons */
+.review-actions .icon-label-btn svg{width:17px;height:17px;flex:none;}
+.review-actions label.mini-btn{cursor:pointer;}
+.mini-btn.soft-danger{color:var(--status-overdue);border-color:color-mix(in srgb, var(--status-overdue) 35%, var(--border));}
+.mini-btn.soft-danger:hover{background:color-mix(in srgb, var(--status-overdue) 10%, transparent);}
+.mini-btn.attn{color:var(--accent);border-color:color-mix(in srgb, var(--accent) 45%, var(--border));border-style:dashed;}

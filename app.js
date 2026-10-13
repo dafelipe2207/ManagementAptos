@@ -4055,6 +4055,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Staff: tenant rent payments waiting for review — Confirm records the real payment (same as
    *  "Mark as paid") and marks the report confirmed; Reject asks for a reason. The tenant is
    *  notified either way. */
+  /** Small line icons for the review-card buttons, so each action is recognisable at a glance. */
+  var REVIEW_ICONS = {
+    view: '<path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+    swap: '<path d="M4 9h13l-3.5-3.5"/><path d="M20 15H7l3.5 3.5"/>',
+    trash: '<path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v5.5M14 11v5.5"/>',
+    attach: '<path d="M20.5 11.5 12.4 19.6a5 5 0 0 1-7-7l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5"/>',
+    reject: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+    confirm: '<circle cx="12" cy="12" r="9"/><path d="m8 12.3 2.7 2.7L16 9.7"/>'
+  };
+  function reviewIcon(name){
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+REVIEW_ICONS[name]+'</svg>';
+  }
   function staffRentReportsHtml(){
     var pending = rentPaymentReports.filter(function(r){ return r.status==='pending'; })
       .sort(function(a,b){ return (a.reportedAt||'').localeCompare(b.reportedAt||''); });
@@ -4068,14 +4080,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(PAYMENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
             (r.reference?' · Ref: '+esc(r.reference)+(t && tenantPaymentRef(t) && r.reference.toUpperCase().indexOf(tenantPaymentRef(t))<0 ? ' <span style="color:var(--status-due);">(doesn\'t match '+esc(tenantPaymentRef(t))+')</span>' : ''):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
           '<div class="review-actions">'+
-            (r.proofPath ? '<button class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">📎 Receipt</button>'+
-                '<label class="mini-btn" title="Replace it with the right receipt">Change'+
+            (r.proofPath
+              ? '<button class="mini-btn icon-label-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">'+reviewIcon('view')+'View receipt</button>'+
+                '<label class="mini-btn icon-label-btn" title="Replace it with the right receipt">'+reviewIcon('swap')+'<span>Change</span>'+
                 '<input type="file" accept="image/*,application/pdf" hidden onchange="attachRentReportProof(\''+r.id+'\', event, this)"></label>'+
-                '<button class="mini-btn" title="Delete this receipt" aria-label="Delete this receipt" onclick="deleteRentReportProof(\''+r.id+'\')">✕</button>'
-              : '<label class="mini-btn" title="The tenant didn\'t attach one — attach the receipt yourself">📎 Attach receipt'+
+                '<button class="mini-btn icon-label-btn soft-danger" title="Delete this receipt" onclick="deleteRentReportProof(\''+r.id+'\')">'+reviewIcon('trash')+'Delete</button>'
+              : '<label class="mini-btn icon-label-btn attn" title="The tenant didn\'t attach one — attach the receipt yourself">'+reviewIcon('attach')+'<span>Attach receipt</span>'+
                 '<input type="file" accept="image/*,application/pdf" hidden onchange="attachRentReportProof(\''+r.id+'\', event, this)"></label>')+
-            '<button class="mini-btn" onclick="openRentRejectModal(\''+r.id+'\')">Reject</button>'+
-            '<button class="mini-btn primary" onclick="confirmRentReport(\''+r.id+'\', this)">Confirm paid</button>'+
+            '<button class="mini-btn icon-label-btn soft-danger" onclick="openRentRejectModal(\''+r.id+'\')">'+reviewIcon('reject')+'Reject</button>'+
+            '<button class="mini-btn primary icon-label-btn" onclick="confirmRentReport(\''+r.id+'\', this)">'+reviewIcon('confirm')+'Confirm paid</button>'+
           '</div></div>';
       }).join('')+'</div>';
   }
@@ -4085,8 +4098,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var file = pickedFile(event);
     if (!r || !file) return;
     var label = input && input.parentNode;
-    var labelText = label ? label.firstChild.textContent : '';
-    if (label) label.firstChild.textContent = 'Uploading…';
+    var labelSpan = label && label.querySelector('span');
+    var labelText = labelSpan ? labelSpan.textContent : '';
+    if (labelSpan) labelSpan.textContent = 'Uploading…';
     try {
       var path = await storageService.uploadReceipt(refPrefix(tenantOf(r.tenantId)) + 'rent', file);
       var updated = await rentPaymentReportService.setProof(r.id, path);
@@ -4094,7 +4108,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       showToast(labelText === 'Change' ? 'Receipt replaced.' : 'Receipt attached.', 'success');
       render();
     } catch(err){
-      if (label) label.firstChild.textContent = labelText;
+      if (labelSpan) labelSpan.textContent = labelText;
       showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error');
     }
   }
@@ -4108,9 +4122,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   async function confirmRentReport(reportId, btn){
     var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
     if (!r || r.status!=='pending') return;
+    var btnHtml = btn ? btn.innerHTML : '';
     if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
     var saved = await recordPayment(r.tenantId, r.amount, r.paymentDate, 'cash', r.proofPath || null);
-    if (!saved){ if (btn){ btn.disabled = false; btn.textContent = 'Confirm paid'; } return; }
+    if (!saved){ if (btn){ btn.disabled = false; btn.innerHTML = btnHtml; } return; }
     try {
       var updated = await rentPaymentReportService.confirm(r.id, currentProfile ? currentProfile.id : null, saved.id);
       Object.assign(r, updated);
