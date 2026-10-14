@@ -2266,3 +2266,8 @@ button.mt-step{cursor:pointer;}
 .mt-add span{font-size:22px;}
 .mt-add:active{transform:scale(.96);}
 #maintenance-resolution-notes[readonly]{background:transparent;border-style:dashed;}
+
+/* Page stays put behind an open window (see syncPageLock in app.js); swipes scroll the window only. */
+body.page-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden;}
+.modal-overlay{overscroll-behavior:contain;}
+.modal-overlay .modal-card{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom;}

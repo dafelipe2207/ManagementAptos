@@ -14832,7 +14832,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     updateNotifNavBadge();
     hydrateLazyThumbs();
     refreshRecordActors();
-    if (!preserveScroll) window.scrollTo(0,0);
+    if (!preserveScroll){
+      if (pageLockY !== null) pageLockY = 0; // a window is closing onto a new page: land at its top
+      window.scrollTo(0,0);
+    }
   }
 
   /** "Add" buttons (+ Add property, + Add tenant, Add bill, + Schedule, + Add room…) in page and
@@ -16113,6 +16116,35 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  refresh to wipe out what someone is typing in the middle of filling out a form. */
   function anyModalOpen(){
     return Array.prototype.some.call(document.querySelectorAll('.modal-overlay'), function(el){ return !el.hidden; });
+  }
+  /* While any window (modal) is open the page behind it stays still. On iPhone, overflow:hidden on
+   * the body isn't enough — a swipe still scrolled the page under the window instead of the window
+   * itself — so the body is pinned in place (position:fixed at the current scroll offset) and put
+   * back exactly where it was when the last window closes. Watches every .modal-overlay's
+   * `hidden` attribute, so every window in the app gets this without changes to its own code. */
+  var pageLockY = null;
+  function syncPageLock(){
+    var open = anyModalOpen();
+    var b = document.body;
+    if (open && pageLockY === null){
+      pageLockY = window.scrollY || window.pageYOffset || 0;
+      b.style.top = (-pageLockY) + 'px';
+      b.classList.add('page-locked');
+    } else if (!open && pageLockY !== null){
+      var y = pageLockY;
+      pageLockY = null;
+      b.classList.remove('page-locked');
+      b.style.top = '';
+      window.scrollTo(0, y);
+    }
+  }
+  if (window.MutationObserver){
+    new MutationObserver(function(muts){
+      for (var i = 0; i < muts.length; i++){
+        var t = muts[i].target;
+        if (t.classList && t.classList.contains('modal-overlay')){ syncPageLock(); return; }
+      }
+    }).observe(document.body, { subtree:true, attributes:true, attributeFilter:['hidden'] });
   }
 
   var isRefreshingData = false;
