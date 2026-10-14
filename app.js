@@ -829,7 +829,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function fmtDateCached(cache, fmt, iso){
     var hit = cache.get(iso);
     if (hit !== undefined) return hit;
-    var d = new Date(iso + 'T00:00:00');
+    var str = String(iso == null ? '' : iso);
+    // A full timestamp (e.g. approved_at) is read as-is; a plain YYYY-MM-DD as a local day.
+    var d = str.length > 10 ? new Date(str.replace(' ', 'T')) : new Date(str + 'T00:00:00');
     var out = isNaN(d) ? 'Invalid Date' : fmt.format(d);
     if (cache.size > 5000) cache.clear();
     cache.set(iso, out);
@@ -1525,10 +1527,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     tenants.forEach(function(t){
       if (t.isActive === false || tenantHasMovedOut(t)) return; // already gone — not on the dashboard
       var date = t.actualMoveOutDate || t.expectedMoveOutDate || null;
-      var settlement = moveOutSettlementOf(t.id);
-      if (settlement && settlement.status === 'completed') settlement = null;
+      var settlement = moveOutSettlementOf(t.id), done = null;
+      if (settlement && settlement.status === 'completed'){ done = settlement; settlement = null; }
       if (!date && !settlement) return;
-      items.push({ t: t, date: date, settlement: settlement });
+      items.push({ t: t, date: date, settlement: settlement, done: done });
     });
     return items.sort(function(a,b){ return (a.date||'9999').localeCompare(b.date||'9999'); });
   }
@@ -1555,15 +1557,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
       var refund = null;
       if (s && s.status === 'pending_approval') refund = s.bondRefund;
-      else if (s && s.status === 'completed' && bond) refund = round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)); // settled: payments recorded since count
+      else if (it.done && bond) refund = round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)); // settled: payments recorded since count
       else { var est = computeMoveOutEstimate(t); if (est && est.hasBond) refund = est.estimatedReturn; }
+      if (it.done){
+        facts.push(['✅', 'Settled']);
+        var es = moveOutEstimatesStatus(t);
+        if (es && es.pending.length) facts.push(['⏳', es.pending.length + ' bill' + (es.pending.length === 1 ? '' : 's') + ' to arrive']);
+        if (es && es.recs.some(function(r){ return r.real.some(function(x){ return x.diff != null; }); }))
+          facts.push(['🧾', (Math.abs(es.diff) < 0.005 ? 'As estimated' : (es.diff > 0 ? '+' : '−') + money(Math.abs(es.diff)) + ' vs est.') + (es.toApply ? ' · apply' : '')]);
+      }
       var st = s && statusLabel[s.status];
       var go = 'location.hash=\'#/tenants/'+t.id+'\'';
       return '<div class="row mo-row" role="link" tabindex="0" style="cursor:pointer;" onclick="'+go+'" onkeydown="if(event.key===\'Enter\'&&event.target===this){'+go+';}">'+
         '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
         '<div class="meta">'+esc(prop ? prop.name : '')+(room ? ' • '+esc(room.name) : '')+'</div>'+
         '<div class="facts">'+facts.map(function(f){ return '<span><i>'+f[0]+'</i>'+f[1]+'</span>'; }).join('')+
-          (s ? '' : '<span class="fact-muted">Not started</span>')+'</div>'+
+          (s || it.done ? '' : '<span class="fact-muted">Not started</span>')+'</div>'+
         '</div>'+
         '<div class="amount" style="text-align:right;">'+when+
           (st ? '<br/>'+badge(st[0], st[1]) : '')+
@@ -2552,7 +2561,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** One bond line's value: deductions in red (−$x); a balance payment in green (+$x) with its receipt. */
   function bondLineValueHtml(d, canEdit, tenantId){
     if (!isBondBalancePayment(d)) return '<span class="v" style="color:var(--status-overdue);">-'+money(d.amount)+'</span>';
-    var rc = d.receiptPath
+    var rc = d.sourceType !== 'tenant_payment' ? '' : d.receiptPath
       ? '<button type="button" class="rcpt-btn has" style="width:30px;height:30px;" title="View receipt" aria-label="View receipt" onclick="viewReceipt(\'receipts\',\''+d.receiptPath+'\')">'+RECEIPT_VIEW_ICON+'</button>'
       : (canEdit ? '<button type="button" class="rcpt-btn" style="width:30px;height:30px;" title="Attach the transfer receipt" aria-label="Attach the transfer receipt" onclick="pickBondPaymentReceipt(\''+tenantId+'\',\''+esc(d.id||'')+'\')">'+RECEIPT_UPLOAD_ICON+'</button>' : '');
     return '<span class="v" style="display:inline-flex;gap:6px;align-items:center;color:var(--status-paid);">+'+money(-d.amount)+rc+'</span>';
@@ -2643,11 +2652,142 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var discounts = (bond.discounts || []).map(function(d){ return (d.id && d.id === target.entryId) ? Object.assign({}, d, { receiptPath: path }) : d; });
       var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts }));
       Object.assign(bond, saved);
-      showToast(labelText === 'Change' ? 'Receipt replaced.' : 'Receipt attached.', 'success');
+      showToast('Receipt attached.', 'success');
       render();
     } catch(err){ showToast('Could not attach the receipt. ' + friendlyErrorMessage(err), 'error'); }
   }
   window.pickBondPaymentReceipt = pickBondPaymentReceipt;
+
+  /* ---------- Estimated move-out bills vs the real bills when they arrive ----------
+   * An approved settlement deducts ESTIMATED bills for the days not billed yet (gapFrom..gapTo).
+   * When the real bill for (part of) those days arrives, the tenant's real share is compared with
+   * the estimate for the same days: the difference says whether the estimate was more or less.
+   * "Apply" squares it up on the bond (one adjustment line per real bill) and marks the tenant's
+   * real share as paid from the bond, so it never shows as owed twice. */
+  function countOccupiedDays(t, from, to){
+    var n = 0;
+    for (var d = from; d <= to; d = stepDateIso(d, 1)) if (tenantOccupiesDay(t, d)) n++;
+    return n;
+  }
+  function estimateReconciliation(t, line, bond){
+    if (!line || line.sourceType !== 'estimate' || line.includedInRent || !line.gapFrom || !line.gapTo) return null;
+    var days = line.gapDays || countOccupiedDays(t, line.gapFrom, line.gapTo) || 1;
+    var perDay = (line.amount || 0) / days;
+    var adjust = (bond && bond.discounts || []).filter(function(d){ return d.sourceType === 'estimate_adjust' && d.estimateSourceId === line.sourceId; });
+    var real = bills.filter(function(b){
+      return b.propertyId === t.propertyId && (b.billType || 'other') === line.billType && b.billingPeriodStart && b.billingPeriodEnd &&
+        // Only bills for the not-yet-billed days: they start on/after the gap (earlier ones were
+        // already known — and charged — when the settlement was approved).
+        b.billingPeriodStart >= line.gapFrom && b.billingPeriodStart <= line.gapTo &&
+        !(bond && bond.discounts || []).some(function(d){ return d.sourceType === 'bill' && d.billId === b.id; });
+    }).sort(function(a,b){ return a.billingPeriodStart.localeCompare(b.billingPeriodStart); }).map(function(b){
+      var from = b.billingPeriodStart > line.gapFrom ? b.billingPeriodStart : line.gapFrom;
+      var to = b.billingPeriodEnd < line.gapTo ? b.billingPeriodEnd : line.gapTo;
+      var covered = countOccupiedDays(t, from, to);
+      var alloc = (b.allocations || []).find(function(a){ return a.tenantId === t.id; });
+      var estPart = round2(perDay * covered);
+      var applied = adjust.find(function(d){ return d.billId === b.id; });
+      // Already paid by the tenant some other way → the whole estimate for those days was extra.
+      var paidElsewhere = !!(alloc && alloc.paid && alloc.paidVia !== 'bond_deduction');
+      var realAmt = alloc ? round2(alloc.amount || 0) : null;
+      var diff = realAmt == null ? null : round2((paidElsewhere ? 0 : realAmt) - estPart);
+      return { bill: b, from: from, to: to, days: covered, alloc: alloc, real: realAmt, est: estPart, diff: diff, paidElsewhere: paidElsewhere, applied: applied || null };
+    });
+    // Days of the estimate no real bill covers yet.
+    var pendFrom = null, pendTo = null, pendDays = 0;
+    for (var d = line.gapFrom; d <= line.gapTo; d = stepDateIso(d, 1)){
+      if (!tenantOccupiesDay(t, d)) continue;
+      if (real.some(function(r){ return d >= r.from && d <= r.to; })) continue;
+      pendDays++; if (!pendFrom) pendFrom = d; pendTo = d;
+    }
+    return { line: line, perDay: perDay, real: real, pendingDays: pendDays, pendingFrom: pendFrom, pendingTo: pendTo, pendingEst: round2(perDay * pendDays) };
+  }
+  /** Summary for a tenant's completed settlement: which estimated bills are still to arrive and the
+   *  difference (real − estimate) of the ones that already did. */
+  function moveOutEstimatesStatus(t){
+    var s = moveOutSettlementOf(t.id), bond = bondOf(t.id);
+    if (!s || s.status !== 'completed' || !bond) return null;
+    var recs = (bond.discounts || []).filter(function(d){ return d.settlementId === s.id && d.sourceType === 'estimate'; })
+      .map(function(l){ return estimateReconciliation(t, l, bond); }).filter(Boolean);
+    if (!recs.length) return null;
+    var pending = recs.filter(function(r){ return r.pendingDays > 0; });
+    var diff = 0, toApply = 0;
+    recs.forEach(function(r){ r.real.forEach(function(x){ if (x.diff != null){ diff += x.diff; if (!x.applied) toApply++; } }); });
+    return { recs: recs, pending: pending, diff: round2(diff), toApply: toApply };
+  }
+  function diffText(diff){
+    if (diff == null) return '';
+    if (Math.abs(diff) < 0.005) return 'same as estimated';
+    return money(Math.abs(diff)) + (diff > 0 ? ' more than estimated' : ' less than estimated');
+  }
+  /** One line on top of a completed settlement: bills still to arrive + real-vs-estimate so far. */
+  function moveOutEstimatesSummaryHtml(t){
+    var st = moveOutEstimatesStatus(t);
+    if (!st) return '';
+    var parts = [];
+    if (st.pending.length) parts.push('⏳ Still to arrive: ' + st.pending.map(function(r){
+      return esc(billTypeLabel(r.line.billType)) + ' (' + shortDate(r.pendingFrom) + (r.pendingFrom === r.pendingTo ? '' : ' – ' + shortDate(r.pendingTo)) + ')';
+    }).join(', '));
+    else parts.push('✓ All real bills arrived');
+    var arrived = st.recs.some(function(r){ return r.real.some(function(x){ return x.diff != null; }); });
+    if (arrived) parts.push('Real vs estimate: <b style="color:'+(st.diff > 0.004 ? 'var(--status-overdue)' : (st.diff < -0.004 ? 'var(--status-paid)' : 'inherit'))+';">'+diffText(st.diff)+'</b>'+
+      (st.toApply ? ' · '+st.toApply+' to apply' : ''));
+    return '<div style="font-size:12px;color:var(--text-dim);background:var(--surface-2, rgba(127,127,127,.08));border-radius:10px;padding:8px 10px;margin:8px 0;line-height:1.5;">'+parts.join('<br>')+'</div>';
+  }
+  function estimateReconciliationHtml(t, r, canEdit){
+    var l = r.line, sub = 'font-size:11.5px;color:var(--text-faint);';
+    var h = '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+' bill '+
+      '<span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
+      '<br><span style="'+sub+'">Charged '+esc(gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo))+'</span></span>'+
+      '<span class="v" style="color:var(--status-overdue);">-'+money(l.amount)+'</span></div>';
+    r.real.forEach(function(x){
+      var period = shortDate(x.from) + (x.from === x.to ? '' : ' – ' + shortDate(x.to)) + ' (' + x.days + 'd)';
+      var txt, color = 'var(--text-dim)';
+      if (x.real == null) txt = '🧾 Real bill arrived · '+period+' — not split yet';
+      else {
+        color = x.diff > 0.004 ? 'var(--status-overdue)' : (x.diff < -0.004 ? 'var(--status-paid)' : 'var(--text-dim)');
+        txt = '🧾 Real bill · '+period+': '+money(x.real)+(x.paidElsewhere ? ' (already paid by the tenant)' : '')+' vs est. '+money(x.est)+' → <b style="color:'+color+';">'+diffText(x.diff)+'</b>';
+      }
+      h += '<div style="'+sub+'margin:-2px 0 6px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span>'+txt+'</span>'+
+        (x.applied ? '<span class="badge paid" style="font-size:10.5px;">✓ Applied '+(x.applied.amount >= 0 ? '−' : '+')+money(Math.abs(x.applied.amount))+'</span>'
+          : (canEdit && x.diff != null ? '<button type="button" class="mini-btn" style="padding:3px 9px;font-size:11.5px;" title="Adjust the bond by the difference and mark the real share as paid from the bond" onclick="applyEstimateDifference(\''+t.id+'\',\''+esc(l.sourceId)+'\',\''+x.bill.id+'\')">Apply</button>' : ''))+
+        '</div>';
+    });
+    if (r.pendingDays > 0){
+      h += '<div style="'+sub+'margin:-2px 0 6px 10px;">⏳ Waiting for the real bill · '+shortDate(r.pendingFrom)+(r.pendingFrom === r.pendingTo ? '' : ' – '+shortDate(r.pendingTo))+
+        ' ('+r.pendingDays+'d · est. '+money(r.pendingEst)+')</div>';
+    }
+    return h;
+  }
+  async function applyEstimateDifference(tenantId, estimateSourceId, billId){
+    var t = tenantOf(tenantId), bond = bondOf(tenantId), s = moveOutSettlementOf(tenantId);
+    if (!t || !bond || !s) return;
+    var line = (bond.discounts || []).find(function(d){ return d.settlementId === s.id && d.sourceId === estimateSourceId; });
+    var r = estimateReconciliation(t, line, bond);
+    var x = r && r.real.find(function(y){ return y.bill.id === billId; });
+    if (!x || x.diff == null || x.applied) return;
+    openConfirmModal('Apply the real '+billTypeLabel(line.billType)+' bill',
+      'Real share '+money(x.real)+' vs estimate '+money(x.est)+' for '+shortDate(x.from)+' – '+shortDate(x.to)+' ('+diffText(x.diff)+'). The bond is adjusted by '+
+      (x.diff >= 0 ? '+' : '−')+money(Math.abs(x.diff))+(x.paidElsewhere ? '.' : ' and the tenant\'s share of this bill is marked paid from the bond.'),
+      function(){ return doApplyEstimateDifference(t, bond, s, line, x, estimateSourceId, billId, tenantId); });
+  }
+  async function doApplyEstimateDifference(t, bond, s, line, x, estimateSourceId, billId, tenantId){
+    try {
+      if (x.alloc && !x.alloc.paid){
+        var marked = await markAllocationPaid(billId, tenantId, TODAY, 'bond_deduction', true);
+        if (!marked) return { blocked: true, message: 'Could not mark the tenant\'s share of this bill as paid. Try again.' };
+      }
+      var entry = { id: 'adj-' + Date.now().toString(36), label: billTypeLabel(line.billType) + ' bill — real vs estimate (' + shortDate(x.from) + ' – ' + shortDate(x.to) + ')',
+        amount: x.diff, category: 'bill', sourceType: 'estimate_adjust', sourceId: 'adj-' + billId, estimateSourceId: estimateSourceId, billId: billId,
+        realAmount: x.real, estimatedAmount: x.est, settlementId: s.id };
+      var discounts = (bond.discounts || []).concat([entry]);
+      var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts, deduction: round2((bond.deduction || 0) + x.diff) }));
+      Object.assign(bond, saved);
+      showToast('Bond adjusted: ' + diffText(x.diff) + '.', 'success');
+      render();
+    } catch(err){ return { blocked: true, message: 'Could not apply the difference. ' + friendlyErrorMessage(err) }; }
+  }
+  window.applyEstimateDifference = applyEstimateDifference;
 
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
 
@@ -2685,12 +2825,17 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<div class="field-row"><span class="k">Status</span><span class="v">Move-Out Completed</span></div>'+
         '<div class="field-row"><span class="k">Approved</span><span class="v">'+fullDate(settlement.approvedAt)+'</span></div>'+
         (bond ? '<div class="field-row"><span class="k">Original bond</span><span class="v">'+money(bond.amountPaid)+'</span></div>' : '')+
-        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span>'+bondLineValueHtml(d, !isViewer(), t.id)+'</div>'; }).join('')+
+        moveOutEstimatesSummaryHtml(t)+
+        lines.map(function(d){
+          if (d.sourceType === 'estimate_adjust') return ''; // shown under its estimated bill
+          var rec = estimateReconciliation(t, d, bond);
+          if (rec) return estimateReconciliationHtml(t, rec, !isViewer());
+          return '<div class="field-row"><span class="k">'+esc(d.label)+'</span>'+bondLineValueHtml(d, !isViewer(), t.id)+'</div>';
+        }).join('')+
         (bond ? (bondShortfall(bond) > 0
           ? '<div class="field-row"><span class="k" style="font-weight:650;">Tenant still owes</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(bondShortfall(bond))+'</span></div>'+
             (isViewer() ? '' : '<button class="mini-btn primary" style="margin-top:10px;" onclick="openBondBalancePaymentModal(\''+t.id+'\')">Record balance payment</button>')
-          : '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>'+
-            (isViewer() ? '' : '<button class="mini-btn" style="margin-top:10px;" onclick="openBondBalancePaymentModal(\''+t.id+'\')">Record extra payment</button>')) : '')+ // same basis as computeSettlementTotals: bond.deduction holds the sum of the lines; subtract what was already returned
+          : '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>') : '')+ // same basis as computeSettlementTotals: bond.deduction holds the sum of the lines; subtract what was already returned
         '</div>';
     }
     var candidates = computeCandidateDeductions(t.id);
