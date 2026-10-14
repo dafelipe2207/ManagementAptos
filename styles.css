@@ -2379,3 +2379,13 @@ input, select, textarea, .modal-input, .bills-sort select,
 .proof-nudge .pn-body b{color:var(--text);}
 .proof-nudge .pn-body > b{font-size:13.5px;}
 .proof-nudge .mini-btn{align-self:flex-start;}
+
+/* Photo viewer: download button next to close */
+.lightbox-download{position:fixed;top:14px;right:64px;z-index:2;width:40px;height:40px;border-radius:50%;
+  background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;padding:0;}
+.lightbox-download svg{width:19px;height:19px;}
+@media (pointer:coarse){ .lightbox-download{width:44px;height:44px;right:68px;} }
+.mt-dl{display:inline-block;margin-top:8px;font-size:12.5px;}
+.thumbs-dl{width:56px;height:56px;border-radius:6px;border:1px dashed var(--text-faint);background:transparent;color:var(--text-dim);
+  font:inherit;font-size:12px;font-weight:700;cursor:pointer;vertical-align:top;}

@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=267">
+<link rel="modulepreload" href="app.js?v=268">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -58,7 +58,7 @@
 <link rel="modulepreload" href="services/roomIncludedBillService.js">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=107">
+<link rel="stylesheet" href="styles.css?v=109">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -1262,6 +1262,7 @@
        Opened via openLightboxForThumb()/openLightbox() in app.js — never rebuilt by render(). -->
   <div class="lightbox-overlay" id="lightbox-overlay" role="dialog" aria-modal="true" aria-label="Image viewer" hidden onclick="closeLightboxOnBackdrop(event)">
     <button class="lightbox-close" id="lightbox-close" type="button" aria-label="Close" onclick="closeLightbox()">&times;</button>
+    <button class="lightbox-download" id="lightbox-download" type="button" aria-label="Download photo" title="Download photo" onclick="lightboxDownload()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></button>
     <button class="lightbox-nav-btn lightbox-prev" id="lightbox-prev" type="button" aria-label="Previous image" onclick="lightboxPrev()">&#8249;</button>
     <button class="lightbox-nav-btn lightbox-next" id="lightbox-next" type="button" aria-label="Next image" onclick="lightboxNext()">&#8250;</button>
     <div class="lightbox-content" id="lightbox-content" onpointerdown="lightboxPointerDown(event)" onpointerup="lightboxPointerUp(event)">
@@ -1331,6 +1332,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=267"></script>
+<script type="module" src="app.js?v=268"></script>
 </body>
 </html>

@@ -10343,7 +10343,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       grid.appendChild(add);
     }
     if (!grid.children.length) grid.innerHTML = '<p class="mt-hint" style="margin:0;">No photos yet.</p>';
+    var saved = mtExisting(mtStage);
+    var dl = document.getElementById('mt-photo-dl');
+    if (!dl){ dl = document.createElement('div'); dl.id = 'mt-photo-dl'; grid.parentNode.insertBefore(dl, grid.nextSibling); }
+    dl.innerHTML = saved.length ? '<button type="button" class="text-link mt-dl" onclick="mtDownloadStage()">⬇︎ Download '+(saved.length === 1 ? 'photo' : 'all '+saved.length+' photos')+'</button>' : '';
   }
+  window.mtDownloadStage = function(){
+    downloadStoredFiles(mtExisting(mtStage).map(function(p){ return { bucket:'maintenance-photos', path:p }; }));
+  };
   window.mtRemoveNew = function(stage, i){ mtNew[stage].splice(i, 1); mtRenderPhotos(); };
   window.mtPick = function(kind, v){
     if (kind === 'category'){ document.getElementById('maintenance-category').value = v; mtRenderChips(); }
@@ -10630,8 +10637,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var groupId = 'lbg' + (++lightboxGroupSeq);
     return photoPaths.map(function(path, idx){
       return '<img class="lazy-thumb" data-bucket="'+esc(bucket)+'" data-path="'+esc(path)+'" data-group="'+groupId+'" data-index="'+idx+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);" />';
-    }).join('');
+    }).join('') +
+      // Download these photos (all of them when there are several; one opens the viewer anyway).
+      (photoPaths.length > 1 ? '<button type="button" class="thumbs-dl" title="Download all photos" aria-label="Download all '+photoPaths.length+' photos" onclick="event.stopPropagation();downloadThumbGroup(\''+groupId+'\')">⬇︎ '+photoPaths.length+'</button>' : '');
   }
+  window.downloadThumbGroup = function(groupId){ downloadStoredFiles(lightboxCollectGroup(groupId)); };
   function cleaningPhotoThumbsHtml(photoPaths){ return photoThumbsHtml('cleaning-photos', photoPaths); }
 
   function renderCleaning(){
@@ -15163,7 +15173,55 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.closeLightbox = closeLightbox;
 
-  var LIGHTBOX_NON_CLOSING_IDS = ['lightbox-img','lightbox-close','lightbox-prev','lightbox-next','lightbox-counter'];
+  /* ---------- Download photos / files from reports ----------
+   * Every photo in the app (maintenance, inspections, cleaning, receipts) can be saved. On a phone
+   * the files go to the share sheet ("Save Image" / "Save to Files"); elsewhere they download. */
+  function fileNameFromPath(path, fallback){
+    var n = String(path || '').split('/').pop() || '';
+    n = n.replace(/^\d{10,}-/, ''); // drop the upload timestamp prefix
+    return n || fallback || 'photo.jpg';
+  }
+  async function fetchStoredFile(bucket, path){
+    var url = await getCachedSignedUrl(bucket, path, 600);
+    var res = await fetch(url);
+    if (!res.ok) throw new Error('Download failed (' + res.status + ')');
+    var blob = await res.blob();
+    return new File([blob], fileNameFromPath(path), { type: blob.type || 'image/jpeg' });
+  }
+  function saveFilesLocally(files){
+    files.forEach(function(f, i){
+      setTimeout(function(){
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(f); a.download = f.name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+      }, i * 350); // a short gap so the browser doesn't drop multiple downloads
+    });
+  }
+  async function downloadStoredFiles(items){
+    if (!items || !items.length) return;
+    showToast(items.length === 1 ? 'Preparing the photo…' : 'Preparing ' + items.length + ' photos…', 'info');
+    var files = [];
+    for (var i = 0; i < items.length; i++){
+      try { files.push(await fetchStoredFile(items[i].bucket, items[i].path)); }
+      catch(err){ console.warn('download', err); }
+    }
+    if (!files.length){ showToast('Could not download the photos — try again.', 'error'); return; }
+    var phone = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+    if (phone && navigator.canShare && navigator.canShare({ files: files })){
+      try { await navigator.share({ files: files }); return; }
+      catch(err){ if (err && err.name === 'AbortError') return; }
+    }
+    saveFilesLocally(files);
+  }
+  window.downloadStoredFiles = downloadStoredFiles;
+  function lightboxDownload(){
+    var item = lightboxItems[lightboxIndex];
+    if (item) downloadStoredFiles([item]);
+  }
+  window.lightboxDownload = lightboxDownload;
+
+  var LIGHTBOX_NON_CLOSING_IDS = ['lightbox-img','lightbox-close','lightbox-prev','lightbox-next','lightbox-counter','lightbox-download'];
   var lightboxSuppressNextClick = false; // set right after a swipe/drag navigates, so the trailing click doesn't also close the viewer
   function closeLightboxOnBackdrop(e){
     if (lightboxSuppressNextClick){ lightboxSuppressNextClick = false; return; }
