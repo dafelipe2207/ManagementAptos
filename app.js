@@ -1345,7 +1345,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var collectCount = needs.filter(function(i){ return i.type === 'collect'; }).length;
     var sentCount = needs.filter(function(i){ return i.type === 'collect' && i.sentToday; }).length;
     var needsHtml = '<div class="card needs-card"><h2>Needs attention'+(needs.length?' <span class="count-pill">'+needs.length+'</span>':'')+'</h2>' +
-      (collectCount ? '<p class="modal-hint" style="margin:-4px 0 8px;">To collect today: '+collectCount+' tenant'+(collectCount===1?'':'s')+(sentCount ? ' · '+sentCount+' already messaged' : '')+'. Tap WhatsApp to send each one their statement.</p>' : '') +
+      (collectCount ? '<p class="modal-hint" style="margin:-4px 0 8px;">💬 '+collectCount+' to collect today'+(sentCount ? ' · ✓ '+sentCount+' messaged' : '')+'</p>' : '') +
       (needs.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing needs attention right now.</p>'
         : needsShown.map(function(item){
@@ -1423,7 +1423,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '</div></div>';
     }).join('');
     return '<div class="card needs-card"><h2>🛠️ Damage reported <span class="count-pill">'+open.length+'</span></h2>'+
-      (fresh ? '<p class="modal-hint" style="margin:-4px 0 8px;">'+fresh+' new report'+(fresh===1?'':'s')+' not looked at yet.</p>' : '')+
+      (fresh ? '<p class="modal-hint" style="margin:-4px 0 8px;">🆕 '+fresh+' new</p>' : '')+
       rows+
       (open.length > DASH_DAMAGE_LIMIT ? '<button type="button" class="show-more-btn" onclick="location.hash=\'#/maintenance\'">See all '+open.length+' in Maintenance</button>' : '')+
       '</div>';
@@ -1457,31 +1457,33 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var d = daysBetween(TODAY, it.date);
         when = d === 0 ? badge('overdue', 'Today') : badge(d <= 14 ? 'due' : 'neutral', 'In '+d+' day'+(d===1?'':'s'));
       }
-      var details = [];
-      if (it.date) details.push((t.actualMoveOutDate ? 'Move-out ' : 'Expected ') + fullDate(it.date));
-      if (s){
-        var by = s.startedByRole === 'tenant' ? 'Tenant gave notice' : 'Started by admin';
-        var startedDay = (s.startedAt || '').slice(0,10);
-        if (startedDay) by += ' on ' + shortDate(startedDay) + (it.date && s.startedByRole === 'tenant' ? ' ('+daysBetween(startedDay, it.date)+' days\' notice)' : '');
-        details.push(by);
-      } else details.push('Move-out process not started');
+      // Short facts with icons instead of a sentence per line.
+      var facts = [];
+      if (it.date) facts.push(['📅', (t.actualMoveOutDate ? '' : 'Expected ') + shortDate(it.date)]);
       var bond = bondOf(t.id);
-      if (bond) details.push('Bond '+money(bond.amountPaid)+(bond.heldBy ? ' · held by '+esc(bond.heldBy) : ''));
-      else details.push('No bond on file');
+      facts.push(['🔐', bond ? money(bond.amountPaid) + (bond.heldBy ? ' · ' + esc(bond.heldBy) : '') : 'No bond']);
+      if (s){
+        var startedDay = (s.startedAt || '').slice(0,10);
+        facts.push([s.startedByRole === 'tenant' ? '✉️' : '🛠️', (s.startedByRole === 'tenant' ? 'Notice ' : 'Started ') + (startedDay ? shortDate(startedDay) : '') +
+          (startedDay && it.date && s.startedByRole === 'tenant' ? ' (' + daysBetween(startedDay, it.date) + 'd)' : '')]);
+      }
       var refund = null;
       if (s && s.status === 'pending_approval') refund = s.bondRefund;
       else { var est = computeMoveOutEstimate(t); if (est && est.hasBond) refund = est.estimatedReturn; }
       var st = s && statusLabel[s.status];
       var go = 'location.hash=\'#/tenants/'+t.id+'\'';
-      return '<div class="row" role="link" tabindex="0" style="cursor:pointer;" onclick="'+go+'" onkeydown="if(event.key===\'Enter\'&&event.target===this){'+go+';}">'+
+      return '<div class="row mo-row" role="link" tabindex="0" style="cursor:pointer;" onclick="'+go+'" onkeydown="if(event.key===\'Enter\'&&event.target===this){'+go+';}">'+
         '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
         '<div class="meta">'+esc(prop ? prop.name : '')+(room ? ' • '+esc(room.name) : '')+'</div>'+
-        details.map(function(x){ return '<div class="meta" style="white-space:normal;overflow:visible;">'+x+'</div>'; }).join('')+
-        moveOutAdminActionsHtml(t, true)+'</div>'+
+        '<div class="facts">'+facts.map(function(f){ return '<span><i>'+f[0]+'</i>'+f[1]+'</span>'; }).join('')+
+          (s ? '' : '<span class="fact-muted">Not started</span>')+'</div>'+
+        '</div>'+
         '<div class="amount" style="text-align:right;">'+when+
           (st ? '<br/>'+badge(st[0], st[1]) : '')+
-          (refund != null ? '<div class="meta" style="margin-top:4px;">'+(refund < 0 ? '<span style="color:var(--status-overdue);">Tenant owes '+money(-refund)+'</span>' : 'Est. refund '+money(refund))+'</div>' : '')+
-        '</div></div>';
+          (refund != null ? '<div class="mo-money'+(refund < 0 ? ' owes' : '')+'">'+(refund < 0 ? 'Owes '+money(-refund) : 'Refund '+money(refund))+'</div>' : '')+
+        '</div>'+
+        moveOutAdminActionsHtml(t, true)+
+        '</div>';
     }
     return '<div class="card" id="dash-moveouts"><h2>Move-outs'+(items.length ? ' ('+items.length+')' : '')+'</h2>'+
       (items.length ? items.map(rowHtml).join('') : '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No move-outs coming up.</p>')+
@@ -3283,16 +3285,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var st = stop ? 'event.stopPropagation();event.preventDefault();' : '';
     // Settlement approved: dates can't change any more, but the final figures can still be sent.
     if (s && s.status === 'completed' && bondOf(t.id)){
-      return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
-        '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send settlement</button></div>';
+      return '<div class="act-row">'+
+        '<button type="button" class="mini-btn icon-label-btn" title="Send the move-out estimate/settlement" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Settlement</button></div>';
     }
     if (tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
     if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
-    return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">'+
-      '<button type="button" class="mini-btn" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Change date</button>'+
-      '<button type="button" class="mini-btn danger" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel move-out</button>'+
+    return '<div class="act-row">'+
+      '<button type="button" class="mini-btn" title="Change move-out date" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Date</button>'+
+      '<button type="button" class="mini-btn soft-danger" title="Cancel move-out" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel</button>'+
       ((!s || s.status === 'in_progress') && (t.actualMoveOutDate || t.expectedMoveOutDate)
-        ? '<button type="button" class="mini-btn icon-label-btn" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send estimate</button>' : '')+
+        ? '<button type="button" class="mini-btn icon-label-btn" title="Send the move-out estimate/settlement" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Estimate</button>' : '')+
       '</div>';
   }
 
@@ -16993,7 +16995,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     [/^mark .*(paid|completed)|^confirm|^i paid|^i made this payment|^mark read|^pay$/, 'check'],
     [/^partial/, 'half'], [/^record .*payment|^add payment/, 'money'],
     [/^re-?allocate|^allocate/, 'split'],
-    [/^change date|schedule|^today|^date:/, 'calendar'],
+    [/^change date|schedule|^today|^date:|^date$/, 'calendar'],
     [/^edit|^change\b/, 'edit'],
     [/whatsapp|^send/, 'send'],
     [/^copy/, 'copy'],

@@ -2301,3 +2301,30 @@ input, select, textarea, .modal-input, .bills-sort select,
     max-height:calc(100dvh - 24px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px)) !important;
     padding-bottom:17px !important;}
 }
+
+/* ── Less clutter, app-wide ────────────────────────────────────────────────────────────────
+   Buttons inside cards and lists are compact pills that sit side by side (they used to be full
+   height and stack one per line). Destructive actions in lists are outlined red, not solid, so
+   they don't dominate. Windows (.modal-card) keep their full-size buttons. */
+.card .mini-btn:not(.modal-card .mini-btn){min-height:36px;padding:0 13px;font-size:12.5px;gap:5px;}
+.card .mini-btn .btn-ic{width:15px;height:15px;}
+@media (pointer:coarse){ .card .mini-btn:not(.modal-card .mini-btn){min-height:38px !important;} }
+.act-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;width:100%;}
+.act-row .mini-btn{flex:0 0 auto;}
+.row .mini-btn.danger, .act-row .mini-btn.danger, .card .mini-btn.soft-danger{
+  background:transparent !important;color:var(--status-overdue) !important;
+  border:1px solid color-mix(in srgb, var(--status-overdue) 40%, var(--border)) !important;}
+.row .mini-btn.danger:hover, .act-row .mini-btn.danger:hover{background:color-mix(in srgb, var(--status-overdue) 10%, transparent) !important;}
+/* Short facts with icons ("📅 15 Oct · 🔐 $400 · Daniel") instead of a sentence per line. */
+.facts{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px;font-size:12px;color:var(--text-dim);}
+.facts span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;}
+.facts i{font-style:normal;font-size:12px;}
+.facts .fact-muted{color:var(--text-faint);}
+.mo-row{align-items:flex-start;}
+.mo-row .act-row{order:3;}
+.mo-money{font-size:13px;font-weight:700;margin-top:6px;color:var(--status-paid);white-space:nowrap;}
+.mo-money.owes{color:var(--status-overdue);}
+/* Phones: the explanatory sentence under each page title is hidden — the title says enough. */
+@media (max-width:640px){ .page-sub{display:none;} }
+.mo-row .act-row{flex-wrap:nowrap;}
+.mo-row .act-row .mini-btn{flex:1 1 0;min-width:0;padding:0 8px;}
