@@ -1555,6 +1555,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       }
       var refund = null;
       if (s && s.status === 'pending_approval') refund = s.bondRefund;
+      else if (s && s.status === 'completed' && bond) refund = round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)); // settled: payments recorded since count
       else { var est = computeMoveOutEstimate(t); if (est && est.hasBond) refund = est.estimatedReturn; }
       var st = s && statusLabel[s.status];
       var go = 'location.hash=\'#/tenants/'+t.id+'\'';
@@ -2567,7 +2568,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var bondPaymentTenantId = null;
   function openBondBalancePaymentModal(tenantId){
     var bond = bondOf(tenantId), owed = bondShortfall(bond);
-    if (!bond || owed <= 0) return;
+    if (!bond){ showToast('This tenant has no bond on file — record the payment from Payments instead.', 'info'); return; }
     bondPaymentTenantId = tenantId;
     var t = tenantOf(tenantId);
     var m = document.getElementById('bond-payment-modal');
@@ -2578,8 +2579,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     m.innerHTML = '<div class="card modal-card" style="max-width:420px;">'+
       '<h2 class="modal-title">Record balance payment</h2>'+
-      '<p class="modal-sub">'+esc(t ? t.fullName : '')+' owes '+money(owed)+' beyond the bond. Record the transfer they made.</p>'+
-      '<div class="form-row"><label for="bond-pay-amount">Amount paid</label><input id="bond-pay-amount" type="number" min="0" step="0.01" value="'+owed+'" /></div>'+
+      '<p class="modal-sub">'+esc(t ? t.fullName : '')+(owed > 0 ? ' owes '+money(owed)+' beyond the bond. Record the transfer they made (rent, bills, or part of it).'
+        : ' doesn\'t owe anything beyond the bond right now — record an extra payment they made anyway.')+'</p>'+
+      '<div class="form-row"><label for="bond-pay-amount">Amount paid</label><input id="bond-pay-amount" type="number" min="0" step="0.01" inputmode="decimal" value="'+(owed > 0 ? owed : '')+'" /></div>'+
+      '<div class="form-row"><label for="bond-pay-note">What it was for (optional)</label><input id="bond-pay-note" type="text" maxlength="120" placeholder="e.g. Final bills" /></div>'+
       '<div class="form-row"><label for="bond-pay-date">Date paid</label><input id="bond-pay-date" type="date" value="'+TODAY+'" /></div>'+
       '<div class="form-row"><label for="bond-pay-file">Transfer receipt (optional)</label><input id="bond-pay-file" type="file" accept="image/*,application/pdf" /></div>'+
       '<p id="bond-pay-error" class="form-error" hidden style="color:var(--status-overdue);font-size:12.5px;"></p>'+
@@ -2602,7 +2605,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var t = tenantOf(bondPaymentTenantId);
       var receiptPath = file ? await storageService.uploadReceipt(refPrefix(t) + 'bond-balance', file) : null;
       var settlement = moveOutSettlementOf(bondPaymentTenantId);
-      var entry = { id: 'pay-' + Date.now().toString(36), label: 'Balance paid by tenant (' + shortDate(date) + ')', amount: -amount,
+      var noteEl = document.getElementById('bond-pay-note');
+      var note = noteEl ? noteEl.value.trim() : '';
+      var entry = { id: 'pay-' + Date.now().toString(36), label: 'Balance paid by tenant (' + shortDate(date) + ')' + (note ? ' — ' + note : ''), amount: -amount, note: note || undefined,
         category: 'payment', sourceType: 'tenant_payment', paidDate: date, receiptPath: receiptPath, settlementId: settlement ? settlement.id : null };
       var discounts = (bond.discounts || []).concat([entry]);
       var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts, deduction: round2((bond.deduction || 0) - amount) }));
@@ -2684,7 +2689,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (bond ? (bondShortfall(bond) > 0
           ? '<div class="field-row"><span class="k" style="font-weight:650;">Tenant still owes</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(bondShortfall(bond))+'</span></div>'+
             (isViewer() ? '' : '<button class="mini-btn primary" style="margin-top:10px;" onclick="openBondBalancePaymentModal(\''+t.id+'\')">Record balance payment</button>')
-          : '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>') : '')+ // same basis as computeSettlementTotals: bond.deduction holds the sum of the lines; subtract what was already returned
+          : '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)))+'</span></div>'+
+            (isViewer() ? '' : '<button class="mini-btn" style="margin-top:10px;" onclick="openBondBalancePaymentModal(\''+t.id+'\')">Record extra payment</button>')) : '')+ // same basis as computeSettlementTotals: bond.deduction holds the sum of the lines; subtract what was already returned
         '</div>';
     }
     var candidates = computeCandidateDeductions(t.id);
@@ -3370,6 +3376,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Settlement approved: dates can't change any more, but the final figures can still be sent.
     if (s && s.status === 'completed' && bondOf(t.id)){
       return '<div class="act-row">'+
+        '<button type="button" class="mini-btn" title="Record a payment the tenant made (rent, bills…)" onclick="'+st+'openBondBalancePaymentModal(\''+t.id+'\')">Record payment</button>'+
         '<button type="button" class="mini-btn icon-label-btn" title="Send the move-out estimate/settlement" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Settlement</button></div>';
     }
     if (tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
