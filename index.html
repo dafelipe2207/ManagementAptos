@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=264">
+<link rel="modulepreload" href="app.js?v=265">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -58,7 +58,7 @@
 <link rel="modulepreload" href="services/roomIncludedBillService.js">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=104">
+<link rel="stylesheet" href="styles.css?v=105">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -215,6 +215,7 @@
     <div class="card modal-card">
       <h2 class="modal-title">I made this payment</h2>
       <p class="modal-sub" id="payment-report-modal-sub"></p>
+      <div id="payment-report-bills" hidden></div>
       <label class="modal-hint">Payment date</label>
       <input id="payment-report-date" class="modal-input" type="date" />
       <label class="modal-hint">Payment method</label>
@@ -1330,6 +1331,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=264"></script>
+<script type="module" src="app.js?v=265"></script>
 </body>
 </html>

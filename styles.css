@@ -2347,3 +2347,19 @@ input, select, textarea, .modal-input, .bills-sort select,
 .pay-wa-send span{display:flex;flex-direction:column;gap:1px;min-width:0;}
 .pay-wa-send b{font-size:14px;font-weight:700;}
 .pay-wa-send small{font-size:12px;color:var(--text-dim);}
+
+/* Tenant "I made this payment": tick every bill the transfer covers; the total updates live. */
+#payment-report-bills{margin:10px 0 4px;}
+.prp-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;font-weight:700;color:var(--text);margin:0 0 6px;}
+.prp-row{display:flex;align-items:center;gap:10px;padding:10px 12px;margin:0 0 6px;border-radius:14px;border:1.5px solid var(--border);
+  background:var(--bg-elevated);cursor:pointer;}
+.prp-row.on{border-color:var(--accent);background:var(--accent-bg);}
+.prp-row input{width:20px;height:20px;flex:none;margin:0;accent-color:var(--accent);}
+.prp-txt{flex:1;min-width:0;display:flex;flex-direction:column;}
+.prp-txt b{font-size:13.5px;font-weight:650;}
+.prp-txt small{font-size:11.5px;color:var(--text-faint);}
+.prp-amt{font-weight:700;font-size:14px;white-space:nowrap;}
+.prp-total{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:14px;background:#fdecea;color:#b42318;font-size:13px;font-weight:600;}
+.prp-total b{font-size:17px;font-weight:800;}
+:root[data-theme="dark"] .prp-total{background:rgba(180,35,24,.18);color:#ff8a80;}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .prp-total{background:rgba(180,35,24,.18);color:#ff8a80;} }

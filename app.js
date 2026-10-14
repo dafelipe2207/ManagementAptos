@@ -13159,29 +13159,76 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return pageHeader('My Bills', 'Your share of each shared bill — electricity, water, gas, internet and more.') + tenantPaymentRefCardHtml(t) + body;
   }
 
-  /* ---------- Tenant: "I made this payment" report modal ---------- */
-  var paymentReportModalTarget = null; // { allocationId, billId, tenantId }
+  /* ---------- Tenant: "I made this payment" report modal ----------
+   * One transfer often covers several bills: the tenant ticks every bill share it paid, sees the
+   * total of what's ticked update as they go, attaches the screenshot once, and a report (with
+   * that same screenshot) is filed for each ticked share. */
+  var paymentReportModalTarget = null; // { allocationId, billId, tenantId } — the share it was opened from
   var paymentReportModalProofPath = null;
+  var paymentReportPicks = [];         // [{ allocationId, billId, amount, label, sub, on }]
   function openPaymentReportModal(billId, tenantId){
     var b = billOf(billId);
     var alloc = b && b.allocations && b.allocations.find(function(a){ return a.tenantId===tenantId; });
     if (!alloc) return;
     paymentReportModalTarget = { allocationId: alloc.id, billId: billId, tenantId: tenantId };
     paymentReportModalProofPath = null;
-    document.getElementById('payment-report-modal-sub').textContent = (b.provider||'') + ' • ' + money(alloc.amount);
+    // Every other share this tenant still owes (not paid, not already reported and waiting).
+    var picks = [];
+    bills.forEach(function(bb){
+      (bb.allocations || []).forEach(function(a){
+        if (a.tenantId !== tenantId || a.isAdmin || a.paid || !(a.amount > 0.004)) return;
+        if (a.id !== alloc.id && allocationPaymentStatus(a) === 'pending_verification') return;
+        picks.push({ allocationId: a.id, billId: bb.id, amount: round2(a.amount), on: a.id === alloc.id,
+          label: tenantBillName(bb), due: bb.dueDate || '',
+          sub: (bb.billingPeriodStart ? shortDate(bb.billingPeriodStart) + ' – ' + shortDate(bb.billingPeriodEnd) : '') +
+            (bb.dueDate ? (bb.billingPeriodStart ? ' · ' : '') + (bb.dueDate < TODAY ? 'overdue since ' : 'due ') + shortDate(bb.dueDate) : '') });
+      });
+    });
+    picks.sort(function(x, y){ return (x.on === y.on ? 0 : x.on ? -1 : 1) || (x.due || '9999').localeCompare(y.due || '9999'); });
+    paymentReportPicks = picks;
     document.getElementById('payment-report-date').value = TODAY;
     document.getElementById('payment-report-method').value = 'bank_transfer';
     var billTenant = tenantOf(tenantId);
     document.getElementById('payment-report-reference').value = tenantPaymentRef(billTenant);
-    if (tenantPaymentRef(billTenant)) document.getElementById('payment-report-modal-sub').textContent += ' • your reference ' + tenantPaymentRef(billTenant);
-    document.getElementById('payment-report-proof-status').textContent = 'Photo or PDF of the transfer/receipt';
+    document.getElementById('payment-report-proof-status').textContent = 'Photo or PDF of the transfer/receipt — added to every bill you tick';
     document.getElementById('payment-report-modal-error').hidden = true;
+    renderPaymentReportPicks();
     document.getElementById('payment-report-modal').hidden = false;
   }
+  function paymentReportChosen(){ return paymentReportPicks.filter(function(p){ return p.on; }); }
+  function renderPaymentReportPicks(){
+    var box = document.getElementById('payment-report-bills');
+    var chosen = paymentReportChosen();
+    var total = round2(chosen.reduce(function(s2, p){ return s2 + p.amount; }, 0));
+    var t = paymentReportModalTarget && tenantOf(paymentReportModalTarget.tenantId);
+    var ref = t ? tenantPaymentRef(t) : '';
+    document.getElementById('payment-report-modal-sub').innerHTML =
+      (chosen.length === 1 ? esc(chosen[0].label) : chosen.length + ' bills') + ' · <b>' + money(total) + '</b>' + (ref ? ' · your reference ' + esc(ref) : '');
+    var btn = document.querySelector('#payment-report-modal .modal-actions .mini-btn.primary');
+    if (btn){ btn.disabled = !chosen.length; }
+    if (paymentReportPicks.length < 2){ box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    var allOn = chosen.length === paymentReportPicks.length;
+    box.innerHTML = '<div class="prp-head"><span>Which bills does this payment cover?</span>'+
+      '<button type="button" class="text-link" onclick="togglePaymentReportAll('+(allOn ? 'false' : 'true')+')">'+(allOn ? 'Clear' : 'Select all')+'</button></div>'+
+      paymentReportPicks.map(function(p, i){
+        return '<label class="prp-row'+(p.on ? ' on' : '')+'"><input type="checkbox"'+(p.on ? ' checked' : '')+' onchange="togglePaymentReportPick('+i+', this.checked)">'+
+          '<span class="prp-txt"><b>'+esc(p.label)+'</b><small>'+esc(p.sub)+'</small></span><span class="prp-amt">'+money(p.amount)+'</span></label>';
+      }).join('')+
+      '<div class="prp-total"><span>Total to pay'+(chosen.length ? ' (' + chosen.length + ')' : '')+'</span><b>'+money(total)+'</b></div>';
+  }
+  function togglePaymentReportPick(i, on){
+    if (!paymentReportPicks[i]) return;
+    paymentReportPicks[i].on = !!on;
+    renderPaymentReportPicks();
+  }
+  window.togglePaymentReportPick = togglePaymentReportPick;
+  window.togglePaymentReportAll = function(on){ paymentReportPicks.forEach(function(p){ p.on = !!on; }); renderPaymentReportPicks(); };
   function closePaymentReportModal(){
     document.getElementById('payment-report-modal').hidden = true;
     paymentReportModalTarget = null;
     paymentReportModalProofPath = null;
+    paymentReportPicks = [];
   }
   function triggerPaymentReportProofUpload(){
     document.getElementById('payment-report-proof-input').click();
@@ -13196,35 +13243,43 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var target = paymentReportModalTarget;
     var errorEl = document.getElementById('payment-report-modal-error');
     if (!target) return;
+    var chosen = paymentReportChosen();
+    if (!chosen.length){ errorEl.textContent = 'Tick at least one bill.'; errorEl.hidden = false; return; }
     var paymentDate = document.getElementById('payment-report-date').value || null;
     var paymentMethod = document.getElementById('payment-report-method').value || null;
     var reference = document.getElementById('payment-report-reference').value.trim() || null;
-    try {
-      var created = await paymentReportService.create({
-        allocationId: target.allocationId,
-        billId: target.billId,
-        tenantId: target.tenantId,
-        paymentDate: paymentDate,
-        paymentMethod: paymentMethod,
-        reference: reference,
-        proofPath: paymentReportModalProofPath,
-        tenantReference: tenantPaymentRef(tenantOf(target.tenantId))
-      });
-      paymentReports.unshift(created);
-      closePaymentReportModal();
-      showToast('Payment reported — pending verification.', 'success');
-      render();
-    } catch(err){
-      // The DB's one-pending-report-per-allocation unique index (payment_reports_one_pending_per_alloc)
-      // is what actually prevents a duplicate report — surface its violation as a friendly message
-      // instead of the raw Postgres constraint error friendlyErrorMessage would otherwise return.
-      if (err && /payment_reports_one_pending_per_alloc/.test(err.message || '')){
-        errorEl.textContent = 'You already have a pending report for this bill — wait for it to be reviewed.';
-      } else {
-        errorEl.textContent = friendlyErrorMessage(err);
+    var btn = document.querySelector('#payment-report-modal .modal-actions .mini-btn.primary');
+    var label = btn ? btn.innerHTML : '';
+    if (btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+    var done = 0, already = 0, failed = [];
+    for (var i = 0; i < chosen.length; i++){
+      var p = chosen[i];
+      try {
+        var created = await paymentReportService.create({
+          allocationId: p.allocationId, billId: p.billId, tenantId: target.tenantId,
+          paymentDate: paymentDate, paymentMethod: paymentMethod, reference: reference,
+          proofPath: paymentReportModalProofPath, // the same screenshot on every ticked bill
+          tenantReference: tenantPaymentRef(tenantOf(target.tenantId))
+        });
+        paymentReports.unshift(created);
+        done++;
+      } catch(err){
+        // The DB's one-pending-report-per-allocation unique index prevents a duplicate report.
+        if (err && /payment_reports_one_pending_per_alloc/.test(err.message || '')) already++;
+        else failed.push(p.label + ': ' + friendlyErrorMessage(err));
       }
-      errorEl.hidden = false;
     }
+    if (btn){ btn.disabled = false; btn.innerHTML = label; }
+    if (failed.length){
+      errorEl.textContent = (done ? done + ' sent. ' : '') + 'Couldn\'t send: ' + failed.join(' · ');
+      errorEl.hidden = false;
+      render();
+      return;
+    }
+    closePaymentReportModal();
+    showToast(done ? 'Payment reported for ' + done + ' bill' + (done === 1 ? '' : 's') + ' — pending verification.' + (already ? ' ' + already + ' already had a pending report.' : '')
+      : 'You already have a pending report for ' + (already === 1 ? 'this bill' : 'these bills') + ' — wait for it to be reviewed.', done ? 'success' : 'info');
+    render();
   }
   window.openPaymentReportModal = openPaymentReportModal;
   window.closePaymentReportModal = closePaymentReportModal;
