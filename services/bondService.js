@@ -15,7 +15,9 @@ function fromRow(row) {
     // that only reads the single total) but discounts is the source of truth.
     discounts: Array.isArray(row.discounts) ? row.discounts : [],
     status: row.status,
-    heldBy: row.held_by || ''
+    heldBy: row.held_by || '',
+    // How the bond money is held: 'transfer' (default) or 'cash'.
+    heldAs: row.held_as === 'cash' ? 'cash' : 'transfer'
   };
 }
 
@@ -42,7 +44,8 @@ export async function create(b) {
     deduction: b.deduction,
     discounts: b.discounts || [],
     status: b.status,
-    held_by: b.heldBy || null
+    held_by: b.heldBy || null,
+    held_as: b.heldAs === 'cash' ? 'cash' : 'transfer'
   }).select().single();
   if (error) throw error;
   return fromRow(data);
@@ -59,6 +62,7 @@ export async function update(id, b) {
   };
   // Only touch "held by" when the caller passes it (the move-out settlement updates amounts only).
   if (b.heldBy !== undefined) patch.held_by = b.heldBy || null;
+  if (b.heldAs !== undefined) patch.held_as = b.heldAs === 'cash' ? 'cash' : 'transfer';
   const { data, error } = await supabase.from('bonds').update(patch).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);

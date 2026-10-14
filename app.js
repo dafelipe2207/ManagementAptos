@@ -11,7 +11,7 @@ import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './li
 import * as propertyService from './services/propertyService.js?v=4';
 import * as roomService from './services/roomService.js?v=3';
 import * as tenantService from './services/tenantService.js?v=10';
-import * as bondService from './services/bondService.js?v=3';
+import * as bondService from './services/bondService.js?v=4';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
 import * as billService from './services/billService.js?v=6';
@@ -1549,7 +1549,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var facts = [];
       if (it.date) facts.push(['📅', (t.actualMoveOutDate ? '' : 'Expected ') + shortDate(it.date)]);
       var bond = bondOf(t.id);
-      facts.push(['🔐', bond ? money(bond.amountPaid) + (bond.heldBy ? ' · ' + esc(bond.heldBy) : '') : 'No bond']);
+      facts.push(['🔐', bond ? money(bond.amountPaid) + (bond.heldBy ? ' · ' + esc(bond.heldBy) : '') + (bond.heldAs === 'cash' ? ' · 💵 cash' : '') : 'No bond']);
       if (s){
         var startedDay = (s.startedAt || '').slice(0,10);
         facts.push([s.startedByRole === 'tenant' ? '✉️' : '🛠️', (s.startedByRole === 'tenant' ? 'Notice ' : 'Started ') + (startedDay ? shortDate(startedDay) : '') +
@@ -2979,7 +2979,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var pendingTotal = 0, pendingCount = 0;
     G.est.forEach(function(d){ var r = estimateReconciliation(t, d, bond); if (r && r.pendingDays > 0){ pendingCount++; pendingTotal += r.pendingEst; } });
     var html =
-      '<div class="card bond-card"><div class="bd-head"><h2>Bond</h2><span class="bd-held">'+(bond.heldBy ? 'Held by '+esc(bond.heldBy) : '<span style="color:var(--status-due);">Holder not set</span>')+' · '+esc(BOND_STATUS_LABEL[bond.status] || bond.status)+'</span></div>'+
+      '<div class="card bond-card"><div class="bd-head"><h2>Bond</h2><span class="bd-held">'+(bond.heldBy ? 'Held by '+esc(bond.heldBy) : '<span style="color:var(--status-due);">Holder not set</span>')+' · '+
+        (isViewer() ? '<span class="bd-as">'+(bond.heldAs === 'cash' ? '💵 Cash' : '🏦 Transfer')+'</span>'
+          : '<button type="button" class="bd-as" title="How the bond is held — tap to change" onclick="toggleBondHeldAs(\''+t.id+'\')">'+(bond.heldAs === 'cash' ? '💵 Cash' : '🏦 Transfer')+'</button>')+
+        ' · '+esc(BOND_STATUS_LABEL[bond.status] || bond.status)+'</span></div>'+
       '<div class="bd-tiles">'+
         '<div class="bd-tile"><span>Bond paid</span><b>'+money(bond.amountPaid)+'</b>'+(bond.amountRequired && Math.abs(bond.amountRequired - bond.amountPaid) > 0.004 ? '<small>of '+money(bond.amountRequired)+'</small>' : '')+'</div>'+
         (lines.length || bond.amountReturned
@@ -3032,6 +3035,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return html + '</div>';
   }
 
+  /** Bond card's "🏦 Transfer / 💵 Cash" chip: switches how the bond money is held. */
+  async function toggleBondHeldAs(tenantId){
+    var bond = bondOf(tenantId); if (!bond) return;
+    var next = bond.heldAs === 'cash' ? 'transfer' : 'cash';
+    try {
+      var saved = await bondService.update(bond.id, Object.assign({}, bond, { heldAs: next }));
+      Object.assign(bond, saved);
+      showToast('Bond held as ' + (next === 'cash' ? 'cash' : 'transfer') + '.', 'success');
+      render();
+    } catch(err){ showToast('Could not change it. ' + friendlyErrorMessage(err), 'error'); }
+  }
+  window.toggleBondHeldAs = toggleBondHeldAs;
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
 
   /** The "Move-Out Settlement" card on the admin's tenant detail page — one of four shapes
@@ -14946,6 +14961,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('bond-returned').value = b ? b.amountReturned : 0;
     document.getElementById('bond-status').value = b ? b.status : 'pending';
     document.getElementById('bond-held-by').value = b ? (b.heldBy || '') : '';
+    document.getElementById('bond-held-as').value = b && b.heldAs === 'cash' ? 'cash' : 'transfer';
     document.getElementById('bond-discount-rows').innerHTML = '';
     var existingDiscounts = (b && b.discounts && b.discounts.length) ? b.discounts
       : (b && b.deduction > 0 ? [{ label:'Deduction', amount:b.deduction }] : []); // migrate an old single-number deduction into the list, the first time it's opened
@@ -14976,7 +14992,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return;
     }
     var heldBy = document.getElementById('bond-held-by').value || '';
-    var draft = { tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid, amountReturned:returned, deduction:deduction, discounts:discounts, status:status, heldBy:heldBy };
+    var heldAs = document.getElementById('bond-held-as').value === 'cash' ? 'cash' : 'transfer';
+    var draft = { tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid, amountReturned:returned, deduction:deduction, discounts:discounts, status:status, heldBy:heldBy, heldAs:heldAs };
     var saveBtn = document.querySelector('#bond-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }

@@ -2434,3 +2434,5 @@ input, select, textarea, .modal-input, .bills-sort select,
 .bd-group.bd-todo{border-color:var(--status-due);}
 .bd-btn{padding:4px 10px !important;font-size:11.5px !important;min-height:0 !important;}
 .bd-btn{white-space:nowrap;}
+.bd-as{display:inline-flex;align-items:center;gap:3px;font:inherit;font-size:11.5px;font-weight:600;color:var(--text-dim);background:var(--border);border:0;border-radius:999px;padding:2px 9px;cursor:pointer;}
+span.bd-as{cursor:default;}
