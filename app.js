@@ -9242,10 +9242,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var isGroup = st.chatLabel === 'group';
     var target = isGroup ? 'the group' : (st.recipientName || 'the tenant') + '\'s chat';
     var tiles = '';
-    if (canCopyImage) tiles += actionTile('copyImage', 'Copy image', 'groupSendCopyImage(this)', true);
-    if (st.chatUrl) tiles += actionTile('chat', isGroup ? 'Open group' : 'Open chat', 'groupSendOpenGroup()', !canCopyImage);
+    if (canCopyImage) tiles += actionTile('copyImage', 'Copy image', 'groupSendCopyImage(this)', !canShareImage);
+    if (st.chatUrl) tiles += actionTile('chat', isGroup ? 'Open group' : 'Open chat', 'groupSendOpenGroup()', !canCopyImage && !canShareImage);
     tiles += actionTile('copyText', 'Copy message', 'groupSendCopyMessage(this)');
-    if (canShareImage) tiles += actionTile('share', 'Share image', 'groupSendShare(this)');
+    if (canShareImage) tiles = actionTile('share', 'Send photo + message', 'groupSendShare(this)', true) + tiles;
     if (pdf) tiles += canSharePdf && touch ? actionTile('pdf', 'Share PDF', 'groupSendSharePdf(this)') : actionTile('pdf', 'Bill PDF', 'groupSendDownloadBill()');
     if (!touch || !canShareImage) tiles += actionTile('download', 'Save image', 'groupSendDownloadImage()');
     var paste = touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>';
@@ -9256,7 +9256,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       howTo = canShareImage
         ? 'Tap <b>Share image</b> → WhatsApp Business → pick ' + esc(target) + ' and send.' + (st.chatPrefilled ? ' Then <b>Open chat</b> to send the message (already typed).' : ' Then Copy message → paste → send.')
         : 'Save the image, then attach it in ' + esc(target) + '. ' + (st.chatPrefilled ? '<b>Open chat</b> has the message already typed.' : 'Copy message → paste → send.');
-    } else if (canShareImage) howTo += '<br><span style="color:var(--text-faint);">Or tap Share image → WhatsApp Business and pick ' + esc(target) + ' yourself.</span>';
+    }
+    if (canShareImage) howTo = '<b>Send photo + message</b> → WhatsApp Business → pick ' + esc(target) + ' → send: the photo goes with the message as its caption (the message is also copied — if WhatsApp leaves it out, paste it in the caption).';
     document.getElementById('group-send-body').innerHTML =
       (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="Summary image" draggable="true" class="send-preview">' : '')+
       (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
@@ -9318,6 +9319,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function groupSendShare(el){
     var st = groupSendState; var f = groupSendImageFile(); if (!st || !f) return;
     if (el && el.focus) el.focus(); // iPad anchors the share popover to the focused button
+    // Also put the message on the clipboard (not awaited — the share sheet must open within the
+    // tap): some WhatsApp versions drop the text shared with a photo, so it can be pasted as caption.
+    try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(st.message).catch(function(){}); } catch(_e){}
     navigator.share({ files: [f], text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
       if (err && err.name === 'AbortError') return;
       navigator.share({ files: [f] }).then(function(){ groupSendMarkSent(); }, function(e2){
@@ -9373,12 +9377,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var first = (t.fullName || '').split(' ')[0] || 'there';
     var lines = ['Hi ' + first + ', here is what you owe' + (property ? ' for ' + (property.address || property.name) : '') + ':', ''];
     if (rent.length){
-      lines.push('Rent:');
-      rent.forEach(function(c){ lines.push('• ' + shortDate(c.periodStart) + ' – ' + shortDate(c.periodEnd) + ': ' + money(c.remaining) + (c.amountPaid > 0 ? ' (rest of ' + money(c.amountDue) + ')' : '')); });
+      var freqTxt = t.rentFrequency === 'fortnightly' ? 'fortnight' : (t.rentFrequency === 'monthly' ? 'month' : 'week');
+      lines.push('🏠 Rent' + (t.rentAmount ? ' (' + money(t.rentAmount) + ' per ' + freqTxt + ')' : '') + ':');
+      rent.forEach(function(c){
+        var due = c.dueDate || c.periodStart, late = due ? daysBetween(due, TODAY) : 0;
+        lines.push('• ' + shortDate(c.periodStart) + ' – ' + shortDate(c.periodEnd) + ': ' + money(c.remaining) +
+          (c.amountPaid > 0 ? ' (rest of ' + money(c.amountDue) + ')' : '') +
+          (due ? ' — due ' + shortDate(due) + (late > 0 ? ' (' + late + ' day' + (late === 1 ? '' : 's') + ' overdue)' : (late === 0 ? ' (today)' : '')) : ''));
+      });
+      if (rent.length > 1) lines.push('Rent total: ' + money(rentTotal));
       lines.push('');
     }
     if (billItems.length){
-      lines.push('Bills:');
+      lines.push('🧾 Bills:');
       billItems.forEach(function(o){ lines.push('• ' + (tenantProviderText(o.bill) ? billTypeLabel(o.bill.billType) + ' (' + o.bill.provider + ')' : billTypeLabel(o.bill.billType) + ' bill') + (o.bill.dueDate ? ', due ' + shortDate(o.bill.dueDate) : '') + ': ' + money(o.alloc.amount)); });
       lines.push('');
     }
@@ -9419,7 +9430,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       y += rowH;
     }
     if (rent.length){
-      section('RENT', '#c0392b');
+      section('RENT' + (t.rentAmount ? ' · ' + money(t.rentAmount) + ' / ' + (t.rentFrequency === 'fortnightly' ? 'FORTNIGHT' : (t.rentFrequency === 'monthly' ? 'MONTH' : 'WEEK')) : ''), '#c0392b');
       rent.forEach(function(cg){
         var late = cg.periodStart <= TODAY;
         line(shortDate(cg.periodStart) + ' – ' + shortDate(cg.periodEnd),
