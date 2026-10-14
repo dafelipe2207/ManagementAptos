@@ -121,11 +121,29 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function isViewer(){ return !!currentProfile && currentProfile.role === 'viewer'; }
   function isStaff(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator' || currentProfile.role === 'viewer'); }
   function isTenantRole(){ return !!currentProfile && currentProfile.role === 'tenant'; }
-  /** Bills from this provider are NEVER shown to or sent to tenants — not in "My Bills",
+  /** "RS" = the real estate. (Older note below kept for context — these bills ARE now sent to
+   *  tenants, but only ever as the service, e.g. "Water bill"; see tenantProviderText.)
+   *  Bills from this provider are NEVER shown to or sent to tenants — not in "My Bills",
    *  not in the outstanding balance on their dashboard, and not with the WhatsApp buttons
    *  (individual or group) on the admin side. Comparison is case/whitespace-insensitive so it
    *  doesn't depend on exactly how the provider name was typed in. */
   function isTenantHiddenProvider(provider){ return (provider || '').trim().toUpperCase() === 'RS'; }
+  /** Bills from the "RS" provider (the real estate) are charged to tenants like any other bill,
+   *  but tenants are never told who it's from: everything they see or are sent shows only the
+   *  service ("Water bill"), and the original document — which names the agency — is never
+   *  shared. This gives the provider text to show a tenant ('' for those bills). */
+  function tenantProviderText(b){ return b && !isTenantHiddenProvider(b.provider) ? (b.provider || '') : ''; }
+  /** What a tenant's own app holds for a bill: an "RS" bill loses its provider name and its
+   *  documents, so no screen a tenant can open ever shows the agency. */
+  function tenantSafeBill(b){
+    if (!isTenantHiddenProvider(b.provider)) return b;
+    return Object.assign(b, { provider: '', receiptPath: null, adminReceiptPath: null, notes: '', accountNumber: null, invoiceNumber: null });
+  }
+  /** "Water (Dodo)" / "Water" — service plus provider, without the provider when it's hidden. */
+  function tenantBillName(b, sep){
+    var p = tenantProviderText(b);
+    return billTypeLabel(b.billType) + (p ? (sep || ' · ') + p : '');
+  }
   /** Same "no longer lives here" test used for the tenancy badge elsewhere (deactivated, or
    *  their actual move-out date has arrived) — pulled out so Payments can reuse it to decide
    *  which tenants still belong in the list. */
@@ -922,7 +940,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     tenants.forEach(function(t){
       var rent = tenantRentOverdue(t);
       var billsDue = unpaidBillAllocationsFor(t.id).filter(function(o){
-        return !isTenantHiddenProvider(o.bill.provider) && o.bill.dueDate && o.bill.dueDate <= TODAY;
+        return o.bill.dueDate && o.bill.dueDate <= TODAY;
       });
       if (!rent.length && !billsDue.length) return;
       var oldest = [];
@@ -2872,8 +2890,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // computed separately for each, not mixed into a single number.
     var byType = {};
     bills.forEach(function(b){
-      // Tenant-facing view: leave out the providers tenants never see (same rule as their dashboard).
-      if (opts.tenantView && isTenantHiddenProvider(b.provider)) return;
       (b.allocations || []).forEach(function(a){
         if (a.tenantId !== t.id) return;
         var bt = b.billType || 'other';
@@ -4423,7 +4439,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (d && d < best) best = d;
     });
     unpaidBillAllocationsFor(t.id).forEach(function(o){
-      if (isTenantHiddenProvider(o.bill.provider)) return;
       var d = o.bill.dueDate;
       if (d && d < best) best = d;
     });
@@ -4835,7 +4850,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
 
   function bankNorm(s){ return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
-  function bankTenantBills(t){ return unpaidBillAllocationsFor(t.id).filter(function(o){ return !isTenantHiddenProvider(o.bill.provider); }); }
+  function bankTenantBills(t){ return unpaidBillAllocationsFor(t.id); }
   function bankMatchTenant(desc, amount){
     var nd = bankNorm(desc), words = ' ' + (desc || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ') + ' ';
     var prefer = function(list){ // a current tenant beats a moved-out one with the same name
@@ -7292,7 +7307,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="who"><div class="name">'+esc(billTypeLabel(b.billType))+'</div>'+
       '<div class="meta">'+esc(b.provider)+' • '+esc(p?p.name:'—')+' • '+shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd)+'</div></div>'+
       '<div class="amount">'+money(b.amount)+'<br/>'+billStatusBadge(b)+(b.adminPaid?' '+badge('paid','Sent to provider'):'')+
-      (b.whatsappGroupSharedAt ? '<div class="wa-mini sent">✓ WhatsApp group</div>' : (isTenantHiddenProvider(b.provider)?'':'<div class="wa-mini">Not sent to group</div>'))+'</div>'+
+      (b.whatsappGroupSharedAt ? '<div class="wa-mini sent">✓ WhatsApp group</div>' : '<div class="wa-mini">Not sent to group</div>')+'</div>'+
       '</div></a>';
   }
 
@@ -7304,9 +7319,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var paidCount = tenantAllocs.filter(function(a){ return a.paid; }).length;
       return '<div>'+paidCount+'/'+tenantAllocs.length+' tenants</div>'+
         '<div style="font-size:11px;color:var(--text-faint);font-weight:400;">'+money(billPaidAmount(b))+' of '+money(b.amount)+'</div>'+
-        (isTenantHiddenProvider(b.provider) ? '' : (b.whatsappGroupSharedAt
+        (b.whatsappGroupSharedAt
           ? '<div class="wa-mini sent" title="Sent '+esc(whatsAppSharedWhen(b.whatsappGroupSharedAt))+'">✓ WhatsApp group</div>'
-          : '<div class="wa-mini">Not sent to group</div>'));
+          : '<div class="wa-mini">Not sent to group</div>');
     }
     return '<span style="color:var(--text-faint);">Not yet allocated</span>';
   }
@@ -7396,7 +7411,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         : '<span class="bc-chip'+(paidN===tAllocs.length?' ok':'')+'">👥 '+paidN+'/'+tAllocs.length+' paid · '+money(billPaidAmount(b))+'</span>';
       var provChip = b.adminPaid ? '<span class="bc-chip ok">🏦 Provider paid</span>'
         : (billReadyForAdminPayment(b) ? '<span class="bc-chip warn">🏦 Ready to pay</span>' : '<span class="bc-chip">🏦 Waiting on tenants</span>');
-      var waChip = isTenantHiddenProvider(b.provider) || !tAllocs.length ? ''
+      var waChip = !tAllocs.length ? ''
         : (b.whatsappGroupSharedAt ? '<span class="bc-chip ok">💬 Sent</span>' : '<span class="bc-chip">💬 Not sent</span>');
       return '<a class="bill-card" href="#/bills/'+b.id+'">'+
         '<span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span>'+
@@ -7964,13 +7979,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
 
     // Bills: same due-soon/overdue split, per unpaid tenant allocation — skipping the admin's own
-    // share and any bill under the landlord's own hidden "RS" provider (never shown to tenants,
+    // share. "RS" bills are included but named only by service (tenantBillName) — tenants never
+    // see the agency. (Previously skipped entirely:
     // same rule isTenantHiddenProvider already enforces for the Bills UI). Dedup key is
     // bill+tenant, NOT the allocation id: replaceForBill deletes and reinserts allocations (new
     // ids) whenever a bill's split is edited, so keying on allocation id would re-notify on every edit.
     for (var k=0; k<bills.length; k++){
       var b = bills[k];
-      if (!b.allocations || isTenantHiddenProvider(b.provider)) continue;
+      if (!b.allocations) continue;
       for (var m=0; m<b.allocations.length; m++){
         var a = b.allocations[m];
         if (a.paid || a.isAdmin) continue;
@@ -7980,7 +7996,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         if (overdue){
           await notificationService.notifyOnce(
             bt.authUserId, 'bill_overdue:' + b.id + ':' + bt.id,
-            'Bill overdue', billTypeLabel(b.billType) + ' (' + b.provider + ') — your share of ' + money(a.amount) + ' is overdue.',
+            'Bill overdue', tenantBillName(b, ' — ') + ' — your share of ' + money(a.amount) + ' is overdue.',
             'bills', b.id, { category: 'bills', propertyId: bt.propertyId, tenantId: bt.id, createdByProfileId: createdByProfileId }
           );
         } else {
@@ -7988,7 +8004,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           if (billDueIn < 0 || billDueIn > 3) continue;
           await notificationService.notifyOnce(
             bt.authUserId, 'bill_upcoming:' + b.id + ':' + bt.id,
-            'Bill due soon', billTypeLabel(b.billType) + ' (' + b.provider + ') — your share of ' + money(a.amount) + ' is due ' + shortDate(b.dueDate) + '.',
+            'Bill due soon', tenantBillName(b, ' — ') + ' — your share of ' + money(a.amount) + ' is due ' + shortDate(b.dueDate) + '.',
             'bills', b.id, { category: 'bills', propertyId: bt.propertyId, tenantId: bt.id, createdByProfileId: createdByProfileId }
           );
         }
@@ -8341,7 +8357,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  allocation — only appears if the tenant has a saved phone number; if not, shows a short
    *  notice instead of the button, so it's clear why it can't be sent from there. */
   function whatsAppButtonHtml(bill, property, tenant, amount){
-    if (!tenant || isTenantHiddenProvider(bill.provider)) return '';
+    if (!tenant) return '';
     if (!phoneDigitsForWhatsApp(tenant.phone)) return '<span class="text-link" style="font-size:11.5px;color:var(--text-faint);cursor:default;">No phone on file</span>';
     return waButton('sendBillsWhatsAppToTenant(\''+tenant.id+'\',[\''+bill.id+'\'])', 'Send to '+esc(tenant.fullName)+' by WhatsApp', 'wa-btn-sm');
   }
@@ -8354,7 +8370,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '• ' + row.name + (row.ref ? ' [' + row.ref + ']' : '') + ': ' + money(row.amount) + (row.paid ? ' (already paid)' : '');
     });
     var propertyLabel = property ? (property.address || property.name) : 'the property';
-    return 'Bill split for ' + billTypeLabel(bill.billType) + ' (' + bill.provider + ') — ' +
+    return 'Bill split for ' + (tenantProviderText(bill) ? billTypeLabel(bill.billType) + ' (' + bill.provider + ')' : billTypeLabel(bill.billType)) + ' — ' +
       propertyLabel + '\n' +
       'Period: ' + shortDate(bill.billingPeriodStart) + ' to ' + shortDate(bill.billingPeriodEnd) +
       (bill.dueDate ? ('\nDue date: ' + shortDate(bill.dueDate)) : '') +
@@ -8368,7 +8384,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** The "Send WhatsApp" row shown when a tenant's consolidated pending-bills list is expanded —
    *  same pattern as whatsAppButtonHtml (one bill at a time), but for the whole list at once. */
   function pendingBillsWhatsAppRowHtml(tenant, items, property){
-    var visible = items.filter(function(it){ return !isTenantHiddenProvider(it.bill.provider); });
+    var visible = items;
     if (!visible.length) return '';
     var digits = phoneDigitsForWhatsApp(tenant.phone);
     var ids = visible.map(function(it){ return '\''+it.bill.id+'\''; }).join(',');
@@ -8386,7 +8402,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var items = billIds.map(function(id){
       var b = billOf(id);
       var a = b && (b.allocations||[]).find(function(x){ return x.tenantId===tenantId; });
-      return (b && a && !isTenantHiddenProvider(b.provider)) ? { bill:b, alloc:a } : null;
+      return (b && a) ? { bill:b, alloc:a } : null;
     }).filter(Boolean);
     if (!items.length) return;
     sendTenantStatement(tenant, [], items, items.length === 1 ? 'Send the bill to ' + tenant.fullName : 'Send pending bills to ' + tenant.fullName);
@@ -8488,7 +8504,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   async function sendBillToWhatsAppGroup(billId){
     var bill = billOf(billId);
     if (!bill || !bill.allocations || !bill.allocations.length){ showToast('Split this bill among the tenants first.', 'error'); return; }
-    if (isTenantHiddenProvider(bill.provider)){ showToast('Bills from this provider are never sent to tenants.', 'error'); return; }
     var property = propertyOf(bill.propertyId);
     if (!property || !property.whatsappGroupLink){ showToast('Add this property\'s WhatsApp group link first (Edit property).', 'error'); return; }
     var hasPeriod = !!(bill.billingPeriodStart && bill.billingPeriodEnd);
@@ -8506,21 +8521,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var m = groupSendModalShell('Send to ' + property.name + '\'s WhatsApp group', 'Preparing the bill and each tenant\'s share…');
     var message = billGroupWhatsAppMessage(bill, property, rows);
-    var docFile = bill.receiptPath ? await fetchBillReceiptFile(bill) : null;
+    var hiddenDoc = isTenantHiddenProvider(bill.provider); // the original names the agency — never sent
+    var docFile = bill.receiptPath && !hiddenDoc ? await fetchBillReceiptFile(bill) : null;
     var docCanvas = null, docNote = '';
     if (docFile){
       try { var r = await renderBillDocCanvas(docFile, 1000); docCanvas = r.canvas; docNote = r.pages > 1 ? 'page 1 of ' + r.pages + ' — full bill attached' : ''; }
       catch(err){ console.warn('bill document render', err); }
     }
     // The bill goes as a file/image, not a link. A link is added only if it couldn't be loaded.
-    var invoiceUrl = docCanvas ? null : await billInvoiceLink(bill);
+    var invoiceUrl = docCanvas || hiddenDoc ? null : await billInvoiceLink(bill);
     if (invoiceUrl) message += '\n\n📄 Bill: ' + invoiceUrl;
     var imageBlob = await billSplitImageBlob(bill, property, rows, docCanvas, docNote);
     showGroupSend(m, { message: message, imageBlob: imageBlob,
       imageName: billTypeLabel(bill.billType) + '-' + (bill.billingPeriodEnd || TODAY) + '.png', docFiles: docFile ? [docFile] : [],
       chatUrl: property.whatsappGroupLink, chatLabel: 'group',
       onSent: function(){ markBillSharedToGroup(bill, true); },
-      note: !docFile && bill.receiptPath ? 'Couldn\'t load the bill document — the message includes a link to it instead.' : (!bill.receiptPath ? 'This bill has no document attached — only the split is shown.' : '') });
+      note: hiddenDoc ? 'Sent as "'+billTypeLabel(bill.billType)+' bill" — the provider and its document are never shown to tenants.'
+        : !docFile && bill.receiptPath ? 'Couldn\'t load the bill document — the message includes a link to it instead.' : (!bill.receiptPath ? 'This bill has no document attached — only the split is shown.' : '') });
   }
   window.sendBillToWhatsAppGroup = sendBillToWhatsAppGroup;
 
@@ -8716,7 +8733,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function sendTenantOwedStatement(tenantId){
     var t = tenantOf(tenantId); if (!t) return;
     var rent = tenantRentOverdue(t);
-    var billItems = unpaidBillAllocationsFor(t.id).filter(function(o){ return !isTenantHiddenProvider(o.bill.provider); });
+    var billItems = unpaidBillAllocationsFor(t.id);
     if (!rent.length && !billItems.length){ showToast(t.fullName + ' doesn\'t owe anything right now.', 'info'); return; }
     sendTenantStatement(t, rent, billItems, 'Send ' + t.fullName + ' what they owe', function(){ markCollectSent(t.id); });
   }
@@ -8737,7 +8754,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     if (billItems.length){
       lines.push('Bills:');
-      billItems.forEach(function(o){ lines.push('• ' + billTypeLabel(o.bill.billType) + ' (' + o.bill.provider + ')' + (o.bill.dueDate ? ', due ' + shortDate(o.bill.dueDate) : '') + ': ' + money(o.alloc.amount)); });
+      billItems.forEach(function(o){ lines.push('• ' + (tenantProviderText(o.bill) ? billTypeLabel(o.bill.billType) + ' (' + o.bill.provider + ')' : billTypeLabel(o.bill.billType) + ' bill') + (o.bill.dueDate ? ', due ' + shortDate(o.bill.dueDate) : '') + ': ' + money(o.alloc.amount)); });
       lines.push('');
     }
     lines.push('Total: ' + money(total));
@@ -8789,7 +8806,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       section('BILLS', '#b7791f');
       billItems.forEach(function(o){
         var late = o.bill.dueDate && o.bill.dueDate < TODAY;
-        line(billTypeLabel(o.bill.billType) + ' · ' + o.bill.provider,
+        line(tenantProviderText(o.bill) ? billTypeLabel(o.bill.billType) + ' · ' + o.bill.provider : billTypeLabel(o.bill.billType) + ' bill',
           (o.bill.billingPeriodStart ? shortDate(o.bill.billingPeriodStart) + ' – ' + shortDate(o.bill.billingPeriodEnd) : '') + (o.bill.dueDate ? ' · ' + (late ? 'overdue since ' : 'due ') + shortDate(o.bill.dueDate) : ''), o.alloc.amount, late);
       });
       y += 20;
@@ -8859,7 +8876,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var card = imageCard(W, H), g = card.g, rr = card.rr;
     var L = pad + 32, R = W - pad - 32, y = 32 + 80;
     g.fillStyle = '#1d2433'; g.font = '700 46px ' + font;
-    g.fillText(billTypeLabel(bill.billType) + ' bill · ' + (bill.provider || ''), L, y);
+    g.fillText(billTypeLabel(bill.billType) + ' bill' + (tenantProviderText(bill) ? ' · ' + bill.provider : ''), L, y);
     g.fillStyle = '#6b7280'; g.font = '400 30px ' + font;
     g.fillText(property.name + (bill.billingPeriodStart && bill.billingPeriodEnd ? ' · ' + shortDate(bill.billingPeriodStart) + ' – ' + shortDate(bill.billingPeriodEnd) : ''), L, y + 52);
     if (bill.dueDate){ g.fillStyle = '#b42318'; g.font = '600 30px ' + font; g.fillText('Due ' + fullDate(bill.dueDate), L, y + 100); }
@@ -9050,11 +9067,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<div class="card"><div class="detail-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;">Allocation</h2>'+
         '<div style="display:flex;gap:8px;">'+
-        (isTenantHiddenProvider(b.provider) ? '' : (prefetchBillReceiptFile(b), prefetchBillInvoiceLink(b), '')+
-          waButton('sendBillToWhatsAppGroup(\''+b.id+'\')', 'Send to the WhatsApp group'))+
+        (isTenantHiddenProvider(b.provider) ? '' : (prefetchBillReceiptFile(b), prefetchBillInvoiceLink(b), ''))+
+          (waButton('sendBillToWhatsAppGroup(\''+b.id+'\')', 'Send to the WhatsApp group'))+
         '<button class="mini-btn" onclick="openAllocateModal(\''+b.id+'\')">Re-allocate</button>'+
         '</div></div>'+
-        (isTenantHiddenProvider(b.provider) ? '' : billWhatsAppGroupStatusHtml(b))+
+        billWhatsAppGroupStatusHtml(b)+
         '<p style="font-size:12px;color:var(--text-faint);margin:2px 0 8px;">'+(methodLabel[b.allocationMethod]||'Custom')+
         (p && !p.whatsappGroupLink ? ' · <span style="color:var(--text-faint);">No WhatsApp group link set for this property yet.</span>' : '')+
         '</p>'+
@@ -12898,8 +12915,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var r = t.roomId ? roomOf(t.roomId) : null;
     var myAllocations = [];
     bills.forEach(function(b){
-      if (isTenantHiddenProvider(b.provider)) return;
-      (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); });
+            (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id) myAllocations.push({ bill:b, alloc:a }); });
     });
     var unpaidAllocations = myAllocations.filter(function(x){ return !x.alloc.paid; }).sort(function(a,b){ return (a.bill.dueDate||'').localeCompare(b.bill.dueDate||''); });
     var outstanding = unpaidAllocations.reduce(function(s,x){ return s+x.alloc.amount; }, 0);
@@ -12975,8 +12991,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function tenantBillsSummaryHtml(t){
     var owed = [];
     bills.forEach(function(b){
-      if (isTenantHiddenProvider(b.provider)) return;
-      (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id && !a.paid && a.amount > 0.004) owed.push({ bill:b, alloc:a }); });
+            (b.allocations||[]).forEach(function(a){ if (a.tenantId===t.id && !a.paid && a.amount > 0.004) owed.push({ bill:b, alloc:a }); });
     });
     owed.sort(function(x,y){ return (x.bill.dueDate||'9999').localeCompare(y.bill.dueDate||'9999'); });
     if (!owed.length){
@@ -13063,8 +13078,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var myAllocations = [];
     if (t){
       bills.forEach(function(b){
-        if (isTenantHiddenProvider(b.provider)) return;
-        var mine = (b.allocations||[]).filter(function(a){ return a.tenantId===t.id; });
+                var mine = (b.allocations||[]).filter(function(a){ return a.tenantId===t.id; });
         mine.forEach(function(a){ myAllocations.push({ bill:b, alloc:a }); });
         // A bill whose service type this tenant doesn't pay for (tenant.excludedBillTypes —
         // e.g. gas included with the rent) has no allocation row for them, so it used to be
@@ -14647,7 +14661,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     rentSchedules = s.rentSchedules.filter(own);
     paymentRecords = s.paymentRecords.filter(own);
     bills = s.bills.filter(inProps).map(function(b){
-      return Object.assign({}, b, { allocations: (b.allocations || []).filter(own) });
+      return tenantSafeBill(Object.assign({}, b, { allocations: (b.allocations || []).filter(own) }));
     });
     tenantDocuments = s.tenantDocuments.filter(own);
     maintenanceRequests = s.maintenanceRequests.filter(own);
@@ -16010,7 +16024,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var allocationRows = results[7];
     bills = billRows.map(function(b){
       b.allocations = allocationRows.filter(function(a){ return a.billId === b.id; });
-      return b;
+      return isTenantRole() ? tenantSafeBill(b) : b;
     });
     tenantDocuments = results[8];
     maintenanceRequests = results[9];
