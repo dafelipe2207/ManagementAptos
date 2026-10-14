@@ -137,9 +137,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  documents, so no screen a tenant can open ever shows the agency. */
   function tenantSafeBill(b){
     if (!isTenantHiddenProvider(b.provider)) return b;
-    // hasHiddenDoc: there IS an original document, but it names the agency — the tenant gets a
-    // clean bill summary instead (tenantBillSummary), never the file itself.
-    return Object.assign(b, { hasHiddenDoc: !!b.receiptPath, provider: '', receiptPath: null, adminReceiptPath: null, notes: '', accountNumber: null, invoiceNumber: null });
+    // The original document stays available ("View invoice" in the tenant's Bills — the owner's
+    // choice); the provider name, notes and account details are still left out of every screen.
+    return Object.assign(b, { provider: '', adminReceiptPath: null, notes: '', accountNumber: null, invoiceNumber: null });
   }
   /** "Water (Dodo)" / "Water" — service plus provider, without the provider when it's hidden. */
   function tenantBillName(b, sep){
