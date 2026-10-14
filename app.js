@@ -9222,7 +9222,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       imageName: (opts.imageName || 'image').toLowerCase().replace(/[^a-z0-9.-]+/g, '-'),
       imageUrl: opts.imageBlob ? URL.createObjectURL(opts.imageBlob) : null, docFiles: opts.docFiles || [],
       chatUrl: opts.chatUrl || null, chatPrefilled: !!opts.chatPrefilled, chatLabel: opts.chatLabel || 'chat',
-      recipientName: opts.recipientName || '', onSent: opts.onSent || null, marked: false };
+      recipientName: opts.recipientName || '', imageOnly: !!opts.imageOnly, onSent: opts.onSent || null, marked: false };
     renderGroupSendModal(opts.note || '');
   }
   function closeGroupSendModal(){
@@ -9260,6 +9260,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (canShareImage) howTo = '<b>Send photo + message</b> → WhatsApp Business → pick ' + esc(target) + ' → send: the photo goes with the message as its caption (the message is also copied — if WhatsApp leaves it out, paste it in the caption).';
     // Sending to ONE tenant: a single button straight to that tenant's chat — the image is copied
     // and the chat opens with the message already typed; paste the image and send.
+    if (st.imageOnly){
+      var who1 = st.recipientName || 'the tenant';
+      var canShare1 = !!(imgFile && navigator.share && navigator.canShare && navigator.canShare({ files: [imgFile] }));
+      document.getElementById('group-send-body').innerHTML =
+        (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="What they owe" draggable="true" class="send-preview">' : '')+
+        (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
+        (st.chatUrl
+          ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Send to '+esc(who1)+' on WhatsApp</span></button>'+
+            '<p class="send-howto">Opens '+esc(who1)+'\'s chat with the image copied — '+(touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+', then send.</p>'
+          : '<button type="button" class="wa-send-one" onclick="'+(canShare1 ? 'groupSendShare(this)' : 'groupSendDownloadImage()')+'">'+WA_ICON+'<span>'+(canShare1 ? 'Share image' : 'Save image')+'</span></button>');
+      return;
+    }
     if (st.chatPrefilled && st.chatUrl){
       var who = st.recipientName || 'the tenant';
       document.getElementById('group-send-body').innerHTML =
@@ -9334,8 +9346,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (el && el.focus) el.focus(); // iPad anchors the share popover to the focused button
     // Also put the message on the clipboard (not awaited — the share sheet must open within the
     // tap): some WhatsApp versions drop the text shared with a photo, so it can be pasted as caption.
-    try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(st.message).catch(function(){}); } catch(_e){}
-    navigator.share({ files: [f], text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
+    try { if (!st.imageOnly && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(st.message).catch(function(){}); } catch(_e){}
+    navigator.share(st.imageOnly ? { files: [f] } : { files: [f], text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
       if (err && err.name === 'AbortError') return;
       navigator.share({ files: [f] }).then(function(){ groupSendMarkSent(); }, function(e2){
         if (!e2 || e2.name !== 'AbortError') showToast('Couldn\'t share — use Copy image and Open chat instead.', 'error');
@@ -9431,22 +9443,41 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     lines.push('Reply with your receipt once paid. Thank you!');
     var message = lines.join('\n');
 
-    // Only the amounts go out — the bills themselves stay in the app, attached to each charge,
-    // so the image stays short and easy to read.
-    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total);
-    var chatUrl = waChatUrl(t.phone, message);
+    // Everything goes in ONE image: the description (rent and each bill, total, reference) and,
+    // underneath, the bills themselves (page 1 of each attached document).
+    var docs = [], MAX_DOCS = 6;
+    for (var i = 0; i < billItems.length && docs.length < MAX_DOCS; i++){
+      var bl = billItems[i].bill;
+      if (!bl.receiptPath) continue;
+      try {
+        var f = await fetchBillReceiptFile(bl);
+        if (!f) continue;
+        var r = await renderBillDocCanvas(f, 900);
+        docs.push({ canvas: r.canvas, caption: billTypeLabel(bl.billType) + (bl.billingPeriodStart ? ' · ' + shortDate(bl.billingPeriodStart) + ' – ' + shortDate(bl.billingPeriodEnd) : '') + (r.pages > 1 ? ' · page 1 of ' + r.pages : '') });
+      } catch(err){ console.warn('bill document render', err); }
+    }
+    var withDoc = billItems.filter(function(o){ return o.bill.receiptPath; }).length;
+    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, docs, withDoc - docs.length);
+    var chatUrl = waChatUrl(t.phone, ''); // the image says it all — the chat opens empty
     showGroupSend(m, { message: message, imageBlob: imageBlob, imageName: 'owed-' + first + '-' + TODAY + '.png',
-      chatUrl: chatUrl, chatPrefilled: !!chatUrl, recipientName: first, onSent: onSent,
-      note: chatUrl ? '' : 'No phone number on file for ' + t.fullName + ' — copy the image and message and send them yourself.' });
+      chatUrl: chatUrl, chatPrefilled: !!chatUrl, imageOnly: true, recipientName: first, onSent: onSent,
+      note: chatUrl ? '' : 'No phone number on file for ' + t.fullName + ' — save the image and send it yourself.' });
   }
 
   /** Image: the tenant's rent and bills owed (amounts only) and the total. */
-  function tenantStatementImageBlob(t, property, rent, billItems, total){
+  function tenantStatementImageBlob(t, property, rent, billItems, total, docs, moreDocs){
     var W = 1080, pad = 64, font = IMG_FONT;
     var rowH = 86, L = pad + 32, R = W - pad - 32;
-    var H = 32 + 230 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + (billItems.length ? 40 : 0) + 30;
+    docs = docs || [];
+    var dw = R - L + 24;
+    var docsH = docs.reduce(function(h, d){ return h + 24 + Math.round(d.canvas.height * dw / d.canvas.width) + 50; }, 0);
+    var H = 32 + 230 + 50 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + 40 + 30 +
+      (docs.length ? 90 + docsH + (moreDocs > 0 ? 50 : 0) : 0);
     var card = imageCard(W, H), g = card.g, rr = card.rr;
-    var y = 32 + 82;
+    var y = 32 + 72;
+    var firstName = (t.fullName || '').split(' ')[0] || '';
+    g.fillStyle = '#6b7280'; g.font = '500 30px ' + font; g.fillText('Hi ' + firstName + ', here is what you owe 👋', L, y);
+    y += 60;
     g.fillStyle = '#1d2433'; g.font = '700 48px ' + font; g.fillText('What you owe', L, y);
     g.fillStyle = '#6b7280'; g.font = '400 30px ' + font;
     g.fillText(t.fullName + (property ? ' · ' + property.name : '') + ' · as of ' + fullDate(TODAY), L, y + 50);
@@ -9485,11 +9516,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     y += 96 + 50;
     g.fillStyle = '#9aa1ad'; g.font = '400 25px ' + font;
     g.fillText('Use your reference in the transfer description and reply with your receipt.', L, y);
-    if (billItems.length){
-      y += 40;
-      g.fillText('Questions about a bill? See it in the app — it\'s attached to its charge.', L, y);
-    }
+    y += 40;
+    g.fillText(docs.length ? 'The bills are below — you can also see them in the app.' : (billItems.length ? 'Questions about a bill? See it in the app — it\'s attached to its charge.' : 'Thank you!'), L, y);
     y += 30;
+    if (docs.length){
+      y += 40;
+      g.fillStyle = '#b7791f'; g.font = '700 26px ' + font; g.fillText('THE BILLS', L, y + 20); g.fillStyle = '#e5e7eb'; g.fillRect(L, y + 36, R - L, 2);
+      y += 70;
+      docs.forEach(function(d){ var dh = drawDocOnCard(g, d.canvas, d.caption, L, y, dw); y += 24 + dh + 50; });
+      if (moreDocs > 0){ g.fillStyle = '#6b7280'; g.font = '400 25px ' + font; g.fillText('+ ' + moreDocs + ' more bill' + (moreDocs === 1 ? '' : 's') + ' in the app.', L, y); }
+    }
     return card.toBlob();
   }
 
