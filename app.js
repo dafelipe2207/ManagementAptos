@@ -29,7 +29,7 @@ import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
 import * as leasePaymentService from './services/leasePaymentService.js?v=1';
-import * as auditService from './services/auditService.js?v=2';
+import * as auditService from './services/auditService.js?v=3';
 import * as recurringBillService from './services/recurringBillService.js?v=3';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
@@ -520,6 +520,56 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /* ---------- Modal: Payment history (view, correct a mistaken entry, or remove) ---------- */
   var historyModalTenantId = null;
   var historyModalEditingId = null; // payment currently shown in inline edit mode, or null
+  /* ── "Who did it" ───────────────────────────────────────────────────────────────────────────
+   * For staff, small "by …" lines under payments, receipts, bill shares, bills and documents:
+   * who recorded it, who attached the receipt, who marked it paid. Read from the audit trail
+   * through record_actors() (staff only), refreshed after each render at most every few seconds. */
+  var ACTOR_TABLES = ['payments','bill_allocations','rent_payment_reports','payment_reports','bills','tenant_documents','lease_payments'];
+  var recordActors = {};          // 'table:id:kind' -> { name, role, at }
+  var recordActorsSig = '';
+  var recordActorsAt = 0, recordActorsBusy = false, recordActorsTrail = null;
+  function refreshRecordActors(){
+    if (!isStaff() || isViewer()) return;
+    var wait = 4000 - (Date.now() - recordActorsAt);
+    if (recordActorsBusy || wait > 0){ // one trailing refresh, so a change just made still shows up
+      if (!recordActorsTrail) recordActorsTrail = setTimeout(function(){ recordActorsTrail = null; refreshRecordActors(); }, Math.max(wait, 800));
+      return;
+    }
+    recordActorsBusy = true; recordActorsAt = Date.now();
+    auditService.getRecordActors(ACTOR_TABLES).then(function(rows){
+      var map = {};
+      rows.forEach(function(r){ map[r.table_name+':'+r.record_id+':'+r.kind] = { name: r.actor_name, role: r.actor_role, at: r.at }; });
+      var sig = rows.length + '|' + rows.map(function(r){ return r.record_id + r.kind + r.at; }).join(',').length + '|' +
+        (rows.length ? rows.reduce(function(m, r){ return r.at > m ? r.at : m; }, '') : '');
+      recordActors = map;
+      if (sig !== recordActorsSig){ recordActorsSig = sig; if (recordActorsAt && rows.length) renderPreservingScroll(); }
+    }).catch(function(){}).then(function(){ recordActorsBusy = false; });
+  }
+  function actorOf(table, id, kind){ return id ? recordActors[table+':'+id+':'+kind] || null : null; }
+  function actorWhen(iso){
+    var d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleString('en-AU', { day:'numeric', month:'short', hour:'numeric', minute:'2-digit' });
+  }
+  var ACTOR_ROLE_TAG = { super_admin:'Super Admin', administrator:'Admin', tenant:'tenant', viewer:'viewer' };
+  /** One faint line: "Receipt attached by Geraldine (Admin) · 13 Oct, 4:05 pm". `parts` is a list
+   *  of [label, actor]; missing actors are skipped, and nothing is drawn for tenants. */
+  function byLineHtml(parts){
+    if (isTenantRole()) return '';
+    var bits = parts.filter(function(x){ return x && x[1]; }).map(function(x){
+      var a = x[1], tag = ACTOR_ROLE_TAG[a.role];
+      return esc(x[0]) + ' by <b>' + esc(a.name) + '</b>' + (tag ? ' (' + tag + ')' : '') + (a.at ? ' · ' + esc(actorWhen(a.at)) : '');
+    });
+    if (!bits.length) return '';
+    return '<div class="by-line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>' +
+      bits.join(' · ') + '</span></div>';
+  }
+  /** Who attached a rent receipt — the payment's own, else the tenant's report that carried it. */
+  function rentReceiptActor(pmt, path){
+    var a = pmt && actorOf('payments', pmt.id, 'receipt');
+    if (a) return a;
+    var rep = path && rentPaymentReports.find(function(r){ return r.proofPath === path; });
+    return rep ? actorOf('rent_payment_reports', rep.id, 'receipt') : null;
+  }
   function historyRowHtml(p){
     if (p.id === historyModalEditingId){
       return '<div class="history-row" style="align-items:flex-end;gap:8px;">'+
@@ -544,7 +594,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '<span style="display:flex;align-items:center;gap:8px;font-weight:600;">'+money(p.amount)+
         badge('neutral','Bond deduction')+'</span></div>';
     }
-    return '<div class="history-row"><span>'+fullDate(p.date)+'</span>'+
+    return '<div class="history-row"><span>'+fullDate(p.date)+
+        byLineHtml([['Recorded', actorOf('payments', p.id, 'created')], ['receipt', p.receiptPath ? rentReceiptActor(p, p.receiptPath) : null]])+'</span>'+
       '<span style="display:flex;align-items:center;gap:6px;font-weight:600;">'+money(p.amount)+
       paymentReceiptIconsHtml(p)+
       '<button class="del" title="Correct this payment" style="color:var(--text-dim);" onclick="startEditPayment(\''+p.id+'\')">✎</button>'+
@@ -576,6 +627,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       else groups.push({ paidDate:c.paidDate, tenantId:c.tenantId, items:[c] });
     });
     return groups;
+  }
+  /** "Recorded by … · receipt by …" under a paid rent period. */
+  function paidChargeByLine(c){
+    if (!c.paidDate || isTenantRole()) return '';
+    var found = rentReceiptForPaidDate(c.tenantId, c.paidDate);
+    return byLineHtml([['Recorded', found.pmt && actorOf('payments', found.pmt.id, 'created')],
+      ['receipt', found.path ? rentReceiptActor(found.path === (found.pmt && found.pmt.receiptPath) ? found.pmt : null, found.path) : null]]);
   }
   function paidChargeReceiptHtml(c){
     if (!c.paidDate) return '';
@@ -4078,7 +4136,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         return '<div class="review-row">'+
           '<div class="review-main"><div class="review-title">'+esc(t?t.fullName:'Tenant')+tenantRefChipHtml(t)+' · <b>'+money(r.amount)+'</b></div>'+
           '<div class="review-sub">Paid '+shortDate(r.paymentDate)+(r.paymentMethod?' · '+esc(PAYMENT_METHOD_LABEL[r.paymentMethod]||r.paymentMethod):'')+
-            (r.reference?' · Ref: '+esc(r.reference)+(t && tenantPaymentRef(t) && r.reference.toUpperCase().indexOf(tenantPaymentRef(t))<0 ? ' <span style="color:var(--status-due);">(doesn\'t match '+esc(tenantPaymentRef(t))+')</span>' : ''):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div></div>'+
+            (r.reference?' · Ref: '+esc(r.reference)+(t && tenantPaymentRef(t) && r.reference.toUpperCase().indexOf(tenantPaymentRef(t))<0 ? ' <span style="color:var(--status-due);">(doesn\'t match '+esc(tenantPaymentRef(t))+')</span>' : ''):'')+(r.periodLabel?' · for period from '+shortDate(r.periodLabel):'')+(p?' · '+esc(p.name):'')+'</div>'+
+            byLineHtml([['Receipt attached', r.proofPath ? actorOf('rent_payment_reports', r.id, 'receipt') : null]])+'</div>'+
           '<div class="review-actions">'+
             (r.proofPath
               ? '<button class="mini-btn icon-label-btn" onclick="viewReceipt(\'receipts\',\''+r.proofPath+'\')">'+reviewIcon('view')+'View receipt</button>'+
@@ -4405,12 +4464,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var sorted = g.items.slice().sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
       var total = g.items.reduce(function(sum,c){ return sum + (Number(c.amountDue)||0); }, 0);
       return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(sorted[0].periodStart)+' – '+shortDate(sorted[sorted.length-1].periodEnd)+
-        ' <span style="color:var(--text-faint);">(paid '+shortDate(g.paidDate)+' · '+g.items.length+' periods in one payment)</span></span>'+
+        ' <span style="color:var(--text-faint);">(paid '+shortDate(g.paidDate)+' · '+g.items.length+' periods in one payment)</span>'+paidChargeByLine(g.items[0])+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(total)+paidChargeReceiptHtml(g.items[0])+'</span></div>';
     }
     function paidRow(c){
       var paidNote = c.paidDate ? ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>' : '';
-      return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+'</span>'+
+      return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+paidChargeByLine(c)+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(c.amountDue)+paidChargeReceiptHtml(c)+'</span></div>';
     }
     function billOwedRow(o){
@@ -7136,7 +7195,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               var t = tenantOf(d.tenantId);
               return '<div class="row" style="border:none;padding:8px 0;">'+
                 '<div class="who"><div class="name">'+esc(t?t.fullName:'—')+' — '+esc(DOC_TYPE_LABEL[d.docType]||'Other')+'</div>'+
-                '<div class="meta">'+esc(d.fileName)+' • added '+shortDate(d.addedAt)+'</div></div>'+
+                '<div class="meta">'+esc(d.fileName)+' • added '+shortDate(d.addedAt)+'</div>'+byLineHtml([['Uploaded', actorOf('tenant_documents', d.id, 'created')]])+'</div>'+
                 '<button class="del" title="Remove" onclick="removeTenantDocument(\''+d.id+'\')">✕</button></div>';
             }).join('') + '</div>');
 
@@ -8023,7 +8082,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k">Amount</span><span class="v">'+money(b.amount)+'</span></div>'+
       '<div class="field-row"><span class="k">Status</span><span class="v">'+billStatusBadge(b)+'</span></div>'+
       (b.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(b.notes)+'</span></div>' : '')+
-      '</div></div>'+
+      '</div>'+byLineHtml([['Added', actorOf('bills', b.id, 'created')], ['last change', actorOf('bills', b.id, 'updated')]])+'</div>'+
       '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">'+
       (b.receiptPath ? '<button class="mini-btn" onclick="openBillDocumentPreview(\''+b.id+'\')">View bill</button>' : '')+
       '<button class="mini-btn" onclick="openEditBillModal(\''+b.id+'\')">Edit bill</button>'+
@@ -8896,7 +8955,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           ? '<details style="margin-top:4px;"><summary style="font-size:11px;color:var(--text-faint);cursor:pointer;">Payment report history</summary>'+
             historyReports.map(function(r){
               var label = r.status==='confirmed' ? 'Confirmed' : r.status==='rejected' ? ('Rejected'+(r.rejectionReason?' — '+esc(r.rejectionReason):'')) : 'Reported';
-              return '<div style="font-size:11px;color:var(--text-faint);padding:2px 0 2px 8px;">'+shortDate((r.reportedAt||'').slice(0,10))+' — '+label+'</div>';
+              var rv = r.status !== 'pending' ? actorOf('payment_reports', r.id, 'status') : null;
+              return '<div style="font-size:11px;color:var(--text-faint);padding:2px 0 2px 8px;">'+shortDate((r.reportedAt||'').slice(0,10))+' — '+label+(rv ? ' by '+esc(rv.name) : '')+'</div>';
             }).join('')+
             '</details>'
           : '';
@@ -8904,6 +8964,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '<div class="who"><div>'+esc(t?t.fullName:a.tenantId)+'</div>'+
           '<div style="display:flex;gap:10px;flex-wrap:wrap;">'+receiptLinkHtml(a.receiptPath, b.id, a.tenantId)+
           (a.paid ? '' : whatsAppButtonHtml(b, p, t, a.amount))+'</div>'+
+          byLineHtml([[a.paid ? 'Marked paid' : 'Marked unpaid', actorOf('bill_allocations', a.id, 'paid')],
+            ['receipt', a.receiptPath ? actorOf('bill_allocations', a.id, 'receipt') : null]])+
           reportDetailHtml+historyHtml+
           '</div>'+
           '<div style="display:flex;align-items:center;gap:10px;">'+
@@ -14631,6 +14693,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     setActiveNav(hash);
     updateNotifNavBadge();
     hydrateLazyThumbs();
+    refreshRecordActors();
     if (!preserveScroll) window.scrollTo(0,0);
   }
 

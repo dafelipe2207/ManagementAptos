@@ -14,3 +14,11 @@ export async function logLogin(device) {
   const { error } = await supabase.rpc('log_app_login', { p_device: device || null });
   if (error) throw error;
 }
+
+/** Who created / last changed / attached the receipt of each record (staff only — empty for
+ *  anyone else). Rows: { table_name, record_id, kind, actor_name, actor_role, at }. */
+export async function getRecordActors(tables) {
+  const { data, error } = await supabase.rpc('record_actors', { p_tables: tables });
+  if (error) throw error;
+  return data || [];
+}
