@@ -2759,35 +2759,118 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     return h;
   }
-  async function applyEstimateDifference(tenantId, estimateSourceId, billId){
-    var t = tenantOf(tenantId), bond = bondOf(tenantId), s = moveOutSettlementOf(tenantId);
-    if (!t || !bond || !s) return;
-    var line = (bond.discounts || []).find(function(d){ return d.settlementId === s.id && d.sourceId === estimateSourceId; });
-    var r = estimateReconciliation(t, line, bond);
-    var x = r && r.real.find(function(y){ return y.bill.id === billId; });
-    if (!x || x.diff == null || x.applied) return;
-    openConfirmModal('Apply the real '+billTypeLabel(line.billType)+' bill',
-      'Real share '+money(x.real)+' vs estimate '+money(x.est)+' for '+shortDate(x.from)+' – '+shortDate(x.to)+' ('+diffText(x.diff)+'). The bond is adjusted by '+
-      (x.diff >= 0 ? '+' : '−')+money(Math.abs(x.diff))+(x.paidElsewhere ? '.' : ' and the tenant\'s share of this bill is marked paid from the bond.'),
-      function(){ return doApplyEstimateDifference(t, bond, s, line, x, estimateSourceId, billId, tenantId); });
+  /** For a tenant who has left: each real bill share still unpaid (or already squared up) that
+   *  arrived after the move-out, matched with what the bond already holds for it —
+   *   · kind 'estimate': an estimated bill of the new settlement flow (per-day portion),
+   *   · kind 'legacy':   an "Outstanding X Bill" line of the old flow that wasn't a real bill
+   *                      (no share of that service was paid from the bond for that amount),
+   *   · kind 'bond':     nothing estimated for it, but there is bond left to cover it.
+   *  Returns a map allocationId → match { key, kind, bill, alloc, real, est, diff, from, to, applied }. */
+  function bondCoverMatches(t){
+    var out = {}, bond = bondOf(t.id);
+    if (!t || !bond) return out;
+    var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
+    var s = moveOutSettlementOf(t.id);
+    var settled = (s && s.status === 'completed') || !!t.moveOutSettledAt;
+    if (!settled || !moveOut) return out;
+    var discounts = bond.discounts || [];
+    var adjusts = discounts.filter(function(d){ return d.sourceType === 'estimate_adjust'; });
+    function appliedFor(billId){ return adjusts.find(function(d){ return d.billId === billId; }) || null; }
+    // New flow: per-day estimate portions.
+    discounts.forEach(function(d){
+      var r = estimateReconciliation(t, d, bond);
+      if (!r) return;
+      r.real.forEach(function(x){
+        if (!x.alloc || x.real == null) return;
+        out[x.alloc.id] = { key: d.sourceId, kind: 'estimate', bill: x.bill, alloc: x.alloc, real: x.real, est: x.est, diff: x.diff, from: x.from, to: x.to, applied: x.applied, paidElsewhere: x.paidElsewhere };
+      });
+    });
+    // Old flow: "Outstanding X Bill" lines with no bond-paid share behind them were estimates.
+    var mine = [];
+    bills.forEach(function(b){ (b.allocations || []).forEach(function(a){ if (a.tenantId === t.id) mine.push({ bill: b, alloc: a }); }); });
+    var usedBond = {};
+    discounts.forEach(function(d, i){
+      var m = /^Outstanding (.+) Bill$/.exec(d.label || '');
+      if (!m || d.sourceType) return;
+      var type = Object.keys(BILL_TYPE_LABELS).find(function(k){ return billTypeLabel(k).toLowerCase() === m[1].toLowerCase(); }) || m[1].toLowerCase().replace(/\s+/g, '_');
+      var real = mine.find(function(x){ return !usedBond[x.alloc.id] && (x.bill.billType || 'other') === type && x.alloc.paid && x.alloc.paidVia === 'bond_deduction' &&
+        Math.abs((x.alloc.amount || 0) - (d.amount || 0)) < 0.02 && !appliedFor(x.bill.id); });
+      if (real){ usedBond[real.alloc.id] = true; return; } // a real bill paid from the bond — not an estimate
+      var key = 'legacy:' + type + ':' + i;
+      var cand = mine.filter(function(x){
+        if ((x.bill.billType || 'other') !== type || out[x.alloc.id]) return false;
+        var ap = appliedFor(x.bill.id);
+        if (ap) return ap.estimateSourceId === key;
+        return !x.alloc.paid && x.bill.billingPeriodEnd && x.bill.billingPeriodEnd >= stepDateIso(moveOut, -1);
+      }).sort(function(a,b){ return (a.bill.billingPeriodStart || '').localeCompare(b.bill.billingPeriodStart || ''); })[0];
+      if (!cand) return;
+      var est = round2(d.amount || 0), realAmt = round2(cand.alloc.amount || 0);
+      out[cand.alloc.id] = { key: key, kind: 'legacy', bill: cand.bill, alloc: cand.alloc, real: realAmt, est: est, diff: round2(realAmt - est),
+        from: cand.bill.billingPeriodStart, to: cand.bill.billingPeriodEnd, applied: appliedFor(cand.bill.id) };
+    });
+    // Anything else unpaid after leaving: can be taken from what's left of the bond.
+    var left = round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0));
+    mine.forEach(function(x){
+      if (out[x.alloc.id]) return;
+      var ap = appliedFor(x.bill.id);
+      if (ap && ap.estimateSourceId === 'bond:' + x.bill.id){ out[x.alloc.id] = { key: ap.estimateSourceId, kind: 'bond', bill: x.bill, alloc: x.alloc, real: round2(x.alloc.amount||0), est: 0, diff: round2(x.alloc.amount||0), applied: ap }; return; }
+      if (x.alloc.paid || !(x.alloc.amount > 0.004) || left < x.alloc.amount - 0.004) return;
+      out[x.alloc.id] = { key: 'bond:' + x.bill.id, kind: 'bond', bill: x.bill, alloc: x.alloc, real: round2(x.alloc.amount), est: 0, diff: round2(x.alloc.amount), bondLeft: left, applied: null };
+    });
+    return out;
   }
-  async function doApplyEstimateDifference(t, bond, s, line, x, estimateSourceId, billId, tenantId){
+  /** Small line under a bill share in Payments: what the bond holds for it and the difference. */
+  function bondCoverLineHtml(t, m){
+    if (!m) return '';
+    var stop = 'event.stopPropagation();';
+    var btn = function(label){ return isViewer() ? '' : ' <button type="button" class="text-link" style="display:inline;margin:0 0 0 4px;font-size:11.5px;" onclick="'+stop+'applyBondCover(\''+t.id+'\',\''+m.alloc.id+'\')">'+label+'</button>'; };
+    if (m.kind === 'bond'){
+      if (m.applied) return '<span class="bond-cover ok">🔐 Paid from bond</span>';
+      return '<span class="bond-cover">🔐 Bond left '+money(m.bondLeft)+btn('Use bond')+'</span>';
+    }
+    var cls = m.diff > 0.004 ? 'more' : (m.diff < -0.004 ? 'less' : '');
+    var txt = 'Est. '+money(m.est)+' → <b>'+(Math.abs(m.diff) < 0.005 ? 'same' : (m.diff > 0 ? '+' : '−')+money(Math.abs(m.diff)))+'</b>';
+    if (m.applied) return '<span class="bond-cover ok">🔐 '+txt+' · ✓ applied</span>';
+    return '<span class="bond-cover '+cls+'">🔐 '+txt+btn('Apply')+'</span>';
+  }
+  function applyBondCover(tenantId, allocationId){
+    var t = tenantOf(tenantId), bond = bondOf(tenantId);
+    var m = t && bondCoverMatches(t)[allocationId];
+    if (!m || m.applied || !bond) return;
+    var name = billTypeLabel(m.bill.billType);
+    var body = m.kind === 'bond'
+      ? name + ' share ' + money(m.real) + ' — nothing was estimated for it. It is taken from the bond left (' + money(m.bondLeft) + ') and marked paid from the bond.'
+      : 'Real share ' + money(m.real) + ' vs estimate in the bond ' + money(m.est) + ' (' + diffText(m.diff) + '). The bond is adjusted by ' +
+        (m.diff >= 0 ? '+' : '−') + money(Math.abs(m.diff)) + (m.paidElsewhere ? '.' : ' and this share is marked paid from the bond.');
+    openConfirmModal(m.kind === 'bond' ? 'Pay ' + name + ' from the bond' : 'Apply the real ' + name + ' bill', body, function(){ return doApplyBondCover(t, bond, m); });
+  }
+  /** Kept for the settlement card's per-bill "Apply" buttons. */
+  function applyEstimateDifference(tenantId, estimateSourceId, billId){
+    var t = tenantOf(tenantId); if (!t) return;
+    var b = billOf(billId), a = b && (b.allocations || []).find(function(x){ return x.tenantId === tenantId; });
+    if (a) applyBondCover(tenantId, a.id);
+  }
+  async function doApplyBondCover(t, bond, m){
     try {
-      if (x.alloc && !x.alloc.paid){
-        var marked = await markAllocationPaid(billId, tenantId, TODAY, 'bond_deduction', true);
+      if (m.alloc && !m.alloc.paid){
+        var marked = await markAllocationPaid(m.bill.id, t.id, TODAY, 'bond_deduction', true);
         if (!marked) return { blocked: true, message: 'Could not mark the tenant\'s share of this bill as paid. Try again.' };
       }
-      var entry = { id: 'adj-' + Date.now().toString(36), label: billTypeLabel(line.billType) + ' bill — real vs estimate (' + shortDate(x.from) + ' – ' + shortDate(x.to) + ')',
-        amount: x.diff, category: 'bill', sourceType: 'estimate_adjust', sourceId: 'adj-' + billId, estimateSourceId: estimateSourceId, billId: billId,
-        realAmount: x.real, estimatedAmount: x.est, settlementId: s.id };
+      var s = moveOutSettlementOf(t.id);
+      var period = m.from && m.to ? ' (' + shortDate(m.from) + ' – ' + shortDate(m.to) + ')' : '';
+      var entry = { id: 'adj-' + Date.now().toString(36),
+        label: billTypeLabel(m.bill.billType) + ' bill — ' + (m.kind === 'bond' ? 'paid from bond' : 'real vs estimate') + period,
+        amount: m.diff, category: 'bill', sourceType: 'estimate_adjust', sourceId: 'adj-' + m.bill.id, estimateSourceId: m.key, billId: m.bill.id,
+        realAmount: m.real, estimatedAmount: m.est, settlementId: s ? s.id : null };
       var discounts = (bond.discounts || []).concat([entry]);
-      var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts, deduction: round2((bond.deduction || 0) + x.diff) }));
+      var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts, deduction: round2((bond.deduction || 0) + m.diff) }));
       Object.assign(bond, saved);
-      showToast('Bond adjusted: ' + diffText(x.diff) + '.', 'success');
+      showToast(m.kind === 'bond' ? 'Paid from the bond.' : 'Bond adjusted: ' + diffText(m.diff) + '.', 'success');
       render();
-    } catch(err){ return { blocked: true, message: 'Could not apply the difference. ' + friendlyErrorMessage(err) }; }
+    } catch(err){ return { blocked: true, message: 'Could not update the bond. ' + friendlyErrorMessage(err) }; }
   }
   window.applyEstimateDifference = applyEstimateDifference;
+  window.applyBondCover = applyBondCover;
 
   var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
 
@@ -3272,7 +3355,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<div class="card"><h2>Bond settlement</h2>'+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Outstanding rent and bills were settled by deducting them from the bond on move-out — see payment history and each bill\'s allocation for the individual entries. Actually returning a refund is still a manual step, from "Edit bond" below.</p>'+
       '<div class="field-list">'+rows+'</div>'+
+      bondCoverListHtml(t)+
       '</div>';
+  }
+  /** Bills that arrived after the tenant left: real share vs what the bond held (estimate). */
+  function bondCoverListHtml(t){
+    var map = bondCoverMatches(t), list = Object.keys(map).map(function(k){ return map[k]; });
+    if (!list.length) return '';
+    list.sort(function(a,b){ return (a.bill.billingPeriodStart || '').localeCompare(b.bill.billingPeriodStart || ''); });
+    var canEdit = !isViewer();
+    return '<h3 style="font-size:12.5px;margin:12px 0 4px;">Bills after move-out</h3><div class="field-list">'+list.map(function(m){
+      var b = m.bill, per = b.billingPeriodStart && b.billingPeriodEnd ? shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd) : '';
+      var right = m.kind === 'bond'
+        ? (m.applied ? '<span style="color:var(--status-paid);">✓ Paid from bond</span>' : 'Not estimated · bond left '+money(m.bondLeft))
+        : 'Est. '+money(m.est)+' → <b style="color:'+(m.diff > 0.004 ? 'var(--status-overdue)' : (m.diff < -0.004 ? 'var(--status-paid)' : 'inherit'))+';">'+diffText(m.diff)+'</b>'+(m.applied ? ' · <span style="color:var(--status-paid);">✓ applied</span>' : '');
+      var btn = (!m.applied && canEdit) ? '<button type="button" class="mini-btn" style="padding:3px 9px;font-size:11.5px;" onclick="applyBondCover(\''+t.id+'\',\''+m.alloc.id+'\')">'+(m.kind === 'bond' ? 'Use bond' : 'Apply')+'</button>' : '';
+      return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(b.billType))+' · '+money(m.real)+
+        '<br><span style="font-size:11.5px;color:var(--text-faint);">'+per+'</span></span>'+
+        '<span class="v" style="font-size:12px;font-weight:500;text-align:right;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">'+right+btn+'</span></div>';
+    }).join('')+'</div>';
   }
 
   /** Every unpaid bill share for this tenant (grouped one line per allocation, not merged by
@@ -4782,7 +4883,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return '<div class="bill-owed-row" role="button" tabindex="0" onclick="'+open+'" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();'+open+';}">'+
         '<span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span>'+
         '<span class="bill-owed-main"><span class="bill-owed-name">'+esc(billTypeLabel(b.billType))+' · '+esc(b.provider)+'</span>'+
-          '<span class="bill-owed-meta">'+(b.dueDate ? 'Due '+shortDate(b.dueDate) : 'No due date')+'</span></span>'+
+          '<span class="bill-owed-meta">'+(b.dueDate ? 'Due '+shortDate(b.dueDate) : 'No due date')+'</span>'+
+          (o.cover ? bondCoverLineHtml(o.tenant, o.cover) : '')+'</span>'+
         '<span class="bill-owed-right"><b>'+money(a.amount)+'</b>'+st+'</span>'+
         '<span class="bill-owed-chev" aria-hidden="true">›</span></div>';
     }
@@ -4877,6 +4979,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           var owedBills = unpaidBillAllocationsFor(t.id)
             .filter(function(o){ return billOwedMatchesFilter(o, paymentsFilter); })
             .map(function(o){ return { tenant:t, bill:o.bill, alloc:o.alloc }; });
+          if (owedBills.length && tenantHasMovedOut(t) && bondOf(t.id)){
+            var covers = bondCoverMatches(t);
+            owedBills.forEach(function(o){ o.cover = covers[o.alloc.id] || null; });
+          }
           var prop = properties.find(function(p){ return p.id===t.propertyId; });
           var pendingTotal = pending.reduce(function(s,c){ return s+c.remaining; }, 0);
           var billsTotal = owedBills.reduce(function(s,o){ return s+o.alloc.amount; }, 0);
