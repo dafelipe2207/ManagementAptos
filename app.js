@@ -18,7 +18,7 @@ import * as billService from './services/billService.js?v=6';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=3';
-import * as aiService from './services/aiService.js?v=4';
+import * as aiService from './services/aiService.js?v=5';
 import * as billExtractionService from './services/billExtractionService.js?v=1';
 import * as profileService from './services/profileService.js?v=7';
 import * as maintenanceService from './services/maintenanceService.js';
@@ -1384,7 +1384,40 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var reiHtml = realEstateInspectionBannerHtml(false) ||
       '<div class="rei-empty">🏢 No real estate inspection scheduled <button type="button" class="text-link" onclick="openReiModal(null)">+ Schedule one</button></div>';
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
+  }
+
+  /** Dashboard "Damage reported" card: open maintenance requests (anything not finished yet),
+   *  most urgent first, then newest. Requests a tenant reported are marked as such. Tapping a row
+   *  opens the request; nothing is shown when there's nothing open. */
+  var DASH_DAMAGE_LIMIT = 5;
+  function dashboardDamageHtml(){
+    var open = maintenanceRequests.filter(function(m){ return MAINTENANCE_DONE_STATUSES.indexOf(m.status) === -1; });
+    if (!open.length) return '';
+    var rank = function(m){ var i = MAINTENANCE_PRIORITY_ORDER.indexOf(m.priority); return i < 0 ? 1 : i; };
+    open.sort(function(a,b){ return (rank(b) - rank(a)) || (b.createdAt||'').localeCompare(a.createdAt||''); });
+    var fresh = open.filter(function(m){ return m.status === 'reported'; }).length;
+    var rows = open.slice(0, DASH_DAMAGE_LIMIT).map(function(m){
+      var p = propertyOf(m.propertyId), r = m.roomId ? roomOf(m.roomId) : null, t = m.tenantId ? tenantOf(m.tenantId) : null;
+      var reportedDay = (m.createdAt||'').slice(0,10);
+      var age = reportedDay ? daysBetween(reportedDay, TODAY) : null;
+      var urgent = m.priority === 'urgent' || m.priority === 'high';
+      var by = t ? 'Reported by ' + esc(t.fullName) : 'Logged by staff';
+      return '<div class="row" style="cursor:pointer;" onclick="openMaintenanceModal(\''+m.id+'\')">'+
+        '<div class="who"><div class="name">'+esc(m.title)+'</div>'+
+        '<div class="meta">'+esc(p ? p.name : '')+(r ? ' • '+esc(r.name) : '')+' · '+esc(MAINTENANCE_CATEGORY_LABEL[m.category]||m.category||'')+'</div>'+
+        '<div class="meta">'+by+(age != null ? ' · ' + (age === 0 ? 'today' : age + ' day' + (age === 1 ? '' : 's') + ' ago') : '')+
+          ((m.photosBefore||[]).length + (m.photoPaths||[]).length ? ' · 📷' : '')+'</div></div>'+
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">'+
+          (urgent ? badge('overdue', MAINTENANCE_PRIORITY_LABEL[m.priority]) : '')+
+          badge(MAINTENANCE_STATUS_BADGE[m.status]||'neutral', MAINTENANCE_STATUS_LABEL[m.status]||m.status)+
+        '</div></div>';
+    }).join('');
+    return '<div class="card needs-card"><h2>🛠️ Damage reported <span class="count-pill">'+open.length+'</span></h2>'+
+      (fresh ? '<p class="modal-hint" style="margin:-4px 0 8px;">'+fresh+' new report'+(fresh===1?'':'s')+' not looked at yet.</p>' : '')+
+      rows+
+      (open.length > DASH_DAMAGE_LIMIT ? '<button type="button" class="show-more-btn" onclick="location.hash=\'#/maintenance\'">See all '+open.length+' in Maintenance</button>' : '')+
+      '</div>';
   }
 
   /** Dashboard "Move-outs" card: only tenants who are still living in the property (not moved
@@ -5998,6 +6031,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     openManualBillModal();
   }
   window.chooseManualBillEntry = chooseManualBillEntry;
+  /** On a phone the review form is long and the message sits under it, so a blocked Save looked
+   *  like the button did nothing. Bring the message into view and repeat it as a toast. */
+  function flagReviewError(el){
+    try { el.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_e){}
+    showToast(el.textContent, 'error');
+  }
   async function confirmReviewedBill(){
     var v = reviewFormValues();
     var errorEl = document.getElementById('review-modal-error');
@@ -6008,18 +6047,18 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var blocking = reviewIssues.filter(function(i){ return i.severity === 'error'; });
     if (blocking.length){
       errorEl.textContent = blocking.map(function(i){ return i.message; }).join(' ');
-      errorEl.hidden = false;
+      errorEl.hidden = false; flagReviewError(errorEl);
       return;
     }
     if (!v.issueDate){
       errorEl.textContent = 'Enter the invoice date from the bill.';
-      errorEl.hidden = false;
+      errorEl.hidden = false; flagReviewError(errorEl);
       return;
     }
     var reviewWarnings = reviewIssues.filter(function(i){ return i.severity === 'warning'; });
     if (reviewWarnings.length && !document.getElementById('review-ack').checked){
       errorEl.textContent = 'Check the points marked ⚠️ against the bill, then tick "I\'ve checked these" to save.';
-      errorEl.hidden = false;
+      errorEl.hidden = false; flagReviewError(errorEl);
       return;
     }
 
@@ -6028,7 +6067,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var duplicate = findDuplicateBill(v.propertyId, v.provider, v.invoiceNumber, v.billingPeriodStart, v.billingPeriodEnd, v.accountNumber);
       if (duplicate){
         errorEl.textContent = 'This looks like a bill you already saved — same provider ('+esc(v.provider)+') and period for this property'+(v.invoiceNumber && duplicate.invoiceNumber ? ' (or a matching invoice number)' : '')+'. Tap "Save anyway" if this is a different bill, or Cancel to check it first.';
-        errorEl.hidden = false;
+        errorEl.hidden = false; flagReviewError(errorEl);
         reviewDuplicateOverride = true;
         if (saveBtnEl) saveBtnEl.textContent = 'Save anyway';
         return;
@@ -6124,7 +6163,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       render();
     } catch(err){
       errorEl.textContent = 'Could not save this bill. ' + friendlyErrorMessage(err);
-      errorEl.hidden = false;
+      errorEl.hidden = false; flagReviewError(errorEl);
     } finally {
       if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
     }

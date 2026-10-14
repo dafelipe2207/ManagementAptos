@@ -30,6 +30,16 @@ const AZURE_API_VERSION = "2024-11-30";
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 const GEMINI_MODEL = "gemini-3.6-flash";
 const MAX_ATTEMPTS = 3;
+// Whole-request time budget. The platform kills a function at 150 s with no answer (HTTP 546),
+// which left the app spinning on "processing". Every network step below is bounded by what's
+// left of this budget, so the function always answers — with what it read, or a clear error.
+const BUDGET_MS = 75000;
+interface Budget { remaining(): number; signal(maxMs: number): AbortSignal }
+function newBudget(): Budget {
+  const start = Date.now();
+  const remaining = () => BUDGET_MS - (Date.now() - start);
+  return { remaining, signal: (maxMs: number) => AbortSignal.timeout(Math.max(1000, Math.min(maxMs, remaining()))) };
+}
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -44,7 +54,7 @@ function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve,
 
 // ------------------------------------------------------------------ Azure
 
-async function analyzeWithAzure(base64: string): Promise<Extraction> {
+async function analyzeWithAzure(base64: string, budget: Budget): Promise<Extraction> {
   const url = AZURE_ENDPOINT + "/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=" +
     AZURE_API_VERSION + "&locale=en-AU";
   let start: Response | null = null;
@@ -52,12 +62,13 @@ async function analyzeWithAzure(base64: string): Promise<Extraction> {
     start = await fetch(url, {
       method: "POST",
       headers: { "Ocp-Apim-Subscription-Key": AZURE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ base64Source: base64 })
+      body: JSON.stringify({ base64Source: base64 }),
+      signal: budget.signal(25000)
     });
     if (start.status === 429 || start.status === 503) {
       const wait = Math.min(parseInt(start.headers.get("retry-after") || "2", 10) * 1000 || 2000, 10000);
       await start.body?.cancel();
-      if (attempt < MAX_ATTEMPTS) { await sleep(wait); continue; }
+      if (attempt < MAX_ATTEMPTS && budget.remaining() - wait > 30000) { await sleep(wait); continue; }
     }
     break;
   }
@@ -69,11 +80,12 @@ async function analyzeWithAzure(base64: string): Promise<Extraction> {
   await start.body?.cancel();
   if (!opUrl) throw new Error("Azure did not return an operation to poll.");
 
-  const deadline = Date.now() + 60000;
+  // Leave time for the backup reader if Azure is slow.
+  const deadline = Date.now() + Math.min(45000, budget.remaining() - 20000);
   let wait = 1000;
   while (Date.now() < deadline) {
     await sleep(wait);
-    const res = await fetch(opUrl, { headers: { "Ocp-Apim-Subscription-Key": AZURE_KEY } });
+    const res = await fetch(opUrl, { headers: { "Ocp-Apim-Subscription-Key": AZURE_KEY }, signal: budget.signal(10000) });
     if (res.status === 429) { await res.body?.cancel(); wait = 2000; continue; }
     if (!res.ok) throw new Error("Azure polling failed (" + res.status + "): " + (await res.text()).slice(0, 300));
     const body = await res.json();
@@ -120,7 +132,7 @@ function geminiBackoff(status: number, attempt: number, errText: string): number
   return attempt * 2500;
 }
 
-async function analyzeWithGemini(base64: string, mimeType: string, today: string): Promise<Extraction> {
+async function analyzeWithGemini(base64: string, mimeType: string, today: string, budget: Budget): Promise<Extraction> {
   if (!GEMINI_API_KEY) throw new Error("The backup reader (Gemini) is not configured.");
   const requestBody = JSON.stringify({
     contents: [{ parts: [{ text: geminiPrompt(today) }, { inlineData: { mimeType, data: base64 } }] }],
@@ -128,12 +140,15 @@ async function analyzeWithGemini(base64: string, mimeType: string, today: string
   });
   let res: Response | null = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (budget.remaining() < 6000) throw new Error("ran out of time.");
     res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: requestBody });
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: requestBody, signal: budget.signal(budget.remaining() - 2000) });
     if (res.ok) break;
     if ((res.status === 429 || res.status === 503) && attempt < MAX_ATTEMPTS) {
       const t = await res.text();
-      await sleep(geminiBackoff(res.status, attempt, t));
+      const wait = geminiBackoff(res.status, attempt, t);
+      if (budget.remaining() - wait < 15000) break; // no time for another try
+      await sleep(wait);
       continue;
     }
     break;
@@ -161,6 +176,7 @@ async function analyzeWithGemini(base64: string, mimeType: string, today: string
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
+  const budget = newBudget();
 
   let body: { imageBase64?: string; mimeType?: string; properties?: PropertyRef[]; today?: string };
   try { body = await req.json(); } catch (_e) { return json({ error: "Invalid request body." }, 400); }
@@ -177,13 +193,17 @@ Deno.serve(async (req: Request) => {
   const extraIssues: Issue[] = [];
 
   if (azureConfigured) {
-    try { ex = await analyzeWithAzure(imageBase64); extractor = "azure"; }
-    catch (e) { azureError = (e as Error).message; console.error("analyze-bill: Azure failed:", azureError); }
+    try { ex = await analyzeWithAzure(imageBase64, budget); extractor = "azure"; }
+    catch (e) {
+      const err = e as Error;
+      azureError = err.name === "TimeoutError" || err.name === "AbortError" ? "took too long to answer." : err.message;
+      console.error("analyze-bill: Azure failed:", azureError);
+    }
   }
 
-  if (!ex || needsBackup(ex)) {
+  if ((!ex || needsBackup(ex)) && budget.remaining() > 8000) {
     try {
-      const g = await analyzeWithGemini(imageBase64, mimeType, today);
+      const g = await analyzeWithGemini(imageBase64, mimeType, today, budget);
       if (ex) {
         const { merged, disagreements } = mergeBackup(ex, g);
         const filled = FIELD_KEYS.some((k) => merged.source[k] === "gemini");
@@ -193,7 +213,8 @@ Deno.serve(async (req: Request) => {
         ex = g; extractor = "gemini";
       }
     } catch (e) {
-      geminiError = (e as Error).message;
+      const err = e as Error;
+      geminiError = err.name === "TimeoutError" || err.name === "AbortError" ? "took too long to answer." : err.message;
       console.error("analyze-bill: Gemini failed:", geminiError);
     }
   }
