@@ -22,7 +22,7 @@ import * as aiService from './services/aiService.js?v=5';
 import * as billExtractionService from './services/billExtractionService.js?v=1';
 import * as profileService from './services/profileService.js?v=7';
 import * as maintenanceService from './services/maintenanceService.js';
-import * as notificationService from './services/notificationService.js';
+import * as notificationService from './services/notificationService.js?v=2';
 import * as paymentReportService from './services/paymentReportService.js?v=2';
 import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=4';
 import * as houseRulesService from './services/houseRulesService.js';
@@ -802,14 +802,23 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function weeklyToMonthly(weekly){ return weekly * 52 / 12; }
   function weeklyToFortnightly(weekly){ return weekly * 2; }
-  function shortDate(iso){
+  // Dates are formatted thousands of times per screen. toLocaleDateString builds a new formatter on
+  // every call (that alone was most of the time it took to draw Payments/Bills/Dashboard, and much
+  // slower on a phone), so one formatter is reused and each date's text is remembered.
+  var SHORT_DATE_FMT = new Intl.DateTimeFormat('en-AU', { day:'2-digit', month:'short' });
+  var FULL_DATE_FMT = new Intl.DateTimeFormat('en-AU', { day:'2-digit', month:'short', year:'numeric' });
+  var shortDateCache = new Map(), fullDateCache = new Map();
+  function fmtDateCached(cache, fmt, iso){
+    var hit = cache.get(iso);
+    if (hit !== undefined) return hit;
     var d = new Date(iso + 'T00:00:00');
-    return d.toLocaleDateString('en-AU', { day:'2-digit', month:'short' });
+    var out = isNaN(d) ? 'Invalid Date' : fmt.format(d);
+    if (cache.size > 5000) cache.clear();
+    cache.set(iso, out);
+    return out;
   }
-  function fullDate(iso){
-    var d = new Date(iso + 'T00:00:00');
-    return d.toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' });
-  }
+  function shortDate(iso){ return fmtDateCached(shortDateCache, SHORT_DATE_FMT, iso); }
+  function fullDate(iso){ return fmtDateCached(fullDateCache, FULL_DATE_FMT, iso); }
   function daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
   function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   function addMonthsIso(iso, months){
@@ -17009,6 +17018,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     for (var i = 0; i < BTN_ICON_RULES.length; i++) if (BTN_ICON_RULES[i][0].test(t)) return BTN_ICONS[BTN_ICON_RULES[i][1]];
     return null;
   }
+  // Each icon's <svg> is parsed once and cloned after that (parsing HTML for every button on
+  // every screen showed up when timing page changes).
+  var btnIconTpl = new Map();
+  function btnIconNode(icon){
+    var tpl = btnIconTpl.get(icon);
+    if (!tpl){
+      var holder = document.createElement('span');
+      holder.innerHTML = '<svg class="btn-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icon+'</svg>';
+      tpl = holder.firstChild;
+      btnIconTpl.set(icon, tpl);
+    }
+    return tpl.cloneNode(true);
+  }
   function decorateButton(b){
     if (b.querySelector('svg')) return;
     var label = (b.textContent || '').trim();
@@ -17019,7 +17041,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var first = b.firstChild;
     while (first && first.nodeType === 1 && !first.textContent.trim()) first = first.nextSibling;
     if (first && first.nodeType === 3) first.textContent = first.textContent.replace(BTN_LEAD_RE, '').replace(/^\s+/, '');
-    b.insertAdjacentHTML('afterbegin', '<svg class="btn-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icon+'</svg>');
+    b.insertBefore(btnIconNode(icon), b.firstChild);
     b.classList.add('has-ic');
   }
   function decorateButtons(root){

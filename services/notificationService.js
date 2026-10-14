@@ -81,8 +81,36 @@ export async function notifyOrThrow(authUserId, title, body, relatedTable, relat
  *  ignoreDuplicates so re-running the same rule many times (every bootstrapData()) never creates
  *  a second row — Postgres enforces this, not a client-side check. Returns whether a row was
  *  actually inserted (false = the dedup key already existed). Never throws. */
+// Automatic rules run on every app open and re-send the same (user, dedup key) pairs each time —
+// hundreds of one-by-one requests that kept a phone busy for a long while. Pairs the server has
+// already answered for are remembered on this device and skipped (the database still refuses
+// duplicates either way, so this only saves work).
+const SENT_KEY = 'notifyOnce.sent.v1';
+let sentSet = null;
+function sentPairs() {
+  if (sentSet) return sentSet;
+  sentSet = new Set();
+  try { (JSON.parse(localStorage.getItem(SENT_KEY) || '[]') || []).forEach((k) => sentSet.add(k)); } catch (_e) {}
+  return sentSet;
+}
+let saveTimer = null;
+function rememberSent(k) {
+  const set = sentPairs();
+  set.add(k);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      let arr = Array.from(set);
+      if (arr.length > 4000) arr = arr.slice(arr.length - 4000);
+      localStorage.setItem(SENT_KEY, JSON.stringify(arr));
+    } catch (_e) {}
+  }, 500);
+}
+
 export async function notifyOnce(authUserId, dedupKey, title, body, relatedTable, relatedId, opts) {
   if (!authUserId || !dedupKey) return { id: null, created: false };
+  const pair = authUserId + '|' + dedupKey;
+  if (sentPairs().has(pair)) return { id: null, created: false };
   try {
     const row = Object.assign({
       auth_user_id: authUserId, title, body: body || null,
@@ -92,6 +120,7 @@ export async function notifyOnce(authUserId, dedupKey, title, body, relatedTable
       .upsert(row, { onConflict: 'auth_user_id,dedup_key', ignoreDuplicates: true })
       .select();
     if (error) throw error;
+    rememberSent(pair); // inserted now, or already there — either way it exists on the server
     // ignoreDuplicates: true returns an empty array when the row already existed.
     return { id: data && data[0] ? data[0].id : null, created: !!(data && data.length) };
   } catch (_e) { return { id: null, created: false }; }

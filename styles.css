@@ -2279,3 +2279,15 @@ body.page-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden;}
 .modal-x-bar .modal-x{transform:translate(6px,-4px);box-shadow:0 2px 10px rgba(10,12,18,.12);}
 .modal-card > .modal-title, .modal-card > h2:first-of-type{padding-right:52px;}
 @media (max-width:640px){ .modal-x-bar{top:0;} }
+
+/* ── Performance: frosted glass only on big surfaces ───────────────────────────────────────
+   Every element with backdrop-filter is a separate GPU layer that iPhone Safari re-blurs whenever
+   anything under it changes. Payments had ~800 of them (one per button, field and select), so
+   opening/closing a window or changing page froze the phone for seconds. Controls sit on cards
+   that are already frosted, so their own blur added nothing visible — it's switched off here.
+   Cards, bars, menus and windows keep it; nested cards inside a frosted card/window don't. */
+.mini-btn, .chip, .mt-chip, .mq-chip, .mq-tile, .seg, .seg.seg-wide,
+input, select, textarea, .modal-input, .bills-sort select,
+.card .card, .card .stat, .modal-card .card, .modal-card .stat, .card details.card{
+  -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
+}
