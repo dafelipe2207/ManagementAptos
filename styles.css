@@ -2291,3 +2291,13 @@ input, select, textarea, .modal-input, .bills-sort select,
 .card .card, .card .stat, .modal-card .card, .modal-card .stat, .card details.card{
   -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
 }
+
+/* Phones: windows open centred on the screen (not stuck to the bottom like a sheet), so a short
+   window doesn't look like it's missing its top half. Tall ones still fit and scroll inside. */
+@media (max-width:640px){
+  .modal-overlay{align-items:center !important;padding:12px !important;
+    padding-top:max(12px, env(safe-area-inset-top,0px)) !important;padding-bottom:max(12px, env(safe-area-inset-bottom,0px)) !important;}
+  .modal-card{width:100% !important;max-width:100% !important;border-radius:22px !important;
+    max-height:calc(100dvh - 24px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px)) !important;
+    padding-bottom:17px !important;}
+}
