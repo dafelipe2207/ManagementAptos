@@ -25,6 +25,12 @@ export async function getAll() {
   return data.map(fromRow);
 }
 
+export async function getById(id) {
+  const { data, error } = await supabase.from('bonds').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ? fromRow(data) : null;
+}
+
 export async function create(b) {
   const userId = await getCurrentUserId();
   const { data, error } = await supabase.from('bonds').insert({

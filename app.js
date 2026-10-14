@@ -11,7 +11,7 @@ import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './li
 import * as propertyService from './services/propertyService.js?v=4';
 import * as roomService from './services/roomService.js?v=3';
 import * as tenantService from './services/tenantService.js?v=10';
-import * as bondService from './services/bondService.js?v=2';
+import * as bondService from './services/bondService.js?v=3';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
 import * as billService from './services/billService.js?v=6';
@@ -2850,8 +2850,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var b = billOf(billId), a = b && (b.allocations || []).find(function(x){ return x.tenantId === tenantId; });
     if (a) applyBondCover(tenantId, a.id);
   }
-  async function doApplyBondCover(t, bond, m){
+  async function doApplyBondCover(t, bond, m, quiet){
     try {
+      // Another device may have just applied it: re-read the bond and skip if it's already there.
+      if (bondService.getById){
+        var fresh = await bondService.getById(bond.id);
+        if (fresh){ Object.assign(bond, fresh); }
+        if ((bond.discounts || []).some(function(d){ return d.sourceType === 'estimate_adjust' && d.billId === m.bill.id; })){ if (!quiet) render(); return; }
+      }
       if (m.alloc && !m.alloc.paid){
         var marked = await markAllocationPaid(m.bill.id, t.id, TODAY, 'bond_deduction', true);
         if (!marked) return { blocked: true, message: 'Could not mark the tenant\'s share of this bill as paid. Try again.' };
@@ -2865,9 +2871,46 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var discounts = (bond.discounts || []).concat([entry]);
       var saved = await bondService.update(bond.id, Object.assign({}, bond, { discounts: discounts, deduction: round2((bond.deduction || 0) + m.diff) }));
       Object.assign(bond, saved);
+      if (quiet) return true;
       showToast(m.kind === 'bond' ? 'Paid from the bond.' : 'Bond adjusted: ' + diffText(m.diff) + '.', 'success');
       render();
-    } catch(err){ return { blocked: true, message: 'Could not update the bond. ' + friendlyErrorMessage(err) }; }
+    } catch(err){
+      if (quiet){ console.error('auto bond adjust failed', err); return false; }
+      return { blocked: true, message: 'Could not update the bond. ' + friendlyErrorMessage(err) };
+    }
+  }
+  /** Automatic: once a real bill for a tenant who already left is split (their share exists), the
+   *  estimate the bond held for those days is corrected on its own — the share is marked paid from
+   *  the bond and the difference (more or less) is added to the bond. Only estimate-backed shares;
+   *  a bill nothing was estimated for still needs "Use bond" by hand. */
+  var autoReconcileRunning = false;
+  async function autoReconcileMoveOutEstimates(){
+    if (autoReconcileRunning || viewAs || !currentProfile || isTenantRole() || isViewer()) return 0;
+    autoReconcileRunning = true;
+    var done = 0, notes = [];
+    try {
+      var list = tenants.filter(function(t){
+        if (!bondOf(t.id)) return false;
+        var s = moveOutSettlementOf(t.id);
+        return (s && s.status === 'completed') || !!t.moveOutSettledAt;
+      });
+      for (var i = 0; i < list.length; i++){
+        var t = list[i], bond = bondOf(t.id), map = bondCoverMatches(t);
+        for (var k in map){
+          var m = map[k];
+          if (m.kind === 'bond' || m.applied || m.diff == null) continue;
+          if (await doApplyBondCover(t, bond, m, true)){
+            done++; notes.push(t.fullName + ' · ' + billTypeLabel(m.bill.billType) + ': ' + diffText(m.diff));
+          }
+          map = bondCoverMatches(t); // the bond changed — recompute before the next one
+        }
+      }
+    } finally { autoReconcileRunning = false; }
+    if (done){
+      showToast('Move-out estimates corrected with the real bills — ' + notes.join(' · '), 'success');
+      if (!anyModalOpen()) render(true);
+    }
+    return done;
   }
   window.applyEstimateDifference = applyEstimateDifference;
   window.applyBondCover = applyBondCover;
@@ -3030,7 +3073,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="field-row"><span class="k">Bond required</span><span class="v">'+money(bond.amountRequired)+'</span></div>'+
       '<div class="field-row"><span class="k">Bond paid</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
       (effectiveDiscounts.length
-        ? effectiveDiscounts.map(function(d){ return '<div class="field-row"><span class="k">'+esc(bondDiscountDisplayLabel(d.label))+'</span>'+bondLineValueHtml(d, !isViewer(), t.id)+'</div>'; }).join('') +
+        ? effectiveDiscounts.map(function(d){
+            var sub = '';
+            if (d.sourceType === 'estimate' && d.gapFrom && !d.includedInRent){
+              var rec = estimateReconciliation(t, d, bond);
+              sub = 'Charged ' + gapDaysLabel(d.gapDays, d.gapFrom, d.gapTo) + (rec && rec.pendingDays > 0 ? ' · ⏳ ' + rec.pendingDays + 'd still to arrive' : ' · ✓ real bill in');
+            } else if (d.sourceType === 'estimate_adjust' && d.realAmount != null){
+              sub = 'Real ' + money(d.realAmount) + ' vs est. ' + money(d.estimatedAmount || 0) + ' → ' + diffText(d.amount);
+            }
+            return '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(bondDiscountDisplayLabel(d.label))+
+              (sub ? '<br><span style="font-size:11px;color:var(--text-faint);">'+esc(sub)+'</span>' : '')+'</span>'+bondLineValueHtml(d, !isViewer(), t.id)+'</div>'; }).join('') +
           '<div class="field-row"><span class="k">Total deduction</span><span class="v">-'+money(totalDeduction)+'</span></div>'+
           (toReturn < 0
             ? '<div class="field-row"><span class="k" style="font-weight:650;">Tenant still owes</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(-toReturn)+'</span></div>'
@@ -6767,6 +6819,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       newBill.status = 'allocated';
       newBill = await billService.update(newBill.id, newBill);
       newBill.allocations = savedAllocations;
+      setTimeout(function(){ autoReconcileMoveOutEstimates(); }, 1500); // after the caller has put it in `bills`
     }
     return newBill;
   }
@@ -7143,6 +7196,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       showToast('Allocation saved successfully.', 'success');
       closeAllocateModal();
       render();
+      autoReconcileMoveOutEstimates();
     } catch(err){
       errorEl.textContent = 'Could not save the allocation. ' + friendlyErrorMessage(err);
       errorEl.hidden = false;
@@ -16546,6 +16600,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     try { await ensureBinDutiesUpToDate(); } catch(_e){ console.error('ensureBinDutiesUpToDate failed', _e); }
     try { await refreshOperationsReadModels(); } catch(_e){ console.error('refreshOperationsReadModels failed', _e); }
     recomputeRentCharges();
+    try { await autoReconcileMoveOutEstimates(); } catch(_e){ console.error('autoReconcileMoveOutEstimates failed', _e); }
     // Must run after recomputeRentCharges() — its rent-reminder rules read the freshly computed
     // rentCharges array, which doesn't exist yet at the point the other automatic checks above run.
     try { await ensureAutomaticNotifications(); } catch(_e){ console.error('ensureAutomaticNotifications failed', _e); }
