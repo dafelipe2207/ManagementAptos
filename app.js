@@ -4414,6 +4414,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return true;
   }
 
+  /** The date this tenant next has to pay something (YYYY-MM-DD), for ordering Payments. */
+  function nextPayDateFor(t){
+    var best = '9999-12-31';
+    rentCharges.forEach(function(c){
+      if (c.tenantId !== t.id || c.status === 'paid' || !(c.remaining > 0.004)) return;
+      var d = c.dueDate || c.periodStart;
+      if (d && d < best) best = d;
+    });
+    unpaidBillAllocationsFor(t.id).forEach(function(o){
+      if (isTenantHiddenProvider(o.bill.provider)) return;
+      var d = o.bill.dueDate;
+      if (d && d < best) best = d;
+    });
+    return best;
+  }
   function renderPaymentsRentTab(){
     var monthChosen = paymentsMonthFilter !== 'all';
     var propertyOptions = '<option value="all"'+(paymentsPropertyFilter==='all'?' selected':'')+'>All properties</option>'+
@@ -4581,7 +4596,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         if (paymentsTenantStatusFilter === 'moved_out') return tenantHasMovedOut(t);
         return !tenantHasMovedOut(t);
       })
-      .sort(function(a,b){ return a.fullName.localeCompare(b.fullName); });
+      // Whoever has to pay soonest comes first: the earliest date among their unpaid rent periods
+      // (overdue ones are the oldest, so they lead) and unpaid bill shares; tenants with nothing
+      // owed go by their next rent date; ties by name.
+      .map(function(t){ return { t:t, key:nextPayDateFor(t) }; })
+      .sort(function(a,b){ return a.key.localeCompare(b.key) || a.t.fullName.localeCompare(b.t.fullName); })
+      .map(function(x){ return x.t; });
     // A status chip (Paid / Due / Overdue) shows only the tenants that actually have a charge in
     // that status — not every tenant with empty sections.
     if (paymentsFilter !== 'all'){
