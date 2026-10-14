@@ -2436,3 +2436,11 @@ input, select, textarea, .modal-input, .bills-sort select,
 .bd-btn{white-space:nowrap;}
 .bd-as{display:inline-flex;align-items:center;gap:3px;font:inherit;font-size:11.5px;font-weight:600;color:var(--text-dim);background:var(--border);border:0;border-radius:999px;padding:2px 9px;cursor:pointer;}
 span.bd-as{cursor:default;}
+.bd-x{display:inline !important;margin:0 !important;padding:2px 4px !important;font-size:13px;}
+/* Needs attention: what each tenant owes, rent and bills told apart at a glance. */
+.owe-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.owe-chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;line-height:1;padding:4px 8px;border-radius:999px;white-space:nowrap;}
+.owe-chip b{font-weight:650;}
+.owe-chip.rent{background:var(--accent-bg, rgba(60,120,255,.12));color:var(--accent, #2f6fe4);}
+.owe-chip.bill{background:var(--status-due-bg, rgba(255,170,0,.14));color:var(--status-due, #b86e00);}
+.collect-row.is-sent .owe-chip{opacity:.7;}

@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=274">
+<link rel="modulepreload" href="app.js?v=276">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -26,7 +26,7 @@
 <link rel="modulepreload" href="services/propertyService.js?v=4">
 <link rel="modulepreload" href="services/roomService.js?v=3">
 <link rel="modulepreload" href="services/tenantService.js?v=10">
-<link rel="modulepreload" href="services/bondService.js?v=4">
+<link rel="modulepreload" href="services/bondService.js?v=5">
 <link rel="modulepreload" href="services/rentScheduleService.js">
 <link rel="modulepreload" href="services/paymentService.js?v=2">
 <link rel="modulepreload" href="services/billService.js?v=6">
@@ -58,7 +58,7 @@
 <link rel="modulepreload" href="services/roomIncludedBillService.js">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=112">
+<link rel="stylesheet" href="styles.css?v=114">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -1216,10 +1216,10 @@
       </div>
       <div class="form-row"><label for="bond-status">Status</label>
         <select id="bond-status">
-          <option value="pending">Pending</option>
-          <option value="paid">Paid</option>
-          <option value="partially_returned">Partially Returned</option>
-          <option value="fully_returned">Fully Returned</option>
+          <option value="pending">Not fully paid</option>
+          <option value="paid">Paid in full (held)</option>
+          <option value="partially_returned">Partly returned</option>
+          <option value="fully_returned">Returned</option>
         </select>
       </div>
       <p id="bond-modal-error" class="form-error" hidden></p>
@@ -1338,6 +1338,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=274"></script>
+<script type="module" src="app.js?v=276"></script>
 </body>
 </html>

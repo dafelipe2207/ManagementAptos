@@ -17,7 +17,9 @@ function fromRow(row) {
     status: row.status,
     heldBy: row.held_by || '',
     // How the bond money is held: 'transfer' (default) or 'cash'.
-    heldAs: row.held_as === 'cash' ? 'cash' : 'transfer'
+    heldAs: row.held_as === 'cash' ? 'cash' : 'transfer',
+    // Payments towards the bond (holding deposit, balance at move-in…): { id, amount, date, method, note, receiptPath }.
+    deposits: Array.isArray(row.deposits) ? row.deposits : []
   };
 }
 
@@ -45,7 +47,8 @@ export async function create(b) {
     discounts: b.discounts || [],
     status: b.status,
     held_by: b.heldBy || null,
-    held_as: b.heldAs === 'cash' ? 'cash' : 'transfer'
+    held_as: b.heldAs === 'cash' ? 'cash' : 'transfer',
+    deposits: b.deposits || []
   }).select().single();
   if (error) throw error;
   return fromRow(data);
@@ -62,6 +65,7 @@ export async function update(id, b) {
   };
   // Only touch "held by" when the caller passes it (the move-out settlement updates amounts only).
   if (b.heldBy !== undefined) patch.held_by = b.heldBy || null;
+  if (b.deposits !== undefined) patch.deposits = b.deposits || [];
   if (b.heldAs !== undefined) patch.held_as = b.heldAs === 'cash' ? 'cash' : 'transfer';
   const { data, error } = await supabase.from('bonds').update(patch).eq('id', id).select().single();
   if (error) throw error;

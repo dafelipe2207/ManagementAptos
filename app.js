@@ -11,7 +11,7 @@ import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './li
 import * as propertyService from './services/propertyService.js?v=4';
 import * as roomService from './services/roomService.js?v=3';
 import * as tenantService from './services/tenantService.js?v=10';
-import * as bondService from './services/bondService.js?v=4';
+import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
 import * as billService from './services/billService.js?v=6';
@@ -1380,9 +1380,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             }
             // One row per tenant: what they owe, one tap to WhatsApp it, and "Mark as paid" when
             // there's just one thing owed (otherwise View has the breakdown).
-            var parts = [];
-            if (item.rent.length) parts.push('Rent' + (item.rent.length > 1 ? ' ×' + item.rent.length : '') + ' ' + money(item.rent.reduce(function(s,c){ return s + c.remaining; }, 0)));
-            item.bills.forEach(function(o){ parts.push(billTypeLabel(o.bill.billType) + ' ' + money(o.alloc.amount)); });
+            // Rent and bills as separate chips (bills of the same service merged: "Hot water ×4").
+            var chips = [];
+            if (item.rent.length) chips.push('<span class="owe-chip rent">🏠 Rent'+(item.rent.length > 1 ? ' ×'+item.rent.length : '')+' <b>'+money(item.rent.reduce(function(s,c){ return s + c.remaining; }, 0))+'</b></span>');
+            var byType = {}, order = [];
+            item.bills.forEach(function(o){ var k = o.bill.billType || 'other'; if (!byType[k]){ byType[k] = { n:0, sum:0 }; order.push(k); } byType[k].n++; byType[k].sum += o.alloc.amount || 0; });
+            order.forEach(function(k){ var ic = (BILL_TYPE_ICON[k] || BILL_TYPE_ICON.other)[0];
+              chips.push('<span class="owe-chip bill">'+ic+' '+esc(billTypeLabel(k))+(byType[k].n > 1 ? ' ×'+byType[k].n : '')+' <b>'+money(round2(byType[k].sum))+'</b></span>'); });
             var status = item.daysOverdue > 0 ? badge('overdue', item.daysOverdue + ' day' + (item.daysOverdue === 1 ? '' : 's') + ' overdue') : badge('due', 'Due today');
             var single = item.rent.length + item.bills.length === 1;
             var markPaid = !single ? '' : item.rent.length
@@ -1390,7 +1394,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               : '<button class="text-link" style="margin:0;text-align:center;" onclick="openAllocPaidModal(\''+item.bills[0].bill.id+'\',\''+item.tenantId+'\')">Mark paid</button>';
             return '<div class="row collect-row'+(item.sentToday ? ' is-sent' : '')+'"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
               '<div class="meta">'+esc(item.propertyName)+' • '+esc(item.roomName)+'</div>'+
-              '<div class="meta collect-parts">'+esc(parts.join(' · '))+'</div>'+
+              '<div class="collect-parts owe-chips">'+chips.join('')+'</div>'+
               (function(){ var last = !item.sentToday && collectLastSent(item.tenantId); return last ? '<div class="meta" style="color:var(--text-faint);">Last messaged '+shortDate(last)+'</div>' : ''; })()+
               '</div>'+
               '<div style="display:flex;align-items:center;gap:10px;">'+
@@ -2375,7 +2379,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         var p = propertyOf(t.propertyId);
         var bond = bondOf(t.id);
         var bondLine = bond
-          ? ('Bond: '+money(bond.amountPaid)+' / '+money(bond.amountRequired)+' • '+esc(BOND_STATUS_LABEL[bond.status]||bond.status))
+          ? ('Bond: '+money(bond.amountPaid)+' / '+money(bond.amountRequired)+' • '+esc(bondStateOf(t, bond)[1]))
           : 'Bond: not recorded';
         var groupHeading = '';
         if (tenantsPropertyFilter === 'all' && t.propertyId !== lastPropertyId){
@@ -2982,7 +2986,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="card bond-card"><div class="bd-head"><h2>Bond</h2><span class="bd-held">'+(bond.heldBy ? 'Held by '+esc(bond.heldBy) : '<span style="color:var(--status-due);">Holder not set</span>')+' · '+
         (isViewer() ? '<span class="bd-as">'+(bond.heldAs === 'cash' ? '💵 Cash' : '🏦 Transfer')+'</span>'
           : '<button type="button" class="bd-as" title="How the bond is held — tap to change" onclick="toggleBondHeldAs(\''+t.id+'\')">'+(bond.heldAs === 'cash' ? '💵 Cash' : '🏦 Transfer')+'</button>')+
-        ' · '+esc(BOND_STATUS_LABEL[bond.status] || bond.status)+'</span></div>'+
+        ' '+(function(){ var st = bondStateOf(t, bond); return badge(st[0], st[1]); })()+'</span></div>'+
       '<div class="bd-tiles">'+
         '<div class="bd-tile"><span>Bond paid</span><b>'+money(bond.amountPaid)+'</b>'+(bond.amountRequired && Math.abs(bond.amountRequired - bond.amountPaid) > 0.004 ? '<small>of '+money(bond.amountRequired)+'</small>' : '')+'</div>'+
         (lines.length || bond.amountReturned
@@ -2990,6 +2994,21 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             (pendingCount ? '<small>⏳ '+pendingCount+' bill'+(pendingCount===1?'':'s')+' still to arrive</small>' : '')+'</div>'
           : '')+
       '</div>';
+    var deps = (bond.deposits || []).slice().sort(function(a,b){ return (a.date || '').localeCompare(b.date || ''); });
+    var missing = round2((bond.amountRequired || 0) - (bond.amountPaid || 0));
+    if (deps.length || missing > 0.004){
+      var depRows = deps.map(function(d){
+        var rc = d.receiptPath ? '<button type="button" class="rcpt-btn has" style="width:28px;height:28px;" title="View receipt" onclick="viewReceipt(\'receipts\',\''+d.receiptPath+'\')">'+RECEIPT_VIEW_ICON+'</button>' : '';
+        var ed = isViewer() ? '' : '<button type="button" class="text-link bd-x" title="Edit" onclick="openBondDepositModal(\''+t.id+'\',\''+esc(d.id)+'\')">✎</button>';
+        return '<div class="bd-item"><span>'+(d.date ? fullDate(d.date) : 'Date not recorded')+'<small>'+(d.method === 'cash' ? '💵 Cash' : (d.method === 'transfer' ? '🏦 Transfer' : ''))+(d.note ? ' · '+esc(d.note) : '')+'</small></span>'+
+          '<span class="bd-item-v"><span class="bd-amt pos">+'+money(d.amount || 0)+'</span>'+rc+ed+'</span></div>';
+      }).join('');
+      html += '<div class="bd-groups" style="margin-bottom:6px;"><details class="bd-group"'+(missing > 0.004 ? ' open' : '')+'><summary><span class="bd-ic">🔐</span><span class="bd-title">Bond payments'+(deps.length ? ' <i>('+deps.length+')</i>' : '')+
+        (missing > 0.004 ? '<small style="color:var(--status-due);">Missing '+money(missing)+' of '+money(bond.amountRequired)+'</small>' : '<small>Complete · '+money(bond.amountRequired || bond.amountPaid)+'</small>')+'</span>'+
+        '<span class="bd-amt pos">'+money(bond.amountPaid || 0)+'</span><span class="bd-chev" aria-hidden="true">›</span></summary>'+
+        '<div class="bd-items">'+(depRows || '<div class="bd-item"><span style="color:var(--text-faint);">No payments recorded one by one yet.</span></div>')+
+        (isViewer() ? '' : '<button type="button" class="mini-btn" style="margin:6px 0 4px;" onclick="openBondDepositModal(\''+t.id+'\')">Add bond payment</button>')+'</div></details></div>';
+    }
     if (lines.length){
       html += '<div class="bd-groups">'+
         group('🏠', 'Rent', G.rent, function(d){ return item('Rent owed at move-out', '', d.amount); })+
@@ -3047,7 +3066,137 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     } catch(err){ showToast('Could not change it. ' + friendlyErrorMessage(err), 'error'); }
   }
   window.toggleBondHeldAs = toggleBondHeldAs;
-  var BOND_STATUS_LABEL = { pending:'Pending', paid:'Paid', partially_returned:'Partially Returned', fully_returned:'Fully Returned' };
+  /** "Bond payment": the tenant pays the bond in parts — usually a holding deposit (about a week of
+   *  rent) to keep the room, and the rest when moving in. Each payment keeps its date, how it was
+   *  paid (transfer / cash), a note and an optional receipt; the bond's "paid" is their sum. */
+  var bondDepositCtx = null;
+  function openBondDepositModal(tenantId, depositId){
+    var t = tenantOf(tenantId); if (!t) return;
+    var bond = bondOf(tenantId);
+    var dep = depositId && bond ? (bond.deposits || []).find(function(d){ return d.id === depositId; }) : null;
+    bondDepositCtx = { tenantId: tenantId, depositId: dep ? dep.id : null };
+    var weekly = t.rentAmount ? round2(normalizeToWeekly(t.rentAmount, t.rentFrequency)) : 0;
+    var paidSoFar = bond ? (bond.amountPaid || 0) : 0;
+    var left = bond && bond.amountRequired ? round2(bond.amountRequired - paidSoFar) : 0;
+    var first = !bond || !paidSoFar;
+    var amount = dep ? dep.amount : (first ? (weekly || '') : (left > 0 ? left : ''));
+    var note = dep ? (dep.note || '') : (first ? 'Holding deposit' : (left > 0 ? 'Bond balance' : ''));
+    var m = document.getElementById('bond-deposit-modal');
+    if (!m){
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'bond-deposit-modal';
+      m.addEventListener('click', function(e){ if (e.target === m) m.hidden = true; });
+      document.body.appendChild(m);
+    }
+    var needRequired = !bond || !bond.amountRequired;
+    m.innerHTML = '<div class="card modal-card" style="max-width:420px;">'+
+      '<h2 class="modal-title">'+(dep ? 'Edit bond payment' : 'Bond payment')+'</h2>'+
+      '<p class="modal-sub">'+esc(t.fullName)+(bond && bond.amountRequired ? ' · bond '+money(bond.amountRequired)+' · paid '+money(paidSoFar)+(left > 0 ? ' · missing '+money(left) : '') : '')+'</p>'+
+      (needRequired ? '<div class="form-row"><label for="bd-dep-required">Total bond to pay</label><input id="bd-dep-required" type="number" min="0" step="0.01" inputmode="decimal" value="'+(weekly ? round2(weekly * 4) : '')+'" /></div>' : '')+
+      '<div class="form-row"><label for="bd-dep-amount">Amount paid</label><input id="bd-dep-amount" type="number" min="0" step="0.01" inputmode="decimal" value="'+amount+'" /></div>'+
+      '<div class="form-row"><label for="bd-dep-date">Date paid</label><input id="bd-dep-date" type="date" value="'+(dep ? (dep.date || '') : TODAY)+'" /></div>'+
+      '<div class="form-row"><label>How</label><div class="seg" id="bd-dep-method">'+
+        ['transfer','cash'].map(function(k){ var on = (dep ? dep.method : (bond && bond.heldAs) || 'transfer') === k;
+          return '<button type="button" class="'+(on ? 'on' : '')+'" data-v="'+k+'" onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\');});this.classList.add(\'on\');">'+(k === 'cash' ? '💵 Cash' : '🏦 Transfer')+'</button>'; }).join('')+
+      '</div></div>'+
+      '<div class="form-row"><label for="bd-dep-note">What for</label><input id="bd-dep-note" type="text" maxlength="80" value="'+esc(note)+'" placeholder="e.g. Holding deposit" /></div>'+
+      '<div class="form-row"><label for="bd-dep-file">Receipt (optional)</label><input id="bd-dep-file" type="file" accept="image/*,application/pdf" /></div>'+
+      '<p class="form-error" id="bd-dep-error" hidden></p>'+
+      '<div class="actions-row">'+
+        (dep ? '<button type="button" class="mini-btn danger" onclick="deleteBondDeposit()">Delete</button>' : '')+
+        '<button type="button" class="mini-btn" onclick="document.getElementById(\'bond-deposit-modal\').hidden=true">Cancel</button>'+
+        '<button type="button" class="mini-btn primary" onclick="saveBondDeposit()">Save</button></div></div>';
+    m.hidden = false;
+  }
+  function bondDepositStatus(bond, paid){
+    if (bond && (bond.status === 'partially_returned' || bond.status === 'fully_returned')) return bond.status;
+    return bond && bond.amountRequired && paid >= bond.amountRequired - 0.004 ? 'paid' : 'pending';
+  }
+  async function writeBondDeposits(tenantId, deposits, extra){
+    var bond = bondOf(tenantId);
+    var paid = round2(deposits.reduce(function(x,d){ return x + (d.amount || 0); }, 0));
+    if (!bond){
+      var draft = Object.assign({ tenantId: tenantId, amountRequired: 0, amountPaid: paid, amountReturned: 0, deduction: 0, discounts: [], status: 'pending', heldBy: '', heldAs: 'transfer', deposits: deposits }, extra || {});
+      draft.status = bondDepositStatus(draft, paid);
+      bonds.push(await bondService.create(draft));
+      return;
+    }
+    var next = Object.assign({}, bond, extra || {}, { deposits: deposits, amountPaid: paid });
+    next.status = bondDepositStatus(next, paid);
+    var saved = await bondService.update(bond.id, next);
+    Object.assign(bond, saved);
+  }
+  async function saveBondDeposit(){
+    var ctx = bondDepositCtx; if (!ctx) return;
+    var t = tenantOf(ctx.tenantId), bond = bondOf(ctx.tenantId);
+    var err = document.getElementById('bd-dep-error');
+    var amount = round2(parseFloat(document.getElementById('bd-dep-amount').value));
+    var date = document.getElementById('bd-dep-date').value || null;
+    var reqEl = document.getElementById('bd-dep-required');
+    var required = reqEl ? round2(parseFloat(reqEl.value)) : null;
+    var sel = document.querySelector('#bd-dep-method .on');
+    var method = sel ? sel.getAttribute('data-v') : 'transfer';
+    var note = document.getElementById('bd-dep-note').value.trim();
+    var fileEl = document.getElementById('bd-dep-file'), file = fileEl.files && fileEl.files[0];
+    if (!isFinite(amount) || amount <= 0){ err.textContent = 'Enter the amount paid.'; err.hidden = false; return; }
+    if (reqEl && (!isFinite(required) || required <= 0)){ err.textContent = 'Enter the total bond the tenant has to pay.'; err.hidden = false; return; }
+    var btn = document.querySelector('#bond-deposit-modal .mini-btn.primary');
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      var receiptPath = file ? await storageService.uploadReceipt(refPrefix(t) + 'bond', file) : undefined;
+      var deps = (bond && bond.deposits || []).slice();
+      // A bond recorded before payments were itemised: keep what was already paid as one line.
+      if (bond && !deps.length && bond.amountPaid > 0.004 && !ctx.depositId)
+        deps.push({ id: 'dep-prev', amount: round2(bond.amountPaid), date: null, method: bond.heldAs || 'transfer', note: 'Paid before (recorded as a total)' });
+      if (ctx.depositId){
+        deps = deps.map(function(d){ return d.id === ctx.depositId ? Object.assign({}, d, { amount: amount, date: date, method: method, note: note }, receiptPath ? { receiptPath: receiptPath } : {}) : d; });
+      } else {
+        deps.push({ id: 'dep-' + Date.now().toString(36), amount: amount, date: date, method: method, note: note, receiptPath: receiptPath || null,
+          recordedBy: currentProfile ? currentProfile.id : null });
+      }
+      var extra = {};
+      if (required) extra.amountRequired = required;
+      if (!bond) extra.heldAs = method;
+      await writeBondDeposits(ctx.tenantId, deps, extra);
+      document.getElementById('bond-deposit-modal').hidden = true;
+      var b2 = bondOf(ctx.tenantId), miss = b2 ? round2((b2.amountRequired || 0) - (b2.amountPaid || 0)) : 0;
+      showToast('Bond payment saved — ' + (miss > 0.004 ? money(miss) + ' still missing.' : 'bond complete.'), 'success');
+      render();
+    } catch(e){ err.textContent = friendlyErrorMessage(e); err.hidden = false; }
+    finally { if (btn){ btn.disabled = false; btn.textContent = 'Save'; } }
+  }
+  function deleteBondDeposit(){
+    var ctx = bondDepositCtx; if (!ctx || !ctx.depositId) return;
+    var bond = bondOf(ctx.tenantId); if (!bond) return;
+    document.getElementById('bond-deposit-modal').hidden = true;
+    openConfirmModal('Delete bond payment', 'Remove this payment from the bond? The bond paid total goes down by its amount.', async function(){
+      try { await writeBondDeposits(ctx.tenantId, (bond.deposits || []).filter(function(d){ return d.id !== ctx.depositId; })); showToast('Bond payment deleted.', 'success'); render(); }
+      catch(e){ return { blocked: true, message: friendlyErrorMessage(e) }; }
+    }, { danger: true, confirmLabel: 'Delete' });
+  }
+  window.openBondDepositModal = openBondDepositModal;
+  window.saveBondDeposit = saveBondDeposit;
+  window.deleteBondDeposit = deleteBondDeposit;
+
+  var BOND_STATUS_LABEL = { pending:'Not fully paid', paid:'Paid in full', partially_returned:'Partly returned', fully_returned:'Returned' };
+  /** What the bond's state really is, from its figures — the stored status alone ("pending")
+   *  read as if the money hadn't come in. Returns [tone, label]. */
+  function bondStateOf(t, bond){
+    if (!bond) return ['neutral', 'No bond'];
+    if (bond.status === 'fully_returned') return ['neutral', 'Returned'];
+    var s = t && moveOutSettlementOf(t.id);
+    var settled = (s && s.status === 'completed') || !!(t && t.moveOutSettledAt);
+    if (settled){
+      var left = round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0));
+      if (left < -0.004) return ['overdue', 'Tenant owes ' + money(-left)];
+      if (left > 0.004) return ['due', (bond.amountReturned > 0.004 ? 'Partly returned · ' : '') + money(left) + ' to return'];
+      return ['paid', 'Settled'];
+    }
+    if (bond.status === 'partially_returned') return ['due', 'Partly returned'];
+    var paid = bond.amountPaid || 0, req = bond.amountRequired || 0;
+    if (paid <= 0.004) return ['overdue', 'Not paid yet'];
+    if (req && paid < req - 0.004) return ['due', 'Partly paid · ' + money(req - paid) + ' missing'];
+    return ['paid', 'Held'];
+  }
 
   /** The "Move-Out Settlement" card on the admin's tenant detail page — one of four shapes
    *  depending on moveOutSettlementOf(t.id).status (or its absence). Never shown for a tenant
@@ -3186,6 +3335,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       (isSuperAdmin() ? '<button class="mini-btn" onclick="startViewAs(\''+t.id+'\')">👁 View as tenant</button>' : '')+
       '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
       '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
+      (isViewer() ? '' : '<button class="mini-btn" onclick="openBondDepositModal(\''+t.id+'\')">Bond payment</button>')+
       '<button class="mini-btn" onclick="toggleTenantActiveConfirm(\''+t.id+'\')">'+(t.isActive===false?'Reactivate tenant':'Deactivate tenant')+'</button>'+
       (canDeleteRecords() ? '<button class="mini-btn danger" onclick="deleteTenantConfirm(\''+t.id+'\')">Delete tenant</button>' : '')+
       '</div>'+
@@ -14958,6 +15108,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('bond-modal-title').textContent = b ? 'Edit bond' : 'Add bond';
     document.getElementById('bond-required').value = b ? b.amountRequired : '';
     document.getElementById('bond-paid').value = b ? b.amountPaid : 0;
+    var paidEl = document.getElementById('bond-paid'), hasDeps = !!(b && b.deposits && b.deposits.length);
+    paidEl.readOnly = hasDeps; paidEl.title = hasDeps ? 'The sum of the bond payments — add or change them from the Bond card' : '';
     document.getElementById('bond-returned').value = b ? b.amountReturned : 0;
     document.getElementById('bond-status').value = b ? b.status : 'pending';
     document.getElementById('bond-held-by').value = b ? (b.heldBy || '') : '';
@@ -14993,6 +15145,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     var heldBy = document.getElementById('bond-held-by').value || '';
     var heldAs = document.getElementById('bond-held-as').value === 'cash' ? 'cash' : 'transfer';
+    var exB = bondOf(bondModalTenantId);
+    if (exB && exB.deposits && exB.deposits.length) paid = round2(exB.deposits.reduce(function(x,d){ return x + (d.amount || 0); }, 0));
     var draft = { tenantId: bondModalTenantId, amountRequired:required, amountPaid:paid, amountReturned:returned, deduction:deduction, discounts:discounts, status:status, heldBy:heldBy, heldAs:heldAs };
     var saveBtn = document.querySelector('#bond-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
