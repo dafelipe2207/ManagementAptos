@@ -1411,8 +1411,76 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
 
     var reiHtml = realEstateInspectionBannerHtml(false) ||
       '<div class="rei-empty">🏢 No real estate inspection scheduled <button type="button" class="text-link" onclick="openReiModal(null)">+ Schedule one</button></div>';
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
   }
+
+  /** Dashboard "Payments reported" card: every payment a tenant has reported and is waiting for
+   *  you — rent, or one or more bill shares paid with a single transfer (grouped: same tenant,
+   *  same payment date and receipt). Shows who, how much, what it covers, when, and the receipt,
+   *  with Confirm right there; Review opens the bill (or Payments, for rent). */
+  function dashboardReportedPaymentsHtml(){
+    var items = [];
+    rentPaymentReports.filter(function(r){ return r.status === 'pending'; }).forEach(function(r){
+      items.push({ kind:'rent', tenantId:r.tenantId, amount:r.amount, date:r.paymentDate, at:r.reportedAt || '', proof:r.proofPath,
+        what:'Rent' + (r.periodLabel ? ' from ' + shortDate(r.periodLabel) : ''), rentId:r.id });
+    });
+    var groups = {};
+    paymentReports.filter(function(r){ return r.status === 'pending'; }).forEach(function(r){
+      var b = billOf(r.billId); if (!b) return;
+      var a = (b.allocations || []).find(function(x){ return x.id === r.allocationId; }) || (b.allocations || []).find(function(x){ return x.tenantId === r.tenantId; });
+      var key = r.tenantId + '|' + (r.paymentDate || '') + '|' + (r.proofPath || (r.reportedAt || '').slice(0,16));
+      var g = groups[key] || (groups[key] = { kind:'bills', tenantId:r.tenantId, amount:0, date:r.paymentDate, at:r.reportedAt || '', proof:r.proofPath, bills:[] });
+      g.amount = round2(g.amount + (a ? a.amount : 0));
+      g.bills.push({ billId:b.id, name: billTypeLabel(b.billType) + (b.provider ? ' · ' + b.provider : ''), amount: a ? a.amount : 0 });
+      if ((r.reportedAt || '') > g.at) g.at = r.reportedAt || '';
+      if (!g.proof && r.proofPath) g.proof = r.proofPath;
+    });
+    Object.keys(groups).forEach(function(k){ items.push(groups[k]); });
+    if (!items.length) return '';
+    items.sort(function(x, y){ return (y.at || '').localeCompare(x.at || ''); });
+    var rows = items.map(function(it, i){
+      var t = tenantOf(it.tenantId), p = t ? propertyOf(t.propertyId) : null;
+      var when = it.at ? actorWhen(it.at) : '';
+      var what = it.kind === 'rent' ? it.what
+        : it.bills.length === 1 ? it.bills[0].name : it.bills.length + ' bills: ' + it.bills.map(function(b){ return b.name.split(' · ')[0]; }).join(', ');
+      var confirm = it.kind === 'rent'
+        ? 'confirmRentReport(\''+it.rentId+'\', this)'
+        : 'confirmReportedBills('+i+', this)';
+      var review = it.kind === 'rent' ? 'location.hash=\'#/payments\''
+        : it.bills.length === 1 ? 'location.hash=\'#/bills/'+it.bills[0].billId+'\'' : 'viewTenantPayments(\''+it.tenantId+'\')';
+      return '<div class="row rp-row">'+
+        '<div class="who"><div class="name">'+esc(t ? t.fullName : 'Tenant')+tenantRefChipHtml(t)+'</div>'+
+          '<div class="facts"><span><i>'+(it.kind === 'rent' ? '🏠' : '🧾')+'</i>'+esc(what)+'</span>'+
+          (it.date ? '<span><i>📅</i>Paid '+esc(shortDate(it.date))+'</span>' : '')+
+          (p ? '<span><i>📍</i>'+esc(p.name)+'</span>' : '')+'</div>'+
+          (when ? '<div class="meta">Reported '+esc(when)+'</div>' : '')+'</div>'+
+        '<div class="amount" style="text-align:right;"><div class="rp-amt">'+money(it.amount)+'</div>'+(it.proof ? badge('paid', 'Receipt ✓') : badge('due', 'No receipt'))+'</div>'+
+        '<div class="act-row">'+
+          (it.proof ? '<button type="button" class="mini-btn" onclick="viewReceipt(\'receipts\',\''+it.proof+'\')">View receipt</button>' : '')+
+          '<button type="button" class="mini-btn" onclick="'+review+'">Review</button>'+
+          '<button type="button" class="mini-btn primary" onclick="'+confirm+'">Confirm paid</button>'+
+        '</div></div>';
+    }).join('');
+    dashReportedItems = items;
+    var total = round2(items.reduce(function(s2, it){ return s2 + it.amount; }, 0));
+    return '<div class="card needs-card rp-card"><h2>💸 Payments reported <span class="count-pill">'+items.length+'</span></h2>'+
+      '<p class="modal-hint" style="margin:-4px 0 8px;">'+money(total)+' waiting for you to confirm</p>'+rows+'</div>';
+  }
+  var dashReportedItems = [];
+  /** Confirm every bill share in one reported transfer (Dashboard "Payments reported"). */
+  async function confirmReportedBills(i, btn){
+    var it = dashReportedItems[i];
+    if (!it || it.kind !== 'bills') return;
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      for (var k = 0; k < it.bills.length; k++) await confirmPaymentReport(it.bills[k].billId, it.tenantId, it.date || TODAY);
+      showToast('Confirmed ' + money(it.amount) + (it.bills.length > 1 ? ' for ' + it.bills.length + ' bills' : '') + '.', 'success');
+    } catch(err){
+      showToast('Could not confirm. ' + friendlyErrorMessage(err), 'error');
+    }
+    render();
+  }
+  window.confirmReportedBills = confirmReportedBills;
 
   /** Dashboard "Damage reported" card: open maintenance requests (anything not finished yet),
    *  most urgent first, then newest. Requests a tenant reported are marked as such. Tapping a row
@@ -4118,6 +4186,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       .reduce(function(sum,c){ return sum + c.remaining; }, 0);
     rentReportChargeId = chargeId;
     rentReportProofPath = null;
+    resetNoProofNudge('rent-report');
     document.getElementById('rent-report-modal-sub').textContent = 'Rent ' + shortDate(charge.periodStart) + ' – ' + shortDate(charge.periodEnd) + ' • owed ' + money(owed);
     document.getElementById('rent-report-amount').value = (Math.round(owed*100)/100).toFixed(2);
     document.getElementById('rent-report-date').value = TODAY;
@@ -4137,6 +4206,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var file = pickedFile(event);
     if (!file) return;
     rentReportProofPath = await uploadProofWithStatus(file, document.getElementById('rent-report-proof-status'), refPrefix(myTenantRecord()) + 'rent');
+    if (rentReportProofPath){ var nz = document.getElementById('rent-report-nudge'); if (nz) nz.remove(); }
   }
   async function submitRentReport(){
     var charge = rentCharges.find(function(c){ return c.id===rentReportChargeId; });
@@ -4148,6 +4218,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!isFinite(amount) || amount <= 0 || !date){
       errorEl.textContent = 'Enter the amount you paid and the date.'; errorEl.hidden = false; return;
     }
+    if (!rentReportProofPath && !noProofNudgeShown('rent-report')) return;
     var btn = document.getElementById('rent-report-submit-btn');
     var label = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
     try {
@@ -13166,6 +13237,32 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var paymentReportModalTarget = null; // { allocationId, billId, tenantId } — the share it was opened from
   var paymentReportModalProofPath = null;
   var paymentReportPicks = [];         // [{ allocationId, billId, amount, label, sub, on }]
+  /** A tenant sending a payment without a screenshot gets one friendly nudge first: a receipt is
+   *  their proof of payment and lets it be confirmed faster. They can attach one, or tap Send again
+   *  to go ahead without. Returns true when it's OK to send now. */
+  var noProofNudged = {};
+  function resetNoProofNudge(prefix){
+    noProofNudged[prefix] = false;
+    var el = document.getElementById(prefix + '-nudge'); if (el) el.remove();
+  }
+  function noProofNudgeShown(prefix){
+    if (noProofNudged[prefix]) return true; // second tap: send without
+    noProofNudged[prefix] = true;
+    var modal = document.getElementById(prefix + '-modal');
+    var actions = modal && modal.querySelector('.modal-actions');
+    if (actions && !document.getElementById(prefix + '-nudge')){
+      var box = document.createElement('div');
+      box.id = prefix + '-nudge';
+      box.className = 'proof-nudge';
+      var pick = prefix === 'rent-report' ? "document.getElementById('rent-report-proof-input').click()" : 'triggerPaymentReportProofUpload()';
+      box.innerHTML = '<div class="pn-ic">📸</div><div class="pn-body"><b>Add a screenshot of your transfer?</b>'+
+        '<span>It\'s your proof of payment, and your administrator can confirm it faster. Or tap the send button again to send it without one.</span>'+
+        '<button type="button" class="mini-btn primary" onclick="'+pick+'">Attach screenshot</button></div>';
+      actions.parentNode.insertBefore(box, actions);
+      try { box.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_e){}
+    }
+    return false;
+  }
   function openPaymentReportModal(billId, tenantId){
     var b = billOf(billId);
     var alloc = b && b.allocations && b.allocations.find(function(a){ return a.tenantId===tenantId; });
@@ -13191,6 +13288,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var billTenant = tenantOf(tenantId);
     document.getElementById('payment-report-reference').value = tenantPaymentRef(billTenant);
     document.getElementById('payment-report-proof-status').textContent = 'Photo or PDF of the transfer/receipt — added to every bill you tick';
+    resetNoProofNudge('payment-report');
     document.getElementById('payment-report-modal-error').hidden = true;
     renderPaymentReportPicks();
     document.getElementById('payment-report-modal').hidden = false;
@@ -13238,6 +13336,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!file || !paymentReportModalTarget) return;
     paymentReportModalProofPath = await uploadProofWithStatus(file, document.getElementById('payment-report-proof-status'),
       refPrefix(tenantOf(paymentReportModalTarget.tenantId)) + 'bill-' + paymentReportModalTarget.allocationId);
+    if (paymentReportModalProofPath){ var nz = document.getElementById('payment-report-nudge'); if (nz) nz.remove(); }
   }
   async function submitPaymentReport(){
     var target = paymentReportModalTarget;
@@ -13245,6 +13344,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (!target) return;
     var chosen = paymentReportChosen();
     if (!chosen.length){ errorEl.textContent = 'Tick at least one bill.'; errorEl.hidden = false; return; }
+    if (!paymentReportModalProofPath && !noProofNudgeShown('payment-report')) return;
     var paymentDate = document.getElementById('payment-report-date').value || null;
     var paymentMethod = document.getElementById('payment-report-method').value || null;
     var reference = document.getElementById('payment-report-reference').value.trim() || null;

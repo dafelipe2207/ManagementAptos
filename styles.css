@@ -2363,3 +2363,19 @@ input, select, textarea, .modal-input, .bills-sort select,
 .prp-total b{font-size:17px;font-weight:800;}
 :root[data-theme="dark"] .prp-total{background:rgba(180,35,24,.18);color:#ff8a80;}
 @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .prp-total{background:rgba(180,35,24,.18);color:#ff8a80;} }
+
+/* Dashboard "Payments reported" */
+.rp-row{align-items:flex-start;}
+.rp-row .act-row{order:3;}
+.rp-amt{font-size:16px;font-weight:800;margin-bottom:4px;white-space:nowrap;}
+.rp-card{border-color:color-mix(in srgb, var(--status-paid) 35%, var(--glass-border, var(--border))) !important;}
+.rp-row .act-row{flex-wrap:nowrap;}
+.rp-row .act-row .mini-btn{flex:1 1 0;min-width:0;padding:0 8px;}
+/* Tenant: gentle reminder to attach the transfer screenshot */
+.proof-nudge{display:flex;gap:10px;align-items:flex-start;margin:12px 0 4px;padding:12px;border-radius:16px;
+  background:color-mix(in srgb, var(--status-due) 12%, var(--bg-elevated));border:1px solid color-mix(in srgb, var(--status-due) 40%, transparent);}
+.proof-nudge .pn-ic{font-size:24px;line-height:1;}
+.proof-nudge .pn-body{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--text-dim);}
+.proof-nudge .pn-body b{color:var(--text);}
+.proof-nudge .pn-body > b{font-size:13.5px;}
+.proof-nudge .mini-btn{align-self:flex-start;}
