@@ -4678,6 +4678,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             '<summary class="pay-sum"><span class="pay-who"><span class="pay-name">'+esc(t.fullName)+tenantRefChipHtml(t)+'</span>'+
             (prop?'<span class="pay-prop">'+esc(prop.name)+'</span>':'')+'</span>'+
             '<span class="pay-badges">'+sumBadges+'</span></summary>'+
+            // Right at the top of the open card: send the "What you owe" image by WhatsApp.
+            ((pendingTotal > 0 || billsTotal > 0 || tenantRentOverdue(t).length)
+              ? '<button type="button" class="pay-wa-send" onclick="sendTenantOwedStatement(\''+t.id+'\')">'+WA_ICON+
+                '<span><b>Send what they owe</b><small>'+money(round2(tenantRentOverdue(t).reduce(function(x,c){ return x + c.remaining; }, 0) + billsTotal))+' · image for WhatsApp</small></span></button>'
+              : '')+
             (newestFirst ? upcomingHtml : '')+
             (!showDue ? '' : '<h3 style="font-size:12px;text-transform:none;letter-spacing:0;color:var(--text-dim);margin:14px 0 6px;">Due ('+pending.length+') · '+money(pendingTotal)+'</h3>'+
             (pending.length ? '<div class="field-list">'+pending.map(pendingRow).join('')+'</div>'
@@ -4689,7 +4694,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             billsOverdueSummaryHtml(owedBills)+
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
             '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:10px;">'+
-              ((pendingTotal > 0 || billsTotal > 0 || tenantRentOverdue(t).length) ? '<button type="button" class="mini-btn icon-label-btn" onclick="sendTenantOwedStatement(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Send what they owe</button>' : '')+
               '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button></div>'+
             '</details>';
         }).join('');
