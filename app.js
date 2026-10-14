@@ -6652,7 +6652,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function renderAllocateModal(){
     if (!allocationDraft) return;
     document.querySelectorAll('#allocate-method-chips .chip').forEach(function(btn, i){
-      var methods = ['equal','days','occupancy','custom'];
+      var methods = ['occupancy','custom']; // equal split / by days occupied were removed from the picker
       btn.classList.toggle('active', methods[i] === allocationDraft.method);
     });
     var hasAdminRow = allocationDraft.rows.some(function(r){ return r.isAdmin; });

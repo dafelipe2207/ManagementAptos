@@ -1553,7 +1553,7 @@ input[type="checkbox"], input[type="radio"]{accent-color:var(--accent);width:18p
 .mini-btn{border-radius:999px !important;min-height:40px;padding-left:16px;padding-right:16px;}
 .mini-btn:not(.primary):not(.danger){background:var(--field-bg);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border:1px solid var(--field-border);}
 .chip:not(.active){background:var(--field-bg);border:1px solid var(--field-border);}
-.modal-x-bar{background:transparent !important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:0 !important;}
+.modal-x-bar{background:transparent !important;border-bottom:0 !important;}
 :root{--glass-strong:rgba(255,255,255,.90);}
 .modal-overlay{background:rgba(15,20,35,.28) !important;}
 
@@ -2271,3 +2271,11 @@ button.mt-step{cursor:pointer;}
 body.page-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden;}
 .modal-overlay{overscroll-behavior:contain;}
 .modal-overlay .modal-card{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom;}
+
+/* Close (×) floats at the top-right next to the title instead of taking a blurred bar of its own,
+   which covered and blurred each window's title as soon as it scrolled. */
+.modal-x-bar{position:sticky;top:0;height:0;margin:0 !important;padding:0 !important;z-index:4;display:flex;justify-content:flex-end;
+  overflow:visible;-webkit-backdrop-filter:none !important;backdrop-filter:none !important;}
+.modal-x-bar .modal-x{transform:translate(6px,-4px);box-shadow:0 2px 10px rgba(10,12,18,.12);}
+.modal-card > .modal-title, .modal-card > h2:first-of-type{padding-right:52px;}
+@media (max-width:640px){ .modal-x-bar{top:0;} }
