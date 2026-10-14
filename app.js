@@ -137,7 +137,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  documents, so no screen a tenant can open ever shows the agency. */
   function tenantSafeBill(b){
     if (!isTenantHiddenProvider(b.provider)) return b;
-    return Object.assign(b, { provider: '', receiptPath: null, adminReceiptPath: null, notes: '', accountNumber: null, invoiceNumber: null });
+    // hasHiddenDoc: there IS an original document, but it names the agency — the tenant gets a
+    // clean bill summary instead (tenantBillSummary), never the file itself.
+    return Object.assign(b, { hasHiddenDoc: !!b.receiptPath, provider: '', receiptPath: null, adminReceiptPath: null, notes: '', accountNumber: null, invoiceNumber: null });
   }
   /** "Water (Dodo)" / "Water" — service plus provider, without the provider when it's hidden. */
   function tenantBillName(b, sep){
@@ -13687,6 +13689,59 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   window.viewTenantBillReceipt = viewTenantBillReceipt;
+  /** For a bill whose original document can't be shown to tenants: an image with the bill's
+   *  details and the tenant's share — service, period, total, days, factor, due date, status. */
+  function tenantBillSummaryBlob(t, b, a){
+    var W = 1080, L = 96, R = W - 96, font = IMG_FONT;
+    var rows = [
+      ['Service', billTypeLabel(b.billType)],
+      ['Billing period', b.billingPeriodStart ? fullDate(b.billingPeriodStart) + ' – ' + fullDate(b.billingPeriodEnd) : '—'],
+      ['Total bill for the house', money(b.amount)],
+      b.dueDate ? ['Due date', fullDate(b.dueDate)] : null,
+      a && a.daysOccupied ? ['Your days', String(a.daysOccupied)] : null,
+      a && a.occupancyFactor != null ? ['Your factor', Number(a.occupancyFactor).toFixed(1) + (a.totalOccupancyFactor ? ' of ' + Number(a.totalOccupancyFactor).toFixed(1) : '')] : null,
+      a ? ['Status', a.paid ? 'Paid' + (a.paidDate ? ' · ' + fullDate(a.paidDate) : '') : 'To pay'] : null
+    ].filter(Boolean);
+    var H = 32 + 200 + rows.length * 78 + 200 + 40;
+    var card = imageCard(W, H), g = card.g, rr = card.rr;
+    var y = 32 + 84;
+    g.fillStyle = '#1d2433'; g.font = '700 48px ' + font; g.fillText(billTypeLabel(b.billType) + ' bill', L, y);
+    g.fillStyle = '#6b7280'; g.font = '400 30px ' + font; g.fillText((t ? t.fullName + ' · ' : '') + (propertyOf(b.propertyId) ? propertyOf(b.propertyId).name : ''), L, y + 48);
+    y += 100;
+    rows.forEach(function(r){
+      g.fillStyle = '#e5e7eb'; g.fillRect(L, y, R - L, 2);
+      g.fillStyle = '#6b7280'; g.font = '400 30px ' + font; g.fillText(r[0], L, y + 50);
+      g.textAlign = 'right'; g.fillStyle = '#1d2433'; g.font = '600 30px ' + font; g.fillText(r[1], R, y + 50); g.textAlign = 'left';
+      y += 78;
+    });
+    y += 24;
+    rr(L - 24, y, R - L + 48, 130, 24, a && a.paid ? '#e8f6ee' : '#fdf3e3');
+    g.fillStyle = '#1d2433'; g.font = '600 32px ' + font; g.fillText('Your share', L, y + 78);
+    g.textAlign = 'right'; g.font = '700 52px ' + font; g.fillStyle = a && a.paid ? '#16794a' : '#b86e00'; g.fillText(money(a ? a.amount : 0), R, y + 84); g.textAlign = 'left';
+    return card.toBlob();
+  }
+  async function viewTenantBillSummary(billId){
+    var b = billOf(billId), t = myTenantRecord();
+    if (!b) return;
+    var a = t && (b.allocations || []).find(function(x){ return x.tenantId === t.id; });
+    var blob = await tenantBillSummaryBlob(t, b, a);
+    if (!blob){ showToast('Could not create the bill image.', 'error'); return; }
+    var url = URL.createObjectURL(blob);
+    var name = billTypeLabel(b.billType).replace(/\s+/g, '-') + '-bill-' + (b.billingPeriodEnd || TODAY) + '.png';
+    var m = document.getElementById('bill-summary-modal');
+    if (!m){
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'bill-summary-modal';
+      m.addEventListener('click', function(e){ if (e.target === m) m.hidden = true; });
+      document.body.appendChild(m);
+    }
+    m.innerHTML = '<div class="card modal-card" style="max-width:460px;">'+
+      '<h2 class="modal-title">'+esc(billTypeLabel(b.billType))+' bill</h2>'+
+      '<img src="'+url+'" alt="Bill details" style="width:100%;border-radius:14px;display:block;margin:6px 0 12px;" />'+
+      '<div class="actions-row"><button type="button" class="mini-btn" onclick="document.getElementById(\'bill-summary-modal\').hidden=true">Close</button>'+
+      '<a class="mini-btn primary" href="'+url+'" download="'+esc(name)+'">Save image</a></div></div>';
+    m.hidden = false;
+  }
+  window.viewTenantBillSummary = viewTenantBillSummary;
 
   /** The tenant sees the full breakdown of EACH bill (provider, total amount, their share, period,
    *  due date, whether it's paid, and the original invoice) grouped by month — most recent to
@@ -13779,7 +13834,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
               ' · Your occupancy factor: '+a.occupancyFactor.toFixed(1)+'<br>'+
               money(b.amount)+' ÷ '+a.totalOccupancyFactor.toFixed(1)+' × '+a.occupancyFactor.toFixed(1)+' = '+money(a.amount)+
               '</p>' : '')+
-            (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>' : '')+
+            (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>'
+              : (b.hasHiddenDoc ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillSummary(\''+b.id+'\')">View bill</button>' : ''))+
             (function(){ // their own transfer receipt for this share, if one is on file
               var proof = a.receiptPath || ((paymentReportsForAllocation(a.id).find(function(r){ return r.proofPath && r.status !== 'rejected'; }) || {}).proofPath);
               return proof ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewReceipt(\'receipts\',\''+proof+'\')">📎 My transfer</button>' : '';

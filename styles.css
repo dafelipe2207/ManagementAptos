@@ -2444,3 +2444,4 @@ span.bd-as{cursor:default;}
 .owe-chip.rent{background:var(--accent-bg, rgba(60,120,255,.12));color:var(--accent, #2f6fe4);}
 .owe-chip.bill{background:var(--status-due-bg, rgba(255,170,0,.14));color:var(--status-due, #b86e00);}
 .collect-row.is-sent .owe-chip{opacity:.7;}
+#bill-summary-modal a.mini-btn{text-decoration:none;}
