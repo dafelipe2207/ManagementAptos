@@ -9930,7 +9930,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="mq-chips">'+MQ_WHERE.map(function(x){
         return '<button type="button" class="mq-chip'+(mq.where===x[0]?' on':'')+'" onclick="mqPick(\'where\',\''+x[0]+'\')">'+x[1]+' '+x[0]+'</button>';
       }).join('')+'</div>';
-    var files = document.getElementById('maintenance-photo-before').files || [];
+    var files = mtNew.before;
     bottom.innerHTML =
       '<div class="mq-label">How urgent is it?</div>'+
       '<div class="mq-urg">'+MQ_URGENCY.map(function(x){
@@ -9950,13 +9950,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     mqRender();
     if (kind === 'problem' && !document.getElementById('maintenance-description').value) { /* keep focus flow natural */ }
   };
-  window.mqClearPhotos = function(){ document.getElementById('maintenance-photo-before').value = ''; mqRender(); };
+  window.mqClearPhotos = function(){ mtNew.before = []; mqRender(); };
   function setupMaintenanceQuick(on){
     mq = { on:on, problem:null, where:null, autoTitle:'' };
     var card = document.getElementById('maintenance-modal-card');
     if (card){ card.classList.toggle('mq-mode', on); card.style.maxWidth = on ? '520px' : '380px'; }
     ['mq-top','mq-bottom'].forEach(function(id){ document.getElementById(id).hidden = !on; });
-    ['maintenance-catpri-row','maintenance-before-row','maintenance-during-row','maintenance-after-row'].forEach(function(id){
+    ['maintenance-catpri-row','maintenance-photos-row'].forEach(function(id){
       var el = document.getElementById(id); if (el) el.hidden = on;
     });
     var tl = document.querySelector('label[for="maintenance-title"]'), dl = document.querySelector('label[for="maintenance-description"]');
@@ -9972,7 +9972,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       mqRender();
     }
   }
-  document.addEventListener('change', function(e){ if (mq.on && e.target && e.target.id === 'maintenance-photo-before') mqRender(); });
+  // Photos picked are added to the request's list (picking again adds more instead of replacing).
+  document.addEventListener('change', function(e){
+    var m = e.target && e.target.id && e.target.id.match(/^maintenance-photo-(before|during|after)$/);
+    if (!m) return;
+    Array.prototype.forEach.call(e.target.files || [], function(f){ mtNew[m[1]].push(f); });
+    e.target.value = '';
+    if (mq.on) mqRender(); else mtRenderPhotos();
+  });
 
   function openMaintenanceModal(id){
     maintenanceModalEditId = id || null;
@@ -9988,10 +9995,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('maintenance-modal-title').textContent = m ? (staff || tenantCanEdit ? 'Edit maintenance request' : 'Maintenance request') : 'Report a problem';
     document.getElementById('maintenance-property-row').hidden = !staff;
     document.getElementById('maintenance-room-row').hidden = !staff;
-    document.getElementById('maintenance-status-row').hidden = !(staff && m);
-    document.getElementById('maintenance-due-date-row').hidden = !(staff && m);
-    document.getElementById('maintenance-assigned-to-row').hidden = !(staff && m);
-    document.getElementById('maintenance-resolution-notes-row').hidden = !(staff && m);
+    document.getElementById('mt-progress-row').hidden = !m;
+    document.getElementById('mt-work-row').hidden = !(staff && m);
+    // Tenants see what was done (read-only) once there's something written.
+    document.getElementById('maintenance-resolution-notes-row').hidden = !(m && (staff || (m.resolutionNotes||'').trim()));
+    document.getElementById('maintenance-resolution-notes').readOnly = !staff;
     var sourceNoteEl = document.getElementById('maintenance-modal-source-note');
     if (sourceNoteEl){
       var sourceComment = m ? findingCommentForMaintenanceRequest(m.id) : null;
@@ -10027,9 +10035,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('maintenance-due-date').value = m && m.dueDate ? m.dueDate : '';
     document.getElementById('maintenance-assigned-to').value = m ? (m.assignedTo || '') : '';
     document.getElementById('maintenance-resolution-notes').value = m ? (m.resolutionNotes || '') : '';
-    document.getElementById('maintenance-photo-before').value = '';
-    document.getElementById('maintenance-photo-during').value = '';
-    document.getElementById('maintenance-photo-after').value = '';
+    mtNew = { before:[], during:[], after:[] };
+    mtCtx = { m:m, staff:staff, locked:lockForTenant, prefill:prefill };
+    mtStage = m && (m.photosAfter||[]).length ? 'after' : m && (m.photosDuring||[]).length ? 'during' : 'before';
     var docsRow = document.getElementById('maintenance-documents-row');
     if (docsRow){
       docsRow.hidden = !(staff && m);
@@ -10055,10 +10063,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     editNote.textContent = tenantCanEdit ? 'You can edit or delete this request until your administrator starts working on it.'
       : 'Your administrator is already handling this request, so it can no longer be edited. Every change is recorded in the history below.';
     renderMaintenanceHistory(m ? m.id : null);
-    renderMaintenancePhotosPreview('before', m ? (m.photosBefore||[]) : (prefill ? prefill.photosBefore : []));
-    renderMaintenancePhotosPreview('during', m ? (m.photosDuring||[]) : []);
-    renderMaintenancePhotosPreview('after', m ? (m.photosAfter||[]) : []);
     setupMaintenanceQuick(!staff && !m);
+    mtRender();
   }
   window.openMaintenanceModal = openMaintenanceModal;
 
@@ -10109,24 +10115,119 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.confirmAddMaintenanceDocument = confirmAddMaintenanceDocument;
 
-  /** Shows one stage's ("before"/"during"/"after") already-uploaded photos as small thumbnails
-   *  (signed URLs, loaded async) above that stage's file picker, so re-opening a request doesn't
-   *  look like it lost its photos. Each stage gets its own lightbox group, so Previous/Next inside
-   *  the lightbox stays scoped to the stage the user opened. */
-  function renderMaintenancePhotosPreview(stage, existingPaths){
-    var box = document.getElementById('maintenance-photos-' + stage + '-preview');
-    if (!box) return;
-    box.innerHTML = '';
-    var groupId = 'lbg' + (++lightboxGroupSeq);
-    (existingPaths||[]).forEach(function(path, idx){
-      var img = document.createElement('img');
-      img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface-2,#eee);';
-      img.title = 'Open photo';
-      registerLightboxImg(img, 'maintenance-photos', path, groupId, idx);
-      getCachedSignedUrl('maintenance-photos', path, 600).then(function(url){ img.src = url; }).catch(function(){ /* ignore a single broken thumbnail */ });
-      box.appendChild(img);
-    });
+  /* ---------- Maintenance request window: structured, for tenant and staff ----------
+   * Summary at the top (where, who reported it, when), category/priority as chips, a progress
+   * tracker (staff tap a step to move it on; tenants see where it's at), and photos in
+   * Before / During / After tabs with an "Add photos" tile. The hidden selects/inputs stay the
+   * form's values, so saving works the same. */
+  var mtNew = { before:[], during:[], after:[] };   // photos picked in this session, not uploaded yet
+  var mtCtx = { m:null, staff:false, locked:false, prefill:null };
+  var mtStage = 'before';
+  var MT_CATEGORY_ICON = { plumbing:'🚿', electrical:'💡', appliance:'🧊', structural:'🚪', pest_control:'🐜', cleaning:'🧽', other:'💬' };
+  var MT_PRIORITY_ICON = { low:'🙂', medium:'⏳', high:'⚠️', urgent:'🚨' };
+  var MT_STEPS = [['reported','Reported','📝'], ['assigned','Assigned','👷'], ['in_progress','In progress','🔧'], ['completed','Done','✅']];
+  var MT_SIDE = [['waiting','Waiting','⏸️'], ['verified','Verified','🔍'], ['closed','Closed','📁'], ['cancelled','Cancelled','✖️'], ['rejected','Rejected','⛔']];
+  function mtRender(){ mtRenderSummary(); mtRenderChips(); mtRenderStepper(); mtRenderPhotos(); }
+  function mtRenderSummary(){
+    var el = document.getElementById('mt-summary'), m = mtCtx.m;
+    if (!m){ el.hidden = true; el.innerHTML = ''; return; }
+    var p = propertyOf(m.propertyId), r = m.roomId ? roomOf(m.roomId) : null, t = m.tenantId ? tenantOf(m.tenantId) : null;
+    var day = (m.createdAt||'').slice(0,10), age = day ? daysBetween(day, TODAY) : null;
+    el.innerHTML = '<div class="mt-summary">'+
+      '<div class="mt-sum-icon">'+(MT_CATEGORY_ICON[m.category]||'🛠️')+'</div>'+
+      '<div class="mt-sum-body"><div class="mt-sum-where">'+esc(p ? p.name : '')+(r ? ' · '+esc(r.name) : '')+'</div>'+
+      '<div class="mt-sum-who">'+(t ? 'Reported by <b>'+esc(t.fullName)+'</b>' : 'Logged by staff')+
+        (day ? ' · '+esc(shortDate(day))+(age != null ? ' ('+(age===0 ? 'today' : age+' day'+(age===1?'':'s')+' ago')+')' : '') : '')+'</div></div>'+
+      badge(MAINTENANCE_STATUS_BADGE[m.status]||'neutral', MAINTENANCE_STATUS_LABEL[m.status]||m.status)+
+      '</div>';
+    el.hidden = false;
   }
+  function mtRenderChips(){
+    var catSel = document.getElementById('maintenance-category'), priSel = document.getElementById('maintenance-priority');
+    var lock = mtCtx.locked;
+    document.getElementById('mt-category-chips').innerHTML = Object.keys(MAINTENANCE_CATEGORY_LABEL).map(function(k){
+      var on = catSel.value === k;
+      if (lock && !on) return '';
+      return '<button type="button" class="mt-chip'+(on?' on':'')+'"'+(lock?' disabled':'')+' onclick="mtPick(\'category\',\''+k+'\')">'+(MT_CATEGORY_ICON[k]||'')+' '+esc(MAINTENANCE_CATEGORY_LABEL[k])+'</button>';
+    }).join('');
+    document.getElementById('mt-priority-chips').innerHTML = MAINTENANCE_PRIORITY_ORDER.map(function(k){
+      var on = priSel.value === k;
+      if (lock && !on) return '';
+      return '<button type="button" class="mt-chip mt-pri-'+k+(on?' on':'')+'"'+(lock?' disabled':'')+' onclick="mtPick(\'priority\',\''+k+'\')">'+(MT_PRIORITY_ICON[k]||'')+' '+esc(MAINTENANCE_PRIORITY_LABEL[k])+'</button>';
+    }).join('');
+  }
+  function mtRenderStepper(){
+    var box = document.getElementById('mt-stepper'); if (!box || !mtCtx.m) return;
+    var status = document.getElementById('maintenance-status').value;
+    var mainIdx = MT_STEPS.findIndex(function(x){ return x[0] === status; });
+    // Off the main path: verified/closed count as past "Done"; waiting sits on "In progress".
+    var reach = mainIdx >= 0 ? mainIdx : (status === 'verified' || status === 'closed') ? 3 : status === 'waiting' ? 2 : -1;
+    var staff = mtCtx.staff;
+    var steps = MT_STEPS.map(function(x, i){
+      var cls = i < reach ? 'done' : i === reach ? 'now' : '';
+      var inner = '<span class="mt-dot">'+(i < reach ? '✓' : x[2])+'</span><span class="mt-step-lb">'+x[1]+'</span>';
+      return staff
+        ? '<button type="button" class="mt-step '+cls+'" onclick="mtPick(\'status\',\''+x[0]+'\')">'+inner+'</button>'
+        : '<div class="mt-step '+cls+'">'+inner+'</div>';
+    }).join('');
+    var side = staff
+      ? '<div class="mt-side">'+MT_SIDE.map(function(x){
+          return '<button type="button" class="mt-chip mt-chip-sm'+(status===x[0]?' on':'')+'" onclick="mtPick(\'status\',\''+x[0]+'\')">'+x[2]+' '+x[1]+'</button>';
+        }).join('')+'</div>'
+      : (mainIdx < 0 ? '<p class="mt-hint">Status: <b>'+esc(MAINTENANCE_STATUS_LABEL[status]||status)+'</b></p>' : '');
+    var hint = staff ? '<p class="mt-hint">Tap a step to update it — the tenant is notified when you save.</p>'
+      : '<p class="mt-hint">You\'ll get a notification every time this moves forward.</p>';
+    box.innerHTML = '<div class="mt-steps'+(reach < 0 ? ' off' : '')+'">'+steps+'</div>'+side+hint;
+  }
+  var MT_STAGES = [['before','Before'], ['during','During'], ['after','After']];
+  function mtExisting(stage){
+    var m = mtCtx.m, pf = mtCtx.prefill;
+    if (m) return (stage==='before' ? m.photosBefore : stage==='during' ? m.photosDuring : m.photosAfter) || [];
+    return stage === 'before' && pf ? (pf.photosBefore || []) : [];
+  }
+  function mtRenderPhotos(){
+    var tabs = document.getElementById('mt-photo-tabs'), grid = document.getElementById('mt-photo-grid');
+    if (!tabs || !grid) return;
+    var m = mtCtx.m, staff = mtCtx.staff;
+    // Tenants only add "before" photos (what's wrong); during/after are the admin's.
+    var stages = staff && m ? MT_STAGES : MT_STAGES.filter(function(x){ return x[0]==='before' || mtExisting(x[0]).length; });
+    if (!stages.some(function(x){ return x[0]===mtStage; })) mtStage = 'before';
+    tabs.hidden = stages.length < 2;
+    tabs.innerHTML = stages.map(function(x){
+      var n = mtExisting(x[0]).length + mtNew[x[0]].length;
+      return '<button type="button" class="mt-seg-btn'+(mtStage===x[0]?' on':'')+'" onclick="mtPick(\'stage\',\''+x[0]+'\')">'+x[1]+(n ? ' <span class="mt-count">'+n+'</span>' : '')+'</button>';
+    }).join('');
+    var canAdd = !mtCtx.locked && (staff || mtStage === 'before');
+    var groupId = 'lbg' + (++lightboxGroupSeq);
+    grid.innerHTML = '';
+    mtExisting(mtStage).forEach(function(path, idx){
+      var img = document.createElement('img');
+      img.className = 'mt-thumb'; img.title = 'Open photo';
+      registerLightboxImg(img, 'maintenance-photos', path, groupId, idx);
+      getCachedSignedUrl('maintenance-photos', path, 600).then(function(url){ img.src = url; }).catch(function(){});
+      grid.appendChild(img);
+    });
+    mtNew[mtStage].forEach(function(f, i){
+      var w = document.createElement('div'); w.className = 'mt-thumb-new';
+      w.innerHTML = '<img class="mt-thumb" alt="New photo" src="'+URL.createObjectURL(f)+'"><button type="button" class="mt-thumb-x" aria-label="Remove" onclick="mtRemoveNew(\''+mtStage+'\','+i+')">✕</button><span class="mt-new-tag">New</span>';
+      grid.appendChild(w);
+    });
+    if (canAdd){
+      var add = document.createElement('button');
+      add.type = 'button'; add.className = 'mt-add';
+      add.innerHTML = '<span>📷</span>Add';
+      add.onclick = function(){ document.getElementById('maintenance-photo-' + mtStage).click(); };
+      grid.appendChild(add);
+    }
+    if (!grid.children.length) grid.innerHTML = '<p class="mt-hint" style="margin:0;">No photos yet.</p>';
+  }
+  window.mtRemoveNew = function(stage, i){ mtNew[stage].splice(i, 1); mtRenderPhotos(); };
+  window.mtPick = function(kind, v){
+    if (kind === 'category'){ document.getElementById('maintenance-category').value = v; mtRenderChips(); }
+    else if (kind === 'priority'){ document.getElementById('maintenance-priority').value = v; mtRenderChips(); }
+    else if (kind === 'status'){ document.getElementById('maintenance-status').value = v; mtRenderStepper(); }
+    else if (kind === 'stage'){ mtStage = v; mtRenderPhotos(); }
+  };
 
   function closeMaintenanceModal(){
     document.getElementById('maintenance-modal').hidden = true;
@@ -10174,9 +10275,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       tenantId = existing ? existing.tenantId : myTenant.id;
     }
 
-    var photoFilesBefore = document.getElementById('maintenance-photo-before').files;
-    var photoFilesDuring = document.getElementById('maintenance-photo-during').files;
-    var photoFilesAfter = document.getElementById('maintenance-photo-after').files;
+    var photoFilesBefore = mtNew.before, photoFilesDuring = mtNew.during, photoFilesAfter = mtNew.after;
     var saveBtn = document.querySelector('#maintenance-modal .mini-btn.primary');
     var originalLabel = saveBtn ? saveBtn.textContent : '';
     if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }

@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=256">
+<link rel="modulepreload" href="app.js?v=257">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -58,7 +58,7 @@
 <link rel="modulepreload" href="services/roomIncludedBillService.js">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=95">
+<link rel="stylesheet" href="styles.css?v=96">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -835,6 +835,7 @@
     <div class="card modal-card" id="maintenance-modal-card" style="max-width:380px;">
       <h2 class="modal-title" id="maintenance-modal-title">Report a problem</h2>
       <p id="maintenance-modal-source-note" style="font-size:12px;color:var(--text-dim);margin:0 0 10px;" hidden></p>
+      <div id="mt-summary" hidden></div>
       <div class="form-row" id="maintenance-property-row">
         <label for="maintenance-property">Property</label>
         <select id="maintenance-property" onchange="onMaintenancePropertyChange()"></select>
@@ -847,56 +848,43 @@
       <div class="form-row" id="maintenance-title-row"><label for="maintenance-title">Title</label><input id="maintenance-title" type="text" /></div>
       <div class="form-row" id="maintenance-description-row"><label for="maintenance-description">Description</label><textarea id="maintenance-description"></textarea></div>
       <div id="mq-bottom" hidden></div>
-      <div class="form-row form-row-2" id="maintenance-catpri-row">
-        <div><label for="maintenance-category">Category</label>
-          <select id="maintenance-category">
-            <option value="plumbing">Plumbing</option>
-            <option value="electrical">Electrical</option>
-            <option value="appliance">Appliance</option>
-            <option value="pest_control">Pest control</option>
-            <option value="cleaning">Cleaning</option>
-            <option value="structural">Structural</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div><label for="maintenance-priority">Priority</label>
-          <select id="maintenance-priority">
-            <option value="low">Low</option>
-            <option value="normal" selected>Normal</option>
-            <option value="high">High</option>
-            <option value="urgent">Urgent</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row" id="maintenance-before-row"><label for="maintenance-photo-before">Before photos (optional)</label><input id="maintenance-photo-before" type="file" accept="image/*" multiple />
-        <div id="maintenance-photos-before-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
-      </div>
-      <div class="form-row" id="maintenance-during-row"><label for="maintenance-photo-during">During photos (optional)</label><input id="maintenance-photo-during" type="file" accept="image/*" multiple />
-        <div id="maintenance-photos-during-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
-      </div>
-      <div class="form-row" id="maintenance-after-row"><label for="maintenance-photo-after">After photos (optional)</label><input id="maintenance-photo-after" type="file" accept="image/*" multiple />
-        <div id="maintenance-photos-after-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
-      </div>
-      <div class="form-row" id="maintenance-status-row" hidden>
-        <label for="maintenance-status">Status</label>
-        <select id="maintenance-status">
-          <option value="open">Open</option>
-          <option value="in_progress">In progress</option>
-          <option value="resolved">Resolved</option>
-          <option value="closed">Closed</option>
+      <div class="form-row" id="maintenance-catpri-row">
+        <!-- The selects stay as the form's values; the chips below (mtRender) set them. -->
+        <select id="maintenance-category" hidden>
+          <option value="plumbing">Plumbing</option>
+          <option value="electrical">Electrical</option>
+          <option value="appliance">Appliance</option>
+          <option value="pest_control">Pest control</option>
+          <option value="cleaning">Cleaning</option>
+          <option value="structural">Structural</option>
+          <option value="other">Other</option>
         </select>
+        <select id="maintenance-priority" hidden></select>
+        <label>Category</label>
+        <div id="mt-category-chips" class="mt-chips"></div>
+        <label style="margin-top:10px;">Priority</label>
+        <div id="mt-priority-chips" class="mt-chips"></div>
       </div>
-      <div class="form-row" id="maintenance-due-date-row" hidden>
-        <label for="maintenance-due-date">Due date</label>
-        <input id="maintenance-due-date" type="date" />
+      <div class="form-row" id="mt-progress-row" hidden>
+        <label>Progress</label>
+        <div id="mt-stepper"></div>
+        <select id="maintenance-status" hidden></select>
       </div>
-      <div class="form-row" id="maintenance-assigned-to-row" hidden>
-        <label for="maintenance-assigned-to">Assigned to</label>
-        <input id="maintenance-assigned-to" type="text" />
+      <div class="form-row form-row-2" id="mt-work-row" hidden>
+        <div id="maintenance-assigned-to-row"><label for="maintenance-assigned-to">Assigned to</label><input id="maintenance-assigned-to" type="text" placeholder="e.g. plumber, handyman" /></div>
+        <div id="maintenance-due-date-row"><label for="maintenance-due-date">Due date</label><input id="maintenance-due-date" type="date" /></div>
       </div>
       <div class="form-row" id="maintenance-resolution-notes-row" hidden>
-        <label for="maintenance-resolution-notes">Resolution notes</label>
-        <textarea id="maintenance-resolution-notes"></textarea>
+        <label for="maintenance-resolution-notes" id="maintenance-resolution-label">What was done</label>
+        <textarea id="maintenance-resolution-notes" placeholder="e.g. Replaced the door handle and tightened the latch."></textarea>
+      </div>
+      <div class="form-row" id="maintenance-photos-row">
+        <label>Photos</label>
+        <div id="mt-photo-tabs" class="mt-seg"></div>
+        <div id="mt-photo-grid" class="mt-photo-grid"></div>
+        <input id="maintenance-photo-before" type="file" accept="image/*" multiple hidden />
+        <input id="maintenance-photo-during" type="file" accept="image/*" multiple hidden />
+        <input id="maintenance-photo-after" type="file" accept="image/*" multiple hidden />
       </div>
       <div class="form-row" id="maintenance-documents-row" hidden>
         <label>Documents</label>
@@ -1344,6 +1332,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=256"></script>
+<script type="module" src="app.js?v=257"></script>
 </body>
 </html>
