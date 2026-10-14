@@ -9258,6 +9258,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         : 'Save the image, then attach it in ' + esc(target) + '. ' + (st.chatPrefilled ? '<b>Open chat</b> has the message already typed.' : 'Copy message → paste → send.');
     }
     if (canShareImage) howTo = '<b>Send photo + message</b> → WhatsApp Business → pick ' + esc(target) + ' → send: the photo goes with the message as its caption (the message is also copied — if WhatsApp leaves it out, paste it in the caption).';
+    // Sending to ONE tenant: a single button straight to that tenant's chat — the image is copied
+    // and the chat opens with the message already typed; paste the image and send.
+    if (st.chatPrefilled && st.chatUrl){
+      var who = st.recipientName || 'the tenant';
+      document.getElementById('group-send-body').innerHTML =
+        (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="Summary image" draggable="true" class="send-preview">' : '')+
+        (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
+        '<details class="send-msg" open><summary>Message</summary><textarea readonly>'+esc(st.message)+'</textarea></details>'+
+        '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Send to '+esc(who)+' on WhatsApp</span></button>'+
+        '<p class="send-howto">Opens '+esc(who)+'\'s chat with the message already typed and the image copied — '+
+          (touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+' to add the image, then send.</p>';
+      return;
+    }
     document.getElementById('group-send-body').innerHTML =
       (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="Summary image" draggable="true" class="send-preview">' : '')+
       (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
@@ -9336,6 +9349,25 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (!err || err.name !== 'AbortError') groupSendDownloadBill();
     });
   }
+  /** One tap: copy the image (when the browser allows it) and open the tenant's chat with the
+   *  message typed. Both start inside the tap — iPhone only allows them during it. */
+  function groupSendToTenant(el){
+    var st = groupSendState; if (!st || !st.chatUrl) return;
+    var copied = false;
+    try {
+      if (st.imageBlob && navigator.clipboard && window.ClipboardItem){
+        navigator.clipboard.write([new ClipboardItem({ 'image/png': st.imageBlob })]).catch(function(err){ console.warn('copy image', err); });
+        copied = true;
+      }
+    } catch(_e){ copied = false; }
+    if (!copied && st.imageUrl){ // can't copy here: save it so it can be attached
+      var a = document.createElement('a'); a.href = st.imageUrl; a.download = st.imageName; document.body.appendChild(a); a.click(); a.remove();
+    }
+    openWhatsApp(st.chatUrl);
+    groupSendMarkSent();
+    showToast(copied ? 'Image copied — paste it in the chat and send.' : 'Image saved — attach it in the chat and send.', 'success');
+  }
+  window.groupSendToTenant = groupSendToTenant;
   window.groupSendSharePdf = groupSendSharePdf;
   window.groupSendOpenGroup = groupSendOpenGroup;
   window.groupSendCopyImage = groupSendCopyImage;

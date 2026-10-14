@@ -2445,3 +2445,7 @@ span.bd-as{cursor:default;}
 .owe-chip.bill{background:var(--status-due-bg, rgba(255,170,0,.14));color:var(--status-due, #b86e00);}
 .collect-row.is-sent .owe-chip{opacity:.7;}
 #bill-summary-modal a.mini-btn{text-decoration:none;}
+/* "What they owe" to one tenant: a single green button straight to their WhatsApp chat. */
+.wa-send-one{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;margin:14px 0 4px;padding:14px 16px;border:0;border-radius:16px;background:#25d366;color:#fff;font:inherit;font-size:16px;font-weight:700;cursor:pointer;}
+.wa-send-one svg{width:22px;height:22px;fill:currentColor;}
+.wa-send-one:active{transform:scale(.98);}
