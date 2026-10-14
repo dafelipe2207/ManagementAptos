@@ -2328,3 +2328,12 @@ input, select, textarea, .modal-input, .bills-sort select,
 @media (max-width:640px){ .page-sub{display:none;} }
 .mo-row .act-row{flex-wrap:nowrap;}
 .mo-row .act-row .mini-btn{flex:1 1 0;min-width:0;padding:0 8px;}
+
+/* Payments: every tenant card has the same layout — name + ref and property on top, the status
+   pills always on their own line underneath (left-aligned), chevron centred on the right. Before,
+   the pills sat beside the name or dropped below depending on how long the name was. */
+.pay-card > summary{display:grid !important;grid-template-columns:minmax(0,1fr);row-gap:8px;align-items:start;padding-right:34px;}
+.pay-card > summary .pay-who{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.pay-card > summary .pay-badges{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-start;}
+.pay-card > summary .pay-badges .badge{margin:0;}
+.pay-card > summary::after{top:50%;}
