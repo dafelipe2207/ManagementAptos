@@ -2396,3 +2396,41 @@ input, select, textarea, .modal-input, .bills-sort select,
 .bond-cover.less b{color:var(--status-paid);}
 .bond-cover.ok{color:var(--status-paid);}
 .bond-cover .text-link{display:inline !important;margin:0 0 0 6px !important;padding:0 !important;width:auto !important;font-size:11.5px;font-weight:600;}
+
+/* ---------- Bond card (tenant page): result on top, lines grouped and collapsible ---------- */
+.bond-card .bd-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+.bond-card .bd-head h2{margin:0;}
+.bond-card .bd-held{font-size:12px;color:var(--text-faint);}
+.bd-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+.bd-tile{border:1px solid var(--border);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;background:var(--surface, transparent);}
+.bd-tile span{font-size:11.5px;color:var(--text-faint);}
+.bd-tile b{font-size:20px;font-weight:700;letter-spacing:-.01em;}
+.bd-tile small{font-size:11px;color:var(--text-dim);}
+.bd-tile.ok b{color:var(--status-paid);}
+.bd-tile.owes{border-color:var(--status-overdue);}
+.bd-tile.owes b{color:var(--status-overdue);}
+.bd-groups{display:flex;flex-direction:column;gap:6px;}
+.bd-group{border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+.bd-group summary,.bd-sum{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;list-style:none;}
+.bd-sum{cursor:default;}
+.bd-group summary::-webkit-details-marker{display:none;}
+.bd-ic{width:22px;text-align:center;flex:none;}
+.bd-title{flex:1;min-width:0;font-size:13.5px;font-weight:600;}
+.bd-title i{font-style:normal;font-weight:500;color:var(--text-faint);}
+.bd-title small{display:block;font-size:11px;font-weight:400;color:var(--text-faint);}
+.bd-chev{color:var(--text-faint);transition:transform .15s;}
+.bd-group[open] .bd-chev{transform:rotate(90deg);}
+.bd-amt{font-weight:650;font-size:13.5px;white-space:nowrap;}
+.bd-amt.neg{color:var(--status-overdue);}
+.bd-amt.pos{color:var(--status-paid);}
+.bd-items{border-top:1px solid var(--border);padding:4px 12px 6px 44px;}
+.bd-item{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:6px 0;font-size:12.5px;}
+.bd-item + .bd-item{border-top:1px dashed var(--border);}
+.bd-item small{display:block;font-size:11px;color:var(--text-faint);line-height:1.45;margin-top:1px;}
+.bd-item small b.neg{color:var(--status-overdue);} .bd-item small b.pos{color:var(--status-paid);}
+.bd-item-v{display:inline-flex;align-items:center;gap:6px;}
+.bd-item-v .bd-amt{font-size:12.5px;font-weight:600;}
+.bd-foot{font-size:12px;color:var(--text-dim);margin:12px 0 6px;}
+.bd-group.bd-todo{border-color:var(--status-due);}
+.bd-btn{padding:4px 10px !important;font-size:11.5px !important;min-height:0 !important;}
+.bd-btn{white-space:nowrap;}
