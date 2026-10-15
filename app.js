@@ -9222,7 +9222,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       imageName: (opts.imageName || 'image').toLowerCase().replace(/[^a-z0-9.-]+/g, '-'),
       imageUrl: opts.imageBlob ? URL.createObjectURL(opts.imageBlob) : null, docFiles: opts.docFiles || [],
       chatUrl: opts.chatUrl || null, chatPrefilled: !!opts.chatPrefilled, chatLabel: opts.chatLabel || 'chat',
-      recipientName: opts.recipientName || '', imageOnly: !!opts.imageOnly, onSent: opts.onSent || null, marked: false };
+      recipientName: opts.recipientName || '', imageOnly: !!opts.imageOnly, toPhone: opts.toPhone || null, onSent: opts.onSent || null, marked: false };
     renderGroupSendModal(opts.note || '');
   }
   function closeGroupSendModal(){
@@ -9267,6 +9267,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="What they owe" draggable="true" class="send-preview">' : '')+
         (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
         (st.message ? '<p class="send-link-msg">💬 '+esc(st.message)+'</p>' : '')+
+        // WhatsApp Cloud API set up: the app sends the image itself to the tenant's number.
+        (waApi.configured && st.toPhone
+          ? '<button type="button" class="wa-send-one" id="wa-auto-btn" onclick="groupSendViaApi(this)">'+WA_ICON+'<span>Send to '+esc(who1)+'</span></button>'+
+            '<p class="send-howto">Sent automatically to '+esc(who1)+'\'s WhatsApp ('+esc(st.toPhone)+') — no need to open WhatsApp.</p>'
+        :
         // Phone: the share sheet sends the image itself (WhatsApp Business → pick the tenant).
         // Opening the chat and pasting didn't work reliably on iPhone — the image never arrived.
         (touch && canShare1
@@ -9275,7 +9280,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         : st.chatUrl
           ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Send to '+esc(who1)+' on WhatsApp</span></button>'+
             '<p class="send-howto">Opens '+esc(who1)+'\'s chat with the image copied'+(st.message && st.chatUrl.indexOf('?text=') > -1 ? ' and the link to the bills already typed' : '')+' — '+(touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+', then send.</p>'
-          : '<button type="button" class="wa-send-one" onclick="'+(canShare1 ? 'groupSendShare(this)' : 'groupSendDownloadImage()')+'">'+WA_ICON+'<span>'+(canShare1 ? 'Share image' : 'Save image')+'</span></button>');
+          : '<button type="button" class="wa-send-one" onclick="'+(canShare1 ? 'groupSendShare(this)' : 'groupSendDownloadImage()')+'">'+WA_ICON+'<span>'+(canShare1 ? 'Share image' : 'Save image')+'</span></button>'))+
+        (waApi.configured === false && !isViewer() ? '<p class="send-howto" style="opacity:.75;">Automatic sending isn\'t set up yet (WhatsApp Business API).</p>' : '');
       return;
     }
     if (st.chatPrefilled && st.chatUrl){
@@ -9386,6 +9392,36 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     showToast(copied ? 'Image copied — paste it in the chat and send.' : 'Image saved — attach it in the chat and send.', 'success');
   }
   window.groupSendToTenant = groupSendToTenant;
+  /** WhatsApp Cloud API (edge function whatsapp-send): is it set up? Asked once per session. */
+  var waApi = { configured: null, checking: null };
+  function waApiStatus(){
+    if (waApi.configured !== null) return Promise.resolve(waApi.configured);
+    if (!waApi.checking) waApi.checking = realtimeClient.functions.invoke('whatsapp-send', { body: { action: 'status' } })
+      .then(function(r){ waApi.configured = !!(r && r.data && r.data.configured); return waApi.configured; })
+      .catch(function(){ waApi.configured = false; return false; });
+    return waApi.checking;
+  }
+  function blobToBase64(blob){
+    return new Promise(function(res, rej){ var fr = new FileReader(); fr.onload = function(){ res(String(fr.result).split(',')[1]); }; fr.onerror = rej; fr.readAsDataURL(blob); });
+  }
+  async function groupSendViaApi(btn){
+    var st = groupSendState; if (!st || !st.imageBlob || !st.toPhone) return;
+    var label = btn ? btn.querySelector('span') : null, old = label ? label.textContent : '';
+    if (btn){ btn.disabled = true; if (label) label.textContent = 'Sending…'; }
+    try {
+      var b64 = await blobToBase64(st.imageBlob);
+      var r = await realtimeClient.functions.invoke('whatsapp-send', { body: { to: st.toPhone, imageBase64: b64, firstName: st.recipientName || '', caption: st.message || '' } });
+      var err = r && r.error ? (r.data && r.data.error) || (r.error.context && typeof r.error.context.json === 'function' ? ((await r.error.context.json().catch(function(){ return {}; })).error) : r.error.message) : (r && r.data && r.data.error);
+      if (err) throw new Error(err);
+      groupSendMarkSent();
+      if (label) label.textContent = '✓ Sent to ' + (st.recipientName || 'the tenant');
+      showToast('Sent to ' + (st.recipientName || 'the tenant') + ' on WhatsApp.', 'success');
+    } catch(e){
+      if (btn) btn.disabled = false; if (label) label.textContent = old;
+      showToast('Could not send it automatically. ' + (e && e.message ? e.message : ''), 'error');
+    }
+  }
+  window.groupSendViaApi = groupSendViaApi;
   window.groupSendSharePdf = groupSendSharePdf;
   window.groupSendOpenGroup = groupSendOpenGroup;
   window.groupSendCopyImage = groupSendCopyImage;
@@ -9455,8 +9491,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, docs, 0);
     var linkMsg = ''; // image only — the image itself says where to see the invoices
     var chatUrl = waChatUrl(t.phone, '');
+    await waApiStatus(); // whether the image can be sent automatically (WhatsApp Cloud API set up)
     showGroupSend(m, { message: linkMsg, imageBlob: imageBlob, imageName: 'owed-' + first + '-' + TODAY + '.png',
-      chatUrl: chatUrl, chatPrefilled: !!chatUrl, imageOnly: true, recipientName: first, onSent: onSent,
+      chatUrl: chatUrl, chatPrefilled: !!chatUrl, imageOnly: true, toPhone: t.phone || null, recipientName: first, onSent: onSent,
       note: chatUrl ? '' : 'No phone number on file for ' + t.fullName + ' — save the image and send it yourself.' });
   }
 
