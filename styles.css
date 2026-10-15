@@ -2514,3 +2514,22 @@ a.prc-name:hover{color:var(--accent);}
 .pp-addr{margin:6px 0 0;color:var(--text-dim);font-size:13.5px;}
 .pn-text{display:block;color:var(--text-dim);margin-top:2px;}
 .pn-body > b{display:block;}
+
+/* ── Performance on phones/tablets (touch): closing a window froze the screen ──────────────
+   The animated wallpaper (4 huge blurred circles drifting all the time) forced iPhone Safari to
+   re-blur every frosted card on every frame, and closing a window repainted all of them at once.
+   On touch devices: the wallpaper stays still, cards/windows are a near-opaque "glass" without a
+   live blur (looks the same on this pale background), and the dimmed backdrop has no blur. The
+   top bar and tab bar keep their blur — only two small layers. */
+@media (hover: none), (pointer: coarse), (max-width: 1024px){
+  .ios-wall i{animation:none !important;will-change:auto !important;}
+  .card, .stat, .pp .card, .wifi-card, .rei-banner, .sidebar{
+    -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
+    background:color-mix(in srgb, var(--bg-elevated) 86%, transparent) !important;
+  }
+  .modal-overlay{-webkit-backdrop-filter:none !important; backdrop-filter:none !important; background:rgba(15,20,35,.38) !important;}
+  .modal-card{-webkit-backdrop-filter:none !important; backdrop-filter:none !important; background:var(--bg-elevated) !important;}
+}
+/* Move-out rows have 4 actions now: let them wrap 2×2 instead of squeezing words ("Dat e"). */
+.mo-row .act-row{flex-wrap:wrap !important;}
+.mo-row .act-row .mini-btn{flex:1 1 calc(50% - 6px) !important;white-space:nowrap;min-width:0;}
