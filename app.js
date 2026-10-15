@@ -9467,7 +9467,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     docs = docs || [];
     var dw = R - L + 24;
     var docsH = docs.reduce(function(h, d){ return h + 24 + Math.round(d.canvas.height * dw / d.canvas.width) + 50; }, 0);
-    var H = 32 + 230 + 50 + 44 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + 40 + 30 +
+    var H = 32 + 230 + 50 + 40 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + 40 + 30 +
       (docs.length ? 90 + docsH + (moreDocs > 0 ? 50 : 0) : 0);
     var card = imageCard(W, H), g = card.g, rr = card.rr;
     var y = 32 + 72;
@@ -9514,10 +9514,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     g.fillText('Use your reference in the transfer description and reply with your receipt.', L, y);
     y += 40;
     if (billItems.length){
-      g.fillText('Want to see the invoice? Go to the app → Bills:', L, y);
-      y += 44;
-      g.fillStyle = '#1d4ed8'; g.font = '600 28px ' + font;
-      g.fillText((appPublicUrl() + '#/bills').replace(/^https?:\/\//, ''), L, y);
+      g.fillStyle = '#1d2433'; g.font = '600 27px ' + font;
+      g.fillText('Want to see a bill? Open the app → Bills.', L, y);
+      y += 40;
+      g.fillStyle = '#9aa1ad'; g.font = '400 25px ' + font;
+      g.fillText('Each invoice is attached to its charge there.', L, y);
     } else g.fillText('Thank you!', L, y);
     y += 30;
     if (docs.length){
