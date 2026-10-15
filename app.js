@@ -3919,6 +3919,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var base = room ? roomBaseName(room.name) : null;
     var beds = base ? rooms.filter(function(r){ return r.propertyId === t.propertyId && roomBaseName(r.name) === base; }) : (room ? [room] : []);
     var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate || TODAY;
+    if (moveOut < TODAY) moveOut = TODAY; // a room already empty is available now
     var mates = tenants.filter(function(x){
       return x.id !== t.id && x.isActive !== false && beds.some(function(r){ return r.id === x.roomId; }) &&
         !((x.actualMoveOutDate || x.expectedMoveOutDate) && (x.actualMoveOutDate || x.expectedMoveOutDate) <= moveOut);
@@ -3980,10 +3981,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     L.push('', 'Feel free to share with anyone looking for accommodation' + (area ? ' in ' + area : '') + '! 🙌');
     return L.join('\n');
   }
-  var roomAdTenantId = null;
-  function openRoomAdModal(tenantId){
-    var t = tenantOf(tenantId); if (!t) return;
-    roomAdTenantId = tenantId;
+  var roomAdSubject = null; // the tenant leaving (or the room's last tenant / a stand-in for an empty room)
+  /** From Properties → a room: the ad for that room — based on who's leaving it, or, if it's
+   *  empty, on its last tenant (price, bond). */
+  function openRoomAdForRoom(roomId){
+    var r = roomOf(roomId); if (!r) return;
+    var cur = currentTenantOf(r.id);
+    var last = cur || tenants.filter(function(x){ return x.roomId === r.id; })
+      .sort(function(a,b){ return (b.actualMoveOutDate || b.expectedMoveOutDate || '9999').localeCompare(a.actualMoveOutDate || a.expectedMoveOutDate || '9999'); })[0];
+    var subj = last ? Object.assign({}, last) : { id: null, fullName: '', propertyId: r.propertyId, roomId: r.id, rentAmount: 0, rentFrequency: 'weekly' };
+    if (!cur){ subj.actualMoveOutDate = TODAY; subj.expectedMoveOutDate = TODAY; subj._vacant = true; }
+    openRoomAdModal(null, subj);
+  }
+  window.openRoomAdForRoom = openRoomAdForRoom;
+  function openRoomAdModal(tenantId, subject){
+    var t = subject || tenantOf(tenantId); if (!t) return;
+    roomAdSubject = t;
     var c = roomAdContext(t), info = c.info, rs = (info.rooms || {})[c.roomKey] || {};
     var m = document.getElementById('room-ad-modal');
     if (!m){
@@ -3996,7 +4009,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var matesTxt = c.mates.length ? c.mates.map(function(x){ return x.fullName; }).join(', ') : '';
     m.innerHTML = '<div class="card modal-card" style="max-width:560px;">'+
       '<h2 class="modal-title">Room ad — '+esc(c.room ? c.room.name : 'room')+(c.p ? ' · '+esc(c.p.name) : '')+'</h2>'+
-      '<p class="modal-sub">'+esc(t.fullName)+' leaves '+fullDate(t.actualMoveOutDate || t.expectedMoveOutDate || TODAY)+'. Edit anything — the property details are saved for the next ad.</p>'+
+      '<p class="modal-sub">'+(t._vacant ? 'Empty room'+(t.fullName ? ' — price and bond from the last tenant ('+esc(t.fullName)+')' : ' — set the price and bond in Edit details') : (t.actualMoveOutDate || t.expectedMoveOutDate ? esc(t.fullName)+' leaves '+fullDate(t.actualMoveOutDate || t.expectedMoveOutDate) : esc(t.fullName)+' lives here (no move-out date yet) — set "Available from" in Edit details'))+'. The property details are saved for the next ad.</p>'+
       '<textarea id="ra-out" rows="12" readonly class="room-ad-out" aria-label="Post"></textarea>'+
       '<div class="actions-row" style="margin:8px 0 4px;"><button type="button" class="mini-btn" onclick="document.getElementById(\'room-ad-modal\').hidden=true">Close</button>'+
       (navigator.share ? '<button type="button" class="mini-btn" onclick="roomAdShare(this)">Share</button>' : '')+
@@ -4022,7 +4035,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function roomAdValues(){
     var g = function(id){ var e = document.getElementById(id); return e ? e.value.trim() : ''; };
-    var t = tenantOf(roomAdTenantId), c = t ? roomAdContext(t) : null;
+    var t = roomAdSubject, c = t ? roomAdContext(t) : null;
     return { area: g('ra-area'), shared: g('ra-type') === 'shared', beds: parseInt(g('ra-beds'), 10) || 2, sharedWith: g('ra-with'),
       price: parseFloat(g('ra-price')) || 0, bills: g('ra-bills') !== '0', bondWeeks: parseInt(g('ra-bond'), 10) || 0, available: g('ra-date'),
       location: g('ra-loc'), amenities: g('ra-amen').split(/\n+/).map(function(x){ return x.trim(); }).filter(Boolean), tagline: g('ra-tag'), ctx: c };
@@ -15134,6 +15147,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       : '<div class="room-row">'+inner+'</div>';
     var hasAnyTenant = !!t;
     return '<div class="room-line">'+linkOrDiv+
+      (isViewer() ? '' : '<button type="button" class="icon-mini-btn" title="Room ad — write the post to find a tenant" '+
+      'onclick="event.preventDefault();event.stopPropagation();openRoomAdForRoom(\''+r.id+'\')">📣</button>')+
       '<button type="button" class="icon-mini-btn" title="Room activity" '+
       'onclick="event.preventDefault();event.stopPropagation();openRoomActivityModal(\''+r.id+'\')">🕘</button>'+
       '<button type="button" class="icon-mini-btn" title="Edit room" '+
