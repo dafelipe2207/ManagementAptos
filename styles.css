@@ -2450,3 +2450,22 @@ span.bd-as{cursor:default;}
 .wa-send-one svg{width:22px;height:22px;fill:currentColor;}
 .wa-send-one:active{transform:scale(.98);}
 .send-link-msg{font-size:12.5px;color:var(--text-dim);background:var(--border);border-radius:12px;padding:8px 10px;margin:10px 0 0;word-break:break-all;}
+/* ---------- Bills table (desktop): grouped by what needs doing, fewer, clearer columns ---------- */
+.bills-table2{width:100%;border-collapse:separate;border-spacing:0;}
+.bills-table2 th{font-size:11px;letter-spacing:.04em;color:var(--text-faint);padding:8px 12px;white-space:nowrap;}
+.bills-table2 td{padding:12px;vertical-align:middle;border-top:1px solid var(--border);}
+.bills-table2 th.num, .bills-table2 td.num{text-align:right;}
+.bills-table2 tr.bt-group td{background:transparent;border-top:0;padding:16px 12px 6px;font-size:12px;font-weight:700;color:var(--text-dim);}
+.bills-table2 tr.bt-group td span{display:inline-block;min-width:20px;padding:1px 7px;margin-left:6px;border-radius:999px;background:var(--border);font-size:11px;text-align:center;}
+.bills-table2 tr.bt-group + tr td{border-top:0;}
+.bt-bill{display:flex;align-items:center;gap:10px;}
+.bt-bill .bill-ic{width:34px;height:34px;flex:none;}
+.bt-bill b{display:block;font-size:13.5px;}
+.bt-sub{display:block;font-size:11.5px;color:var(--text-faint);margin-top:2px;}
+.bt-sub.ok{color:var(--status-paid);}
+.bt-faint{color:var(--text-faint);font-size:12.5px;}
+.bt-date{font-size:13.5px;}
+.bt-tenants{min-width:150px;}
+.bt-prog{height:6px;border-radius:999px;background:var(--border);overflow:hidden;margin:2px 0 5px;max-width:160px;}
+.bt-prog i{display:block;height:100%;background:var(--status-paid);border-radius:999px;}
+.bills-table-card .show-more-btn{margin-top:10px;}
