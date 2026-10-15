@@ -7982,9 +7982,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
   }
   /** Applies the current sort order (billsSortColumn/billsSortDir) to an already filtered list of bills. */
+  /** Pending first: 0 = tenants still owe (overdue first), 1 = tenants paid but the provider isn't
+   *  paid yet, 2 = all done. Applied before the chosen column, except when sorting by Status. */
+  function billPendingRank(b){
+    var st = billEffectiveStatus(b);
+    if (st !== 'paid') return st === 'overdue' ? 0 : 1;
+    return b.adminPaid ? 3 : 2;
+  }
   function sortBillsList(list){
     var col = billsSortColumn, dir = billsSortDir === 'asc' ? 1 : -1;
     return list.slice().sort(function(a, b){
+      if (col !== 'status'){
+        var ra = billPendingRank(a), rb = billPendingRank(b);
+        if (ra !== rb) return ra - rb;
+        // Pending ones by the default due-date sort: soonest first (it's what needs doing next).
+        if (ra < 3 && col === 'dueDate' && billsSortDir === 'desc') return (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+      }
       var av = billsSortValue(a, col), bv = billsSortValue(b, col);
       var cmp = (typeof av === 'number' && typeof bv === 'number') ? (av - bv) : String(av).localeCompare(String(bv));
       if (cmp === 0) cmp = (b.dueDate || '').localeCompare(a.dueDate || ''); // stable tie-breaker
