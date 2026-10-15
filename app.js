@@ -3929,20 +3929,55 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var info = (p && p.listingInfo) || {};
     var shared = beds.length > 1;
     return { p: p, room: room, shared: shared, beds: beds.length, mates: mates, weekly: weekly, bondWeeks: bondWeeks,
-      available: stepDateIso(moveOut, 1), info: info, roomKey: base || (room ? room.name : '') };
+      available: moveOut, info: info, notesInfo: listingFromNotes(p && p.notes), roomKey: base || (room ? room.name : '') };
+  }
+  var NUM_WORDS = ['zero','one','two','three','four','five','six','seven','eight'];
+  /** One amenity per line with a matching emoji ("Swimming pool" → 🏊 Swimming pool). */
+  function amenityLine(a){
+    var raw = String(a).trim().replace(/^[-*•\s]+/, '');
+    if (!raw) return '';
+    if (/^\p{Extended_Pictographic}/u.test(raw)) return raw; // already has its emoji — keep as written
+    var t = raw.replace(/\.$/, '');
+    var k = t.toLowerCase(), ic = '✅';
+    if (/pool|swim/.test(k)) ic = '🏊'; else if (/sauna|spa|steam/.test(k)) ic = '🧖'; else if (/gym|fitness/.test(k)) ic = '💪';
+    else if (/social|common|lounge|relax/.test(k)) ic = '🛋️'; else if (/park|garage|car/.test(k)) ic = '🚗'; else if (/laundry|wash/.test(k)) ic = '🧺';
+    else if (/balcony|view|rooftop|terrace/.test(k)) ic = '🌇'; else if (/bbq|barbecue/.test(k)) ic = '🍖'; else if (/wifi|internet/.test(k)) ic = '📶';
+    else if (/security|concierge/.test(k)) ic = '🛡️'; else if (/cinema|movie/.test(k)) ic = '🎬'; else if (/study|desk|work/.test(k)) ic = '💻';
+    return ic + ' ' + t.charAt(0).toUpperCase() + t.slice(1);
+  }
+  /** Reads the ad blurbs from the property notes: the "📍" paragraph is the location, the "🏢"
+   *  one the building (its list after the colon becomes the amenities). Price/bond/date lines in
+   *  the notes are ignored — those always come from the tenant leaving. */
+  function listingFromNotes(notes){
+    var out = { location: '', amenities: [] };
+    String(notes || '').split(/\n+/).forEach(function(line){
+      var l = line.trim();
+      if (/^📍/.test(l)) out.location = l.replace(/^📍\s*/, '');
+      else if (/^🏢/.test(l)){
+        var body = l.replace(/^🏢\s*/, ''), afterColon = body.indexOf(':') > -1 ? body.slice(body.indexOf(':') + 1) : body;
+        out.amenities = afterColon.replace(/\.$/, '').split(/,\s*(?:and\s+)?|\s+and\s+/).map(function(x){ return x.trim(); }).filter(Boolean);
+      }
+    });
+    return out;
   }
   function roomAdText(v){
+    var area = v.area || '', price = '$' + (Math.round(v.price * 100) / 100);
     var L = [];
-    L.push('✨ ' + (v.shared ? 'Bed available in a shared room' : 'Room available') + (v.area ? ' (' + v.area + ')' : '') + ' ✨');
+    L.push('✨ ' + (v.shared ? 'BED' : 'ROOM') + ' AVAILABLE' + (area ? ' IN ' + area.toUpperCase() : '') + ' – ' + price + '/WEEK ✨');
     if (v.location) L.push('', '📍 ' + v.location);
-    L.push('', '🛏️ ' + (v.shared
-      ? 'One bed available in a shared room for ' + v.beds + ' people.' + (v.sharedWith ? ' The room is shared with ' + v.sharedWith + ', in a calm and respectful environment.' : '')
-      : 'Private room available' + (v.sharedWith ? ', in a house shared with ' + v.sharedWith : '') + '.'));
-    L.push('', '💵 Price: $' + (Math.round(v.price * 100) / 100) + ' per week' + (v.bills ? ' (plus bills).' : ' (bills included).'));
-    if (v.bondWeeks) L.push('🔒 Bond: ' + v.bondWeeks + ' week' + (v.bondWeeks == 1 ? '' : 's') + '.');
+    L.push('', '🛏️ About the room', '');
+    if (v.shared) L.push('* One bed available in a shared room for ' + (NUM_WORDS[v.beds] || v.beds) + ' people.');
+    else L.push('* Private room available.');
+    if (v.sharedWith) L.push('* ' + (v.shared ? 'Sharing with ' : 'Sharing the place with ') + v.sharedWith + '.');
+    L.push('* Ideal for someone looking for a comfortable, friendly and respectful living environment.');
+    L.push('', '💰 Weekly rent: ' + price + (v.bills ? ' + bills' : ' (bills included)'));
+    if (v.bondWeeks) L.push('🔒 Bond: ' + v.bondWeeks + ' week' + (v.bondWeeks == 1 ? '' : 's') + '\u2019 rent');
     if (v.available) L.push('📅 Available from: ' + new Intl.DateTimeFormat('en-AU', { day:'numeric', month:'long' }).format(new Date(v.available + 'T00:00:00')));
-    if (v.amenities) L.push('', '🏢 ' + v.amenities);
-    L.push('', '📩 If you\u2019re interested or would like more information, feel free to send me a message.');
+    var am = (v.amenities || []).map(amenityLine).filter(Boolean);
+    if (am.length) L.push('', '🏢 Amazing building facilities:', am.join('\n'));
+    if (v.tagline) L.push('', '🌆 ' + v.tagline);
+    L.push('', '📩 Interested? Send me a message for more details or to arrange an inspection.');
+    L.push('', 'Feel free to share with anyone looking for accommodation' + (area ? ' in ' + area : '') + '! 🙌');
     return L.join('\n');
   }
   var roomAdTenantId = null;
@@ -3977,8 +4012,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         f('ra-bond', 'Bond (weeks)', c.bondWeeks, '', 'number')+
         f('ra-date', 'Available from', c.available, '', 'date')+
       '</div>'+
-      ta('ra-loc', 'Location', info.location || '', 'e.g. Great location: just steps from Melbourne Central…')+
-      ta('ra-amen', 'Building / amenities', info.amenities || '', 'e.g. The building has a pool, sauna, gym…')+
+      ta('ra-loc', 'Location', info.location || c.notesInfo.location || '', 'From the property notes (📍 line) — e.g. Prime location! Live in the heart of…')+
+      '<div class="form-row"><label for="ra-amen">Building facilities (one per line)</label><textarea id="ra-amen" rows="4" placeholder="Swimming pool&#10;Sauna&#10;Fully equipped gym" oninput="roomAdUpdate()">'+
+        esc((Array.isArray(info.amenities) ? info.amenities : (info.amenities ? [] : c.notesInfo.amenities)).join('\n') || c.notesInfo.amenities.join('\n'))+'</textarea></div>'+
+      f('ra-tag', 'Closing line', info.tagline != null ? info.tagline : 'Enjoy city living with everything you need right at your doorstep!', '')+
       '</details></div>';
     m.hidden = false;
     roomAdUpdate();
@@ -3988,7 +4025,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var t = tenantOf(roomAdTenantId), c = t ? roomAdContext(t) : null;
     return { area: g('ra-area'), shared: g('ra-type') === 'shared', beds: parseInt(g('ra-beds'), 10) || 2, sharedWith: g('ra-with'),
       price: parseFloat(g('ra-price')) || 0, bills: g('ra-bills') !== '0', bondWeeks: parseInt(g('ra-bond'), 10) || 0, available: g('ra-date'),
-      location: g('ra-loc'), amenities: g('ra-amen'), ctx: c };
+      location: g('ra-loc'), amenities: g('ra-amen').split(/\n+/).map(function(x){ return x.trim(); }).filter(Boolean), tagline: g('ra-tag'), ctx: c };
   }
   function roomAdUpdate(){
     var v = roomAdValues(), out = document.getElementById('ra-out');
@@ -3998,7 +4035,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   async function roomAdSaveDefaults(){
     var v = roomAdValues(), c = v.ctx; if (!c || !c.p || isViewer()) return;
     var info = Object.assign({}, c.p.listingInfo || {});
-    info.area = v.area; info.location = v.location; info.amenities = v.amenities;
+    info.area = v.area; info.location = v.location; info.amenities = v.amenities; info.tagline = v.tagline;
     info.rooms = Object.assign({}, info.rooms || {});
     if (c.roomKey) info.rooms[c.roomKey] = Object.assign({}, info.rooms[c.roomKey] || {}, { sharedWith: v.sharedWith });
     try { c.p.listingInfo = await propertyService.updateListingInfo(c.p.id, info); } catch(e){ console.warn('save ad defaults', e); }
