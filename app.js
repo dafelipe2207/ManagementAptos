@@ -8,7 +8,7 @@ import { friendlyErrorMessage } from './lib/errors.js?v=2';
 import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
   // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
-import * as propertyService from './services/propertyService.js?v=4';
+import * as propertyService from './services/propertyService.js?v=5';
 import * as roomService from './services/roomService.js?v=3';
 import * as tenantService from './services/tenantService.js?v=10';
 import * as bondService from './services/bondService.js?v=5';
@@ -3909,6 +3909,119 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.cancelMoveOut = cancelMoveOut;
 
   /** "Change date" / "Cancel move-out" buttons for staff, shown wherever a move-out is pending. */
+  /* ---------- "Room ad": the post to find the next tenant when someone leaves ----------
+   * Prefilled from the leaving tenant (weekly price, bond in weeks, room shared or not, date
+   * available) plus the property's saved ad details (area, location, amenities, who the room is
+   * shared with). Everything is editable; the property details are remembered for next time. */
+  function roomBaseName(name){ var m = /^(.*\S)\s+[A-Za-z]$/.exec(String(name || '').trim()); return m ? m[1] : null; }
+  function roomAdContext(t){
+    var p = propertyOf(t.propertyId), room = roomOf(t.roomId);
+    var base = room ? roomBaseName(room.name) : null;
+    var beds = base ? rooms.filter(function(r){ return r.propertyId === t.propertyId && roomBaseName(r.name) === base; }) : (room ? [room] : []);
+    var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate || TODAY;
+    var mates = tenants.filter(function(x){
+      return x.id !== t.id && x.isActive !== false && beds.some(function(r){ return r.id === x.roomId; }) &&
+        !((x.actualMoveOutDate || x.expectedMoveOutDate) && (x.actualMoveOutDate || x.expectedMoveOutDate) <= moveOut);
+    });
+    var weekly = t.rentAmount ? round2(normalizeToWeekly(t.rentAmount, t.rentFrequency)) : 0;
+    var bond = bondOf(t.id);
+    var bondWeeks = bond && bond.amountRequired && weekly ? Math.max(1, Math.round(bond.amountRequired / weekly)) : 2;
+    var info = (p && p.listingInfo) || {};
+    var shared = beds.length > 1;
+    return { p: p, room: room, shared: shared, beds: beds.length, mates: mates, weekly: weekly, bondWeeks: bondWeeks,
+      available: stepDateIso(moveOut, 1), info: info, roomKey: base || (room ? room.name : '') };
+  }
+  function roomAdText(v){
+    var L = [];
+    L.push('✨ ' + (v.shared ? 'Bed available in a shared room' : 'Room available') + (v.area ? ' (' + v.area + ')' : '') + ' ✨');
+    if (v.location) L.push('', '📍 ' + v.location);
+    L.push('', '🛏️ ' + (v.shared
+      ? 'One bed available in a shared room for ' + v.beds + ' people.' + (v.sharedWith ? ' The room is shared with ' + v.sharedWith + ', in a calm and respectful environment.' : '')
+      : 'Private room available' + (v.sharedWith ? ', in a house shared with ' + v.sharedWith : '') + '.'));
+    L.push('', '💵 Price: $' + (Math.round(v.price * 100) / 100) + ' per week' + (v.bills ? ' (plus bills).' : ' (bills included).'));
+    if (v.bondWeeks) L.push('🔒 Bond: ' + v.bondWeeks + ' week' + (v.bondWeeks == 1 ? '' : 's') + '.');
+    if (v.available) L.push('📅 Available from: ' + new Intl.DateTimeFormat('en-AU', { day:'numeric', month:'long' }).format(new Date(v.available + 'T00:00:00')));
+    if (v.amenities) L.push('', '🏢 ' + v.amenities);
+    L.push('', '📩 If you\u2019re interested or would like more information, feel free to send me a message.');
+    return L.join('\n');
+  }
+  var roomAdTenantId = null;
+  function openRoomAdModal(tenantId){
+    var t = tenantOf(tenantId); if (!t) return;
+    roomAdTenantId = tenantId;
+    var c = roomAdContext(t), info = c.info, rs = (info.rooms || {})[c.roomKey] || {};
+    var m = document.getElementById('room-ad-modal');
+    if (!m){
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'room-ad-modal';
+      m.addEventListener('click', function(e){ if (e.target === m) m.hidden = true; });
+      document.body.appendChild(m);
+    }
+    var f = function(id, label, val, ph, type){ return '<div class="form-row"><label for="'+id+'">'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+esc(val == null ? '' : val)+'" placeholder="'+esc(ph||'')+'" oninput="roomAdUpdate()" /></div>'; };
+    var ta = function(id, label, val, ph){ return '<div class="form-row"><label for="'+id+'">'+label+'</label><textarea id="'+id+'" rows="2" placeholder="'+esc(ph||'')+'" oninput="roomAdUpdate()">'+esc(val||'')+'</textarea></div>'; };
+    var matesTxt = c.mates.length ? c.mates.map(function(x){ return x.fullName; }).join(', ') : '';
+    m.innerHTML = '<div class="card modal-card" style="max-width:560px;">'+
+      '<h2 class="modal-title">Room ad — '+esc(c.room ? c.room.name : 'room')+(c.p ? ' · '+esc(c.p.name) : '')+'</h2>'+
+      '<p class="modal-sub">'+esc(t.fullName)+' leaves '+fullDate(t.actualMoveOutDate || t.expectedMoveOutDate || TODAY)+'. Edit anything — the property details are saved for the next ad.</p>'+
+      '<textarea id="ra-out" rows="12" readonly class="room-ad-out" aria-label="Post"></textarea>'+
+      '<div class="actions-row" style="margin:8px 0 4px;"><button type="button" class="mini-btn" onclick="document.getElementById(\'room-ad-modal\').hidden=true">Close</button>'+
+      (navigator.share ? '<button type="button" class="mini-btn" onclick="roomAdShare(this)">Share</button>' : '')+
+      '<button type="button" class="mini-btn primary" onclick="roomAdCopy(this)">Copy post</button></div>'+
+      '<details class="room-ad-edit"><summary>Edit details</summary>'+
+      '<div class="room-ad-grid">'+
+        f('ra-area', 'Area', info.area || '', 'e.g. Melbourne CBD')+
+        '<div class="form-row"><label for="ra-type">Type</label><select id="ra-type" onchange="roomAdUpdate()"><option value="shared"'+(c.shared?' selected':'')+'>Bed in a shared room</option><option value="private"'+(!c.shared?' selected':'')+'>Private room</option></select></div>'+
+        f('ra-beds', 'People in the room', c.beds > 1 ? c.beds : 2, '', 'number')+
+        f('ra-with', 'Shared with', rs.sharedWith || '', matesTxt ? 'e.g. a Latino guy ('+matesTxt+')' : 'e.g. a Latino guy')+
+        f('ra-price', 'Price per week ($)', c.weekly || '', '', 'number')+
+        '<div class="form-row"><label for="ra-bills">Bills</label><select id="ra-bills" onchange="roomAdUpdate()"><option value="1">Plus bills</option><option value="0">Bills included</option></select></div>'+
+        f('ra-bond', 'Bond (weeks)', c.bondWeeks, '', 'number')+
+        f('ra-date', 'Available from', c.available, '', 'date')+
+      '</div>'+
+      ta('ra-loc', 'Location', info.location || '', 'e.g. Great location: just steps from Melbourne Central…')+
+      ta('ra-amen', 'Building / amenities', info.amenities || '', 'e.g. The building has a pool, sauna, gym…')+
+      '</details></div>';
+    m.hidden = false;
+    roomAdUpdate();
+  }
+  function roomAdValues(){
+    var g = function(id){ var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+    var t = tenantOf(roomAdTenantId), c = t ? roomAdContext(t) : null;
+    return { area: g('ra-area'), shared: g('ra-type') === 'shared', beds: parseInt(g('ra-beds'), 10) || 2, sharedWith: g('ra-with'),
+      price: parseFloat(g('ra-price')) || 0, bills: g('ra-bills') !== '0', bondWeeks: parseInt(g('ra-bond'), 10) || 0, available: g('ra-date'),
+      location: g('ra-loc'), amenities: g('ra-amen'), ctx: c };
+  }
+  function roomAdUpdate(){
+    var v = roomAdValues(), out = document.getElementById('ra-out');
+    var bedsRow = document.getElementById('ra-beds'); if (bedsRow) bedsRow.closest('.form-row').style.display = v.shared ? '' : 'none';
+    if (out) out.value = roomAdText(v);
+  }
+  async function roomAdSaveDefaults(){
+    var v = roomAdValues(), c = v.ctx; if (!c || !c.p || isViewer()) return;
+    var info = Object.assign({}, c.p.listingInfo || {});
+    info.area = v.area; info.location = v.location; info.amenities = v.amenities;
+    info.rooms = Object.assign({}, info.rooms || {});
+    if (c.roomKey) info.rooms[c.roomKey] = Object.assign({}, info.rooms[c.roomKey] || {}, { sharedWith: v.sharedWith });
+    try { c.p.listingInfo = await propertyService.updateListingInfo(c.p.id, info); } catch(e){ console.warn('save ad defaults', e); }
+  }
+  function roomAdCopy(btn){
+    var txt = (document.getElementById('ra-out') || {}).value || '';
+    copyTextReliably(txt).then(function(ok){
+      showToast(ok ? 'Post copied — paste it in Facebook / Marketplace / WhatsApp.' : 'Couldn\'t copy — select the text and copy it by hand.', ok ? 'success' : 'error');
+      if (ok && btn){ var o = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = o; }, 1800); }
+    });
+    roomAdSaveDefaults();
+  }
+  function roomAdShare(btn){
+    var txt = (document.getElementById('ra-out') || {}).value || '';
+    if (btn && btn.focus) btn.focus();
+    navigator.share({ text: txt }).catch(function(){});
+    roomAdSaveDefaults();
+  }
+  window.openRoomAdModal = openRoomAdModal;
+  window.roomAdUpdate = roomAdUpdate;
+  window.roomAdCopy = roomAdCopy;
+  window.roomAdShare = roomAdShare;
+
   function moveOutAdminActionsHtml(t, stop){
     var s = moveOutSettlementOf(t.id);
     if (isTenantRole()) return '';
@@ -3916,12 +4029,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Settlement approved: dates can't change any more, but the final figures can still be sent.
     if (s && s.status === 'completed' && bondOf(t.id)){
       return '<div class="act-row">'+
+        '<button type="button" class="mini-btn" title="Write the ad to find the next tenant for this room" onclick="'+st+'openRoomAdModal(\''+t.id+'\')">Room ad</button>'+
         '<button type="button" class="mini-btn" title="Record a payment the tenant made (rent, bills…)" onclick="'+st+'openBondBalancePaymentModal(\''+t.id+'\')">Record payment</button>'+
         '<button type="button" class="mini-btn icon-label-btn" title="Send the move-out estimate/settlement" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Settlement</button></div>';
     }
     if (tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
     if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
     return '<div class="act-row">'+
+      '<button type="button" class="mini-btn" title="Write the ad to find the next tenant for this room" onclick="'+st+'openRoomAdModal(\''+t.id+'\')">Room ad</button>'+
       '<button type="button" class="mini-btn" title="Change move-out date" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Date</button>'+
       '<button type="button" class="mini-btn soft-danger" title="Cancel move-out" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel</button>'+
       ((!s || s.status === 'in_progress') && (t.actualMoveOutDate || t.expectedMoveOutDate)

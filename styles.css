@@ -2469,3 +2469,10 @@ span.bd-as{cursor:default;}
 .bt-prog{height:6px;border-radius:999px;background:var(--border);overflow:hidden;margin:2px 0 5px;max-width:160px;}
 .bt-prog i{display:block;height:100%;background:var(--status-paid);border-radius:999px;}
 .bills-table-card .show-more-btn{margin-top:10px;}
+/* Room ad modal */
+.room-ad-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
+@media (max-width:520px){ .room-ad-grid{grid-template-columns:1fr;} }
+.room-ad-out{font-size:13px;line-height:1.45;white-space:pre-wrap;background:var(--surface-2, rgba(127,127,127,.06));}
+.room-ad-out{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:14px;padding:12px;font:inherit;font-size:13px;resize:vertical;}
+.room-ad-edit{margin-top:6px;border-top:1px solid var(--border);padding-top:8px;}
+.room-ad-edit summary{cursor:pointer;font-weight:600;font-size:13.5px;padding:6px 0;}

@@ -44,6 +44,8 @@ function fromRow(row) {
     wifiSsid: row.wifi_ssid || '',
     wifiPassword: row.wifi_password || '',
     wifiNotes: row.wifi_notes || '',
+    // Room ad defaults (area, location blurb, amenities, who each room is shared with).
+    listingInfo: row.listing_info && typeof row.listing_info === 'object' ? row.listing_info : {},
     hasParking: !!row.has_parking,
     parkingCost: row.parking_cost != null ? Number(row.parking_cost) : null,
     parkingTenantId: row.parking_tenant_id || null,
@@ -107,6 +109,13 @@ export async function update(id, p) {
   const { data, error } = await supabase.from('properties').update(toRow(p)).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
+}
+
+/** Saves only the room-ad defaults (never touches the other property fields). */
+export async function updateListingInfo(id, info) {
+  const { data, error } = await supabase.from('properties').update({ listing_info: info || {} }).eq('id', id).select('listing_info').single();
+  if (error) throw error;
+  return data.listing_info || {};
 }
 
 export async function remove(id) {
