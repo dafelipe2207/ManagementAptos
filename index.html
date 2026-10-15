@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=291">
+<link rel="modulepreload" href="app.js?v=293">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -58,7 +58,7 @@
 <link rel="modulepreload" href="services/roomIncludedBillService.js">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=120">
+<link rel="stylesheet" href="styles.css?v=121">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -660,7 +660,7 @@
         <div><label for="property-bedrooms">Bedrooms</label><input id="property-bedrooms" type="number" min="0" step="1" /></div>
         <div><label for="property-bathrooms">Bathrooms</label><input id="property-bathrooms" type="number" min="0" step="1" /></div>
       </div>
-      <div class="form-row"><label for="property-notes">Notes</label><textarea id="property-notes"></textarea></div>
+      <div class="form-row"><label for="property-notes">Description of the place</label><textarea id="property-notes" rows="7" placeholder="One idea per line, each starting with an emoji:&#10;📍 Great location: steps from Melbourne Central, close to transport and shops.&#10;🏢 The building has: swimming pool, sauna, gym, social areas.&#10;🔑 Passcode gate: 1234"></textarea><p class="modal-hint" style="margin:4px 0 0;">Shown on the property page and used by the Room ad (📍 = location, 🏢 = facilities).</p></div>
       <div class="form-row"><label for="property-whatsapp-group">WhatsApp group link (optional)</label><input id="property-whatsapp-group" type="url" placeholder="https://chat.whatsapp.com/..." /></div>
       <div class="form-row-2 form-row">
         <div><label for="property-wifi-ssid">📶 Wi-Fi network (optional)</label><input id="property-wifi-ssid" type="text" autocomplete="off" placeholder="e.g. Belmont_Home" /></div>
@@ -1338,6 +1338,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=291"></script>
+<script type="module" src="app.js?v=293"></script>
 </body>
 </html>

@@ -1863,8 +1863,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       paymentsFilter = 'all'; paymentsPropertyFilter = propertyId; paymentsTenantFilter = 'all'; paymentsMonthFilter = 'all';
       location.hash = '#/payments'; render(); window.scrollTo(0, 0); return;
     }
-    if (what === 'bills'){
-      billsViewTab = 'list'; billsFilter = 'overdue'; billsPropertyFilter = propertyId; billsTypeFilter = 'all';
+    if (what === 'bills' || what === 'billsAll'){
+      billsViewTab = 'list'; billsFilter = what === 'billsAll' ? 'all' : 'overdue'; billsPropertyFilter = propertyId; billsTypeFilter = 'all';
       location.hash = '#/bills'; render(); window.scrollTo(0, 0); return;
     }
     if (what === 'profits'){ location.hash = '#/profits'; return; }
@@ -2285,46 +2285,101 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return parts.join(' · ');
   }
 
+  /** The property's description (notes) shown nicely: each paragraph a block; a paragraph that
+   *  starts with an emoji gets that emoji as its icon; "a, b, c and d" lists after a colon become
+   *  little chips; "Label: value" lines (Price: …, Passcode gate: …) show as label + value. */
+  function propertyNotesHtml(notes){
+    var text = String(notes || '').trim();
+    if (!text) return '';
+    var lines = text.split(/\n+/).map(function(x){ return x.trim(); }).filter(Boolean);
+    return '<div class="pn">'+lines.map(function(par){
+      var m = /^(\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic})*)\s*/u.exec(par);
+      var ic = m ? m[1] : '📝', body = m ? par.slice(m[0].length) : par;
+      var colon = body.indexOf(':'), html;
+      var listPart = colon > -1 ? body.slice(colon + 1).trim() : '';
+      var items = listPart.replace(/\.$/, '').split(/,\s*(?:and\s+)?|\s+and\s+/).map(function(x){ return x.trim(); }).filter(Boolean);
+      var isList = colon > -1 && colon < 60 && items.length >= 3 && items.every(function(it){ return it.length <= 40 && it.indexOf('.') === -1; });
+      if (isList){
+        html = '<b>'+esc(body.slice(0, colon))+'</b><span class="pn-chips">'+items.map(function(it){ return '<span class="pn-chip">'+esc(it.charAt(0).toUpperCase()+it.slice(1))+'</span>'; }).join('')+'</span>';
+      } else if (colon > -1 && colon < 30 && body.length - colon < 60){
+        html = '<span class="pn-kv"><span>'+esc(body.slice(0, colon))+'</span><b>'+esc(body.slice(colon + 1).trim().replace(/\.$/, ''))+'</b></span>';
+      } else if (colon > -1 && colon < 40){
+        html = '<b>'+esc(body.slice(0, colon))+'</b><span class="pn-text">'+esc(body.slice(colon + 1).trim())+'</span>';
+      } else html = '<span class="pn-text">'+esc(body)+'</span>';
+      return '<div class="pn-row"><span class="pn-ic">'+ic+'</span><div class="pn-body">'+html+'</div></div>';
+    }).join('')+'</div>';
+  }
+  function propertyRoomCardHtml(r, p){
+    var t = currentTenantOf(r.id);
+    if (t && tenantHasMovedOut(t)) t = null;
+    var leaving = t && (t.actualMoveOutDate || t.expectedMoveOutDate);
+    var weekly = t && t.rentAmount ? round2(normalizeToWeekly(t.rentAmount, t.rentFrequency)) : 0;
+    var status = !t ? badge('neutral', 'Vacant') : (leaving ? badge('due', 'Leaves '+shortDate(leaving)) :
+      (t.moveInDate > TODAY ? badge('upcoming', 'Moves in '+shortDate(t.moveInDate)) : badge('paid', 'Occupied')));
+    var who = t ? '<a href="#/tenants/'+t.id+'" class="prc-name">'+esc(t.fullName)+'</a>' : '<span class="prc-name vacant">No tenant</span>';
+    var btn = function(icon, title, js, cls){ return '<button type="button" class="prc-btn'+(cls?' '+cls:'')+'" title="'+title+'" aria-label="'+title+'" onclick="event.stopPropagation();'+js+'">'+icon+'</button>'; };
+    return '<div class="prc'+(t ? '' : ' is-vacant')+'">'+
+      '<div class="prc-top"><span class="prc-room">'+esc(r.name)+'</span>'+status+'</div>'+
+      '<div class="prc-mid">'+who+(weekly ? '<span class="prc-rent">'+money(weekly)+' / week</span>' : '')+'</div>'+
+      '<div class="prc-actions">'+
+        (isViewer() ? '' : btn('📣', 'Room ad — write the post to find a tenant', 'openRoomAdForRoom(\''+r.id+'\')', (!t || leaving) ? 'hot' : ''))+
+        btn('🕘', 'Room activity', 'openRoomActivityModal(\''+r.id+'\')')+
+        (isViewer() ? '' : btn('✎', 'Edit room', 'openRoomModal(\''+p.id+'\',\''+r.id+'\')'))+
+        (canDeleteRecords() ? '<button type="button" class="prc-btn danger" title="Delete room"'+(t?' disabled':'')+' onclick="event.stopPropagation();deleteRoomConfirm(\''+r.id+'\')">✕</button>' : '')+
+      '</div></div>';
+  }
+  var propertyBillsShowAll = false;
+  window.__propBillsAll = function(){ propertyBillsShowAll = !propertyBillsShowAll; renderPreservingScroll(); };
   function renderPropertyDetail(id){
     var p = propertyOf(id);
     if (!p){ return pageHeader('Property not found', '') + notFoundState('Property', '#/properties', 'Back to properties'); }
     var propRooms = roomsOf(p.id);
     var occupied = propRooms.filter(isRoomOccupied).length;
-    var propBills = billsOf(p.id);
+    var propBills = billsOf(p.id).slice().sort(function(a,b){ return (b.dueDate || b.issueDate || '').localeCompare(a.dueDate || a.issueDate || ''); });
+    var shownBills = propertyBillsShowAll ? propBills : propBills.slice(0, 5);
 
     var roomsHtml = propRooms.length===0
       ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No rooms yet — add the first one to get started.</p>'
-      : propRooms.map(function(r){ return roomLine(r, p.id); }).join('');
+      : '<div class="prc-grid">'+propRooms.map(function(r){ return propertyRoomCardHtml(r, p); }).join('')+'</div>';
+    var jump = function(target, label){ return '<a class="pp-jump" href="#" onclick="event.preventDefault();var e=document.getElementById(\''+target+'\');if(e)e.scrollIntoView({behavior:\'smooth\',block:\'start\'});">'+label+'</a>'; };
+    var facts = '<div class="pp-facts">'+
+      '<span><i>🛏️</i><b>'+(p.bedrooms || 0)+'</b> bedrooms</span>'+
+      '<span><i>🛁</i><b>'+(p.bathrooms || 0)+'</b> bathrooms</span>'+
+      '<span><i>🚗</i>'+(p.hasParking ? 'Parking' + (p.parkingCost != null ? ' · '+money(p.parkingCost) : '') : 'No parking')+'</span>'+
+      '<span><i>🚪</i><b>'+occupied+'</b> occupied · <b>'+(propRooms.length-occupied)+'</b> vacant</span>'+
+      '</div>';
 
     return '<div class="pp">' + backLink('#/properties', 'Properties') +
-      '<div class="detail-head"><div><h1 class="page-title">'+esc(p.name)+'</h1>'+
-      '<p class="page-sub">'+esc(p.address)+'</p></div>'+
-      '<div class="occ"><div style="color:var(--status-paid)">'+occupied+' occupied</div>'+
-      '<div class="vacant">'+(propRooms.length-occupied)+' vacant</div></div></div>'+
-      '<div class="actions-row">'+
-      (p.whatsappGroupLink ? waButton('openWhatsApp(\''+esc(p.whatsappGroupLink)+'\')', 'Open the WhatsApp group') : '')+
-      '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit property</button>'+
-      '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">🏢 Schedule inspection</button>'+
-      (canDeleteRecords() ? '<button class="mini-btn danger" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button>' : '')+
+      '<div class="card pp-hero">'+
+        '<div class="pp-hero-top"><div><h1 class="page-title" style="margin:0;">'+esc(p.name)+'</h1>'+
+          '<p class="pp-addr">📍 '+esc(p.address)+'</p></div>'+
+          '<div class="pp-hero-actions">'+
+            (p.whatsappGroupLink ? waButton('openWhatsApp(\''+esc(p.whatsappGroupLink)+'\')', 'Open the WhatsApp group') : '')+
+            '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit</button>'+
+            '<button class="mini-btn primary" onclick="openReiModal(null, \''+p.id+'\')">🏢 Inspection</button>'+
+          '</div></div>'+
+        facts+
+        propertySummaryHtml(p)+
+        '<nav class="pp-jumps">'+jump('pp-about','About')+jump('pp-rooms','Rooms')+jump('pp-lease','Lease')+jump('pp-bins','Bins')+jump('pp-bills','Bills')+'</nav>'+
       '</div>'+
-      '<div class="card">'+ppHead('building','Property','Details')+'<div class="field-list">'+
-      '<div class="field-row"><span class="k">Bedrooms</span><span class="v">'+p.bedrooms+'</span></div>'+
-      '<div class="field-row"><span class="k">Bathrooms</span><span class="v">'+p.bathrooms+'</span></div>'+
-      '<div class="field-row"><span class="k">Parking</span><span class="v" style="font-weight:400;">'+parkingSummary(p)+'</span></div>'+
-      (p.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;">'+esc(p.notes)+'</span></div>' : '')+
-      '</div></div>'+
       realEstateInspectionBannerHtml(false, p.id)+
+      '<div class="card" id="pp-about">'+ppHead('building','The place','About '+esc(p.name), '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit description</button>')+
+        (p.notes ? propertyNotesHtml(p.notes)
+          : '<p style="font-size:13px;color:var(--text-faint);margin:6px 0 0;">No description yet. Add one in Edit — start each line with an emoji, e.g. 📍 location, 🏢 building facilities, 🔑 access.</p>')+
+      '</div>'+
+      '<div class="card" id="pp-rooms">'+ppHead('tenants','Rooms','Rooms ('+propRooms.length+')','<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">Add room</button>')+roomsHtml+'</div>'+
       wifiCardHtml(p)+
       leasePaymentCardHtml(p)+
       propertyInspectionHistoryHtml(p)+
-      '<div class="card">'+ppHead('trash','Bins','Trash collection','<button class="mini-btn primary" onclick="openTrashModal(\''+p.id+'\')">+ Add</button>')+
+      '<div class="card" id="pp-bins">'+ppHead('trash','Bins','Trash collection','<button class="mini-btn primary" onclick="openTrashModal(\''+p.id+'\')">+ Add</button>')+
       trashScheduleListHtml(p.id, true)+'</div>'+
-      '<div class="card">'+ppHead('tenants','Rooms','Rooms ('+propRooms.length+')','<button class="mini-btn primary" onclick="openRoomModal(\''+p.id+'\')">+ Add room</button>')+roomsHtml+'</div>'+
-      '<div class="card">'+ppHead('receipt','Bills','Bills ('+propBills.length+')')+
+      '<div class="card" id="pp-bills">'+ppHead('receipt','Bills','Bills ('+propBills.length+')', propBills.length ? '<button class="mini-btn" onclick="goPropertyInfo(\''+p.id+'\',\'billsAll\')">Open in Bills</button>' : '')+
       (propBills.length===0
         ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">No bills recorded for this property yet.</p>'
-        : propBills.map(billCard).join(''))+
-      '</div></div>';
+        : shownBills.map(billCard).join('') + (propBills.length > 5 ? '<button type="button" class="show-more-btn" onclick="__propBillsAll()">'+(propertyBillsShowAll ? 'Show fewer' : 'Show all '+propBills.length+' bills')+'</button>' : ''))+
+      '</div>'+
+      (canDeleteRecords() ? '<div style="text-align:center;margin:18px 0 6px;"><button class="text-link" style="color:var(--status-overdue);" onclick="deletePropertyConfirm(\''+p.id+'\')">Delete property</button></div>' : '')+
+      '</div>';
   }
 
   var tenantsShowInactive = false; // toggle: only active tenants are shown by default
@@ -18221,7 +18276,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return tpl.cloneNode(true);
   }
   function decorateButton(b){
-    if (b.querySelector('svg')) return;
+    if (b.querySelector('svg') || b.classList.contains('add-btn') || b.querySelector('.add-btn-plus')) return; // round "+" add buttons already have their own plus
     var label = (b.textContent || '').trim();
     if (label.length < 2 || !/[a-z]/i.test(label)) return; // icon-only (✕, ✎, ‹ …) or empty
     var icon = btnIconFor(label);
