@@ -9266,9 +9266,10 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       document.getElementById('group-send-body').innerHTML =
         (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="What they owe" draggable="true" class="send-preview">' : '')+
         (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
+        (st.message ? '<p class="send-link-msg">💬 '+esc(st.message)+'</p>' : '')+
         (st.chatUrl
           ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Send to '+esc(who1)+' on WhatsApp</span></button>'+
-            '<p class="send-howto">Opens '+esc(who1)+'\'s chat with the image copied — '+(touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+', then send.</p>'
+            '<p class="send-howto">Opens '+esc(who1)+'\'s chat with the image copied'+(st.message && st.chatUrl.indexOf('?text=') > -1 ? ' and the link to the bills already typed' : '')+' — '+(touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+', then send.</p>'
           : '<button type="button" class="wa-send-one" onclick="'+(canShare1 ? 'groupSendShare(this)' : 'groupSendDownloadImage()')+'">'+WA_ICON+'<span>'+(canShare1 ? 'Share image' : 'Save image')+'</span></button>');
       return;
     }
@@ -9347,7 +9348,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // Also put the message on the clipboard (not awaited — the share sheet must open within the
     // tap): some WhatsApp versions drop the text shared with a photo, so it can be pasted as caption.
     try { if (!st.imageOnly && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(st.message).catch(function(){}); } catch(_e){}
-    navigator.share(st.imageOnly ? { files: [f] } : { files: [f], text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
+    navigator.share(st.imageOnly && !st.message ? { files: [f] } : { files: [f], text: st.message }).then(function(){ groupSendMarkSent(); }, function(err){
       if (err && err.name === 'AbortError') return;
       navigator.share({ files: [f] }).then(function(){ groupSendMarkSent(); }, function(e2){
         if (!e2 || e2.name !== 'AbortError') showToast('Couldn\'t share — use Copy image and Open chat instead.', 'error');
@@ -9443,23 +9444,14 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     lines.push('Reply with your receipt once paid. Thank you!');
     var message = lines.join('\n');
 
-    // Everything goes in ONE image: the description (rent and each bill, total, reference) and,
-    // underneath, the bills themselves (page 1 of each attached document).
-    var docs = [], MAX_DOCS = 6;
-    for (var i = 0; i < billItems.length && docs.length < MAX_DOCS; i++){
-      var bl = billItems[i].bill;
-      if (!bl.receiptPath) continue;
-      try {
-        var f = await fetchBillReceiptFile(bl);
-        if (!f) continue;
-        var r = await renderBillDocCanvas(f, 900);
-        docs.push({ canvas: r.canvas, caption: billTypeLabel(bl.billType) + (bl.billingPeriodStart ? ' · ' + shortDate(bl.billingPeriodStart) + ' – ' + shortDate(bl.billingPeriodEnd) : '') + (r.pages > 1 ? ' · page 1 of ' + r.pages : '') });
-      } catch(err){ console.warn('bill document render', err); }
-    }
-    var withDoc = billItems.filter(function(o){ return o.bill.receiptPath; }).length;
-    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, docs, withDoc - docs.length);
-    var chatUrl = waChatUrl(t.phone, ''); // the image says it all — the chat opens empty
-    showGroupSend(m, { message: message, imageBlob: imageBlob, imageName: 'owed-' + first + '-' + TODAY + '.png',
+    // ONE image with the description (no bill documents); the message only carries the link to
+    // the app's Bills screen, where each invoice is attached to its charge.
+    var docs = [], withDoc = 0;
+    var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, docs, 0);
+    var billsLink = appPublicUrl() + '#/bills';
+    var linkMsg = billItems.length ? 'Hi ' + first + ', here is what you owe 👆 If you want to see the bills, they are here: ' + billsLink : '';
+    var chatUrl = waChatUrl(t.phone, linkMsg);
+    showGroupSend(m, { message: linkMsg, imageBlob: imageBlob, imageName: 'owed-' + first + '-' + TODAY + '.png',
       chatUrl: chatUrl, chatPrefilled: !!chatUrl, imageOnly: true, recipientName: first, onSent: onSent,
       note: chatUrl ? '' : 'No phone number on file for ' + t.fullName + ' — save the image and send it yourself.' });
   }
@@ -9517,7 +9509,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     g.fillStyle = '#9aa1ad'; g.font = '400 25px ' + font;
     g.fillText('Use your reference in the transfer description and reply with your receipt.', L, y);
     y += 40;
-    g.fillText(docs.length ? 'The bills are below — you can also see them in the app.' : (billItems.length ? 'Questions about a bill? See it in the app — it\'s attached to its charge.' : 'Thank you!'), L, y);
+    g.fillText(billItems.length ? 'Want to see a bill? Open the link in the message (Bills in the app).' : 'Thank you!', L, y);
     y += 30;
     if (docs.length){
       y += 40;
