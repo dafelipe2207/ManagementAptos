@@ -9448,9 +9448,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // the app's Bills screen, where each invoice is attached to its charge.
     var docs = [], withDoc = 0;
     var imageBlob = await tenantStatementImageBlob(t, property, rent, billItems, total, docs, 0);
-    var billsLink = appPublicUrl() + '#/bills';
-    var linkMsg = billItems.length ? 'Hi ' + first + ', here is what you owe 👆 If you want to see the bills, they are here: ' + billsLink : '';
-    var chatUrl = waChatUrl(t.phone, linkMsg);
+    var linkMsg = ''; // image only — the image itself says where to see the invoices
+    var chatUrl = waChatUrl(t.phone, '');
     showGroupSend(m, { message: linkMsg, imageBlob: imageBlob, imageName: 'owed-' + first + '-' + TODAY + '.png',
       chatUrl: chatUrl, chatPrefilled: !!chatUrl, imageOnly: true, recipientName: first, onSent: onSent,
       note: chatUrl ? '' : 'No phone number on file for ' + t.fullName + ' — save the image and send it yourself.' });
@@ -9463,7 +9462,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     docs = docs || [];
     var dw = R - L + 24;
     var docsH = docs.reduce(function(h, d){ return h + 24 + Math.round(d.canvas.height * dw / d.canvas.width) + 50; }, 0);
-    var H = 32 + 230 + 50 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + 40 + 30 +
+    var H = 32 + 230 + 50 + 44 + (rent.length ? 90 + rent.length * rowH : 0) + (billItems.length ? 90 + billItems.length * rowH : 0) + 200 + 40 + 30 +
       (docs.length ? 90 + docsH + (moreDocs > 0 ? 50 : 0) : 0);
     var card = imageCard(W, H), g = card.g, rr = card.rr;
     var y = 32 + 72;
@@ -9509,7 +9508,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     g.fillStyle = '#9aa1ad'; g.font = '400 25px ' + font;
     g.fillText('Use your reference in the transfer description and reply with your receipt.', L, y);
     y += 40;
-    g.fillText(billItems.length ? 'Want to see a bill? Open the link in the message (Bills in the app).' : 'Thank you!', L, y);
+    if (billItems.length){
+      g.fillText('Want to see the invoice? Go to the app → Bills:', L, y);
+      y += 44;
+      g.fillStyle = '#1d4ed8'; g.font = '600 28px ' + font;
+      g.fillText((appPublicUrl() + '#/bills').replace(/^https?:\/\//, ''), L, y);
+    } else g.fillText('Thank you!', L, y);
     y += 30;
     if (docs.length){
       y += 40;
