@@ -9267,7 +9267,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (st.imageUrl ? '<img src="'+st.imageUrl+'" alt="What they owe" draggable="true" class="send-preview">' : '')+
         (note ? '<p style="font-size:12px;color:var(--status-due);margin:6px 0 0;">'+esc(note)+'</p>' : '')+
         (st.message ? '<p class="send-link-msg">💬 '+esc(st.message)+'</p>' : '')+
-        (st.chatUrl
+        // Phone: the share sheet sends the image itself (WhatsApp Business → pick the tenant).
+        // Opening the chat and pasting didn't work reliably on iPhone — the image never arrived.
+        (touch && canShare1
+          ? '<button type="button" class="wa-send-one" onclick="groupSendShare(this)">'+WA_ICON+'<span>Send image to '+esc(who1)+'</span></button>'+
+            '<p class="send-howto">Tap it → <b>WhatsApp Business</b> → pick <b>'+esc(who1)+'</b> → send.</p>'
+        : st.chatUrl
           ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Send to '+esc(who1)+' on WhatsApp</span></button>'+
             '<p class="send-howto">Opens '+esc(who1)+'\'s chat with the image copied'+(st.message && st.chatUrl.indexOf('?text=') > -1 ? ' and the link to the bills already typed' : '')+' — '+(touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+', then send.</p>'
           : '<button type="button" class="wa-send-one" onclick="'+(canShare1 ? 'groupSendShare(this)' : 'groupSendDownloadImage()')+'">'+WA_ICON+'<span>'+(canShare1 ? 'Share image' : 'Save image')+'</span></button>');
