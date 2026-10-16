@@ -1435,8 +1435,19 @@ button.bc-chip:hover{filter:brightness(.96);text-decoration:underline;}
   --glass-blur:blur(24px) saturate(180%);
 }
 
-html{background:var(--bg);}
+/* the wallpaper */
+html{background:var(--wall-base);}
 body{background:transparent !important;}
+.ios-wall{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:var(--wall-base);}
+.ios-wall i{position:absolute;border-radius:50%;filter:blur(90px);will-change:transform;}
+.ios-wall i:nth-child(1){width:62vmax;height:62vmax;left:-18vmax;top:-20vmax;background:var(--wall-1);animation:wallDrift1 28s ease-in-out infinite alternate;}
+.ios-wall i:nth-child(2){width:55vmax;height:55vmax;right:-20vmax;top:-8vmax;background:var(--wall-2);animation:wallDrift2 34s ease-in-out infinite alternate;}
+.ios-wall i:nth-child(3){width:58vmax;height:58vmax;left:10vmax;bottom:-30vmax;background:var(--wall-3);animation:wallDrift3 30s ease-in-out infinite alternate;}
+.ios-wall i:nth-child(4){width:40vmax;height:40vmax;right:-6vmax;bottom:-12vmax;background:var(--wall-4);animation:wallDrift2 38s ease-in-out infinite alternate-reverse;}
+@keyframes wallDrift1{to{transform:translate(12vmax, 8vmax) scale(1.08);}}
+@keyframes wallDrift2{to{transform:translate(-10vmax, 10vmax) scale(1.12);}}
+@keyframes wallDrift3{to{transform:translate(8vmax, -10vmax) scale(.94);}}
+@media (prefers-reduced-motion: reduce){ .ios-wall i{animation:none;} }
 
 /* glass surfaces */
 .card, .stat, .pp .card, .wifi-card, .rei-banner{
@@ -1847,7 +1858,7 @@ input[type="date"].dp-open{border-color:var(--accent,#0a84ff) !important;box-sha
 #welcome-modal{z-index:1050;}
 .welcome-card{max-width:520px;width:100%;}
 .wg-dots{display:flex;justify-content:center;gap:6px;margin:-6px 0 14px;}
-.wg-dots i{width:7px;height:7px;border-radius:99px;background:rgba(120,120,128,.25);transition:background-color .25s ease, width .25s ease, transform .25s ease;}
+.wg-dots i{width:7px;height:7px;border-radius:99px;background:rgba(120,120,128,.25);transition:all .25s;}
 .wg-dots i.done{background:var(--status-paid);}
 .wg-dots i.on{width:22px;background:var(--text);}
 .wg-body{animation:pmIn .2s ease-out;}
@@ -2501,6 +2512,7 @@ a.prc-name:hover{color:var(--accent);}
    live blur (looks the same on this pale background), and the dimmed backdrop has no blur. The
    top bar and tab bar keep their blur — only two small layers. */
 @media (hover: none), (pointer: coarse), (max-width: 1024px){
+  .ios-wall i{animation:none !important;will-change:auto !important;}
   .card, .stat, .pp .card, .wifi-card, .rei-banner, .sidebar{
     -webkit-backdrop-filter:none !important; backdrop-filter:none !important;
     background:color-mix(in srgb, var(--bg-elevated) 86%, transparent) !important;
@@ -2521,95 +2533,3 @@ a.prc-name:hover{color:var(--accent);}
 .mini-btn, .view-btn, .wa-btn{display:inline-flex;align-items:center;gap:6px;}
 .actions-row, .modal-actions, .act-row, .prc-actions, .action-tiles, .bd-item-v .act-row{justify-content:center !important;}
 .actions-row .mini-btn.danger, .prc-btn.danger{margin-left:0 !important;}
-
-/* =====================================================================================
-   Flat clean-up (taste-skill house rules). Comes last so it wins the cascade.
-   - No frosted glass, no gradients, no shadows on things at rest, no 1px outlined boxes.
-   - Surfaces are told apart by a step in tone: page ground -> white card -> ground-tone tile.
-   - Things that truly float (windows, dropdown menus, the date picker, toasts, sticky bars)
-     keep one shadow. Form fields and real tables keep their lines.
-   - Labels are sentence case at a readable size, never tiny letter-spaced capitals.
-   ===================================================================================== */
-:root, :root:not([data-theme="light"]), :root[data-theme="dark"]{
-  --shadow:none;
-  --glass:var(--bg-elevated); --glass-strong:var(--bg-elevated);
-  --glass-border:transparent; --glass-edge:transparent;
-  --glass-shadow:none; --glass-blur:none;
-  --field-bg:var(--bg-elevated); --field-bg-focus:var(--bg-elevated); --field-border:var(--border);
-}
-:root{ --surface-2:#e7ebe5; --float-shadow:0 12px 32px rgba(15,23,42,.16); }
-@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --surface-2:#313844; --float-shadow:0 12px 32px rgba(0,0,0,.45); } }
-:root[data-theme="dark"]{ --surface-2:#313844; --float-shadow:0 12px 32px rgba(0,0,0,.45); }
-
-/* no live blur anywhere */
-*, *::before, *::after{ -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }
-
-/* surfaces */
-.card, .stat, .pp .card, .wifi-card{ background:var(--bg-elevated) !important; border:0 !important; box-shadow:none !important; }
-.pp .card::after, .wifi-card::after{ display:none !important; }
-.card .card, .card .stat, .modal-card .card, .modal-card .stat, .card details.card{ background:var(--bg) !important; }
-a.card:hover{ box-shadow:none !important; background:color-mix(in srgb, var(--accent) 6%, var(--bg-elevated)) !important; }
-.rei-banner{ border:0 !important; box-shadow:none !important; }
-.review-card{ box-shadow:none !important; background:color-mix(in srgb, var(--status-upcoming) 8%, var(--bg-elevated)) !important; }
-.sidebar{ background:var(--sidebar-bg) !important; border-right:0 !important; }
-.sidebar-foot{ border-top:0; }
-.bottomnav{ background:var(--bg-elevated) !important; border-top:0 !important; }
-@media (max-width:640px){
-  /* a plain bar along the bottom instead of a floating capsule */
-  .bottomnav{ left:0; right:0; bottom:0; border-radius:0; border:0 !important; box-shadow:none;
-    padding-bottom:env(safe-area-inset-bottom,0px); }
-}
-.viewas-bar{ border:0 !important; box-shadow:none !important; }
-
-/* tiles and info rows inside cards: one tone down, no outline */
-.field-row, .pp .field-row, .card .field-list > .field-row, .ps-tile, .wifi-field, .pp .room-row,
-.pp .card .row, .pp-ic, .wifi-signal, .bill-card, .more-list{ background:var(--bg) !important; border:0 !important; }
-.card .card .field-row, .modal-card .card .field-row{ background:var(--bg-elevated) !important; }
-.tenant-week.current{ box-shadow:none; background:var(--accent-bg); border-color:transparent; }
-.rules-preview{ background:var(--bg) !important; }
-
-/* controls: filled with a tone, not outlined */
-.mini-btn:not(.primary):not(.danger), .chip:not(.active), .po-tab:not(.active), .checkbox-group label,
-.icon-btn, .topbar .search, .topbar .icon-btn, .pill-select, .pill-btn, .round-icon-btn, .prc-btn,
-.bc-chip, .tenant-section-title span, .seg, .seg.seg-wide, .modal-x-bar .modal-x, .action-tile .at-ic{
-  background:var(--surface-2) !important; border-color:transparent !important; box-shadow:none !important;
-}
-.mini-btn:not(.primary):not(.danger):hover, .chip:not(.active):hover, .po-tab:not(.active):hover,
-.icon-btn:hover, .topbar .search:hover, .topbar .icon-btn:hover, .pill-btn:hover, .round-icon-btn:hover, .prc-btn:hover{
-  background:var(--border) !important;
-}
-.bc-chip.ok{ background:var(--status-paid-bg) !important; } .bc-chip.warn{ background:var(--status-due-bg) !important; }
-.prc-btn.hot{ background:var(--status-due-bg) !important; }
-.action-tile.primary .at-ic{ background:var(--accent) !important; }
-.action-tile.done .at-ic{ background:var(--status-paid) !important; }
-.seg button.on, .seg.seg-wide .seg-btn.active, .mt-seg-btn.on{ box-shadow:none !important; }
-.cal-pill, .cal-day-btn.selected, .mq-tile.on, .ph-badge, .rt-tile{ box-shadow:none !important; }
-.pill-select.open, .pill-select:focus-within{ box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent) !important; }
-.pill-select select{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a968e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
-  background-repeat:no-repeat !important; background-position:right 8px center !important;
-}
-@media (max-width:640px){ .add-btn{ box-shadow:none !important; } }
-
-/* form fields keep a plain border, with no inner highlight at rest */
-input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
-select, textarea, .modal-input, .bills-sort select{ box-shadow:none; }
-
-/* things that really float keep one shadow */
-.modal-overlay{ background:rgba(15,20,35,.40) !important; }
-.modal-card{ background:var(--bg-elevated) !important; border:0 !important; box-shadow:var(--float-shadow) !important; }
-.pill-menu, .date-pop{ background:var(--bg-elevated) !important; border:0 !important; box-shadow:var(--float-shadow) !important; }
-.toast{ box-shadow:var(--float-shadow); }
-
-/* headings and labels: sentence case, readable size */
-.card h2, .card > h2{ font-size:15px; font-weight:650; letter-spacing:-0.01em; text-transform:none; color:var(--text); }
-.pp .card h3{ font-size:13.5px !important; letter-spacing:0; text-transform:none; color:var(--text) !important; }
-.nav-section-header{ font-size:12.5px; font-weight:650; letter-spacing:0; text-transform:none; }
-.cal-weekday, .week-chip, .roster-table th, .chg-label, .tenant-section-title, .audit-day, .wifi-kicker,
-.report-table th, .section-label, .wg-sub, .va-group-title, .cal-agenda-later, .cal-later-date, .bills-table2 th{
-  text-transform:none !important; letter-spacing:0 !important;
-}
-.cal-weekday, .week-chip, .wifi-kicker{ font-size:12px; }
-.section-label{ font-size:13px; }
-.view-btn{ letter-spacing:0; }
-
