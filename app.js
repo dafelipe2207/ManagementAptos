@@ -1304,11 +1304,29 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var ccOpenState = {};
   window.__setCC = function(k, v){ ccOpenState[k] = v; };
   function collapsibleCardHtml(key, title, hint, bodyHtml, foldOnDesktop){
-    var phone = window.matchMedia && window.matchMedia('(max-width:640px)').matches;
+    var phone = isPhoneWidth();
     var open = (key in ccOpenState) ? ccOpenState[key] : !(phone || foldOnDesktop);
-    return '<details class="card collapsible-card"'+(open?' open':'')+' ontoggle="__setCC(\''+key+'\',this.open)">'+
-      '<summary><span>'+title+'</span>'+(hint?'<span class="cc-hint">'+hint+'</span>':'')+'</summary>'+bodyHtml+'</details>';
+    return lazyDetails('<details class="card collapsible-card"'+(open?' open':'')+' ontoggle="__setCC(\''+key+'\',this.open)">'+
+      '<summary><span>'+title+'</span>'+(hint?'<span class="cc-hint">'+hint+'</span>':'')+'</summary>'+bodyHtml+'</details>', open);
   }
+  /** A folded <details> doesn't need its content in the page until it's opened: the body goes
+   *  into an inert <template> (parsed, but no layout, no styles, no button decorating) and is
+   *  swapped in the first time it's opened. Big pages with many folded cards (Payments on a phone)
+   *  draw several times faster. */
+  function lazyDetails(html, open){
+    if (open) return html;
+    var a = html.indexOf('</summary>'), b = html.lastIndexOf('</details>');
+    if (a < 0 || b < a) return html;
+    a += 10;
+    return html.slice(0, a) + '<template class="lazy-body">' + html.slice(a, b) + '</template>' + html.slice(b);
+  }
+  document.addEventListener('toggle', function(e){
+    var d = e.target;
+    if (!d || d.tagName !== 'DETAILS' || !d.open) return;
+    for (var c = d.firstElementChild; c; c = c.nextElementSibling){
+      if (c.tagName === 'TEMPLATE' && c.classList.contains('lazy-body')){ c.replaceWith(c.content); break; }
+    }
+  }, true);
   /** Switch + dropdowns on ONE line on wide screens (wraps naturally on phones). */
   function filterBarHtml(seg, toolbar){ return (seg||toolbar) ? '<div class="filter-bar">'+(seg||'')+(toolbar||'')+'</div>' : ''; }
   function toolbarHtml(parts){ parts = parts.filter(Boolean); return parts.length ? '<div class="bills-toolbar page-toolbar">'+parts.join('')+'</div>' : ''; }
@@ -2272,18 +2290,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<div class="actions-row" style="margin-top:10px;"><button class="mini-btn" onclick="openLeasePaymentModal(\''+p.id+'\')">Mark lease payment as paid</button></div></div>';
   }
 
-  /** Short "Parking" line for the property detail page: "No" when the property has none, plus the
-   *  cost and charged-to tenant when set (tracking info only — this doesn't generate a bill/charge). */
-  function parkingSummary(p){
-    if (!p.hasParking) return 'No';
-    var parts = ['Yes'];
-    if (p.parkingCost != null) parts.push(money(p.parkingCost));
-    if (p.parkingTenantId){
-      var t = tenantOf(p.parkingTenantId);
-      parts.push('charged to ' + (t ? esc(t.fullName) : 'a former tenant'));
-    }
-    return parts.join(' · ');
-  }
 
   /** The property's description (notes) shown nicely: each paragraph a block; a paragraph that
    *  starts with an emoji gets that emoji as its icon; "a, b, c and d" lists after a colon become
@@ -2781,45 +2787,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (Math.abs(diff) < 0.005) return 'same as estimated';
     return money(Math.abs(diff)) + (diff > 0 ? ' more than estimated' : ' less than estimated');
   }
-  /** One line on top of a completed settlement: bills still to arrive + real-vs-estimate so far. */
-  function moveOutEstimatesSummaryHtml(t){
-    var st = moveOutEstimatesStatus(t);
-    if (!st) return '';
-    var parts = [];
-    if (st.pending.length) parts.push('⏳ Still to arrive: ' + st.pending.map(function(r){
-      return esc(billTypeLabel(r.line.billType)) + ' (' + shortDate(r.pendingFrom) + (r.pendingFrom === r.pendingTo ? '' : ' – ' + shortDate(r.pendingTo)) + ')';
-    }).join(', '));
-    else parts.push('✓ All real bills arrived');
-    var arrived = st.recs.some(function(r){ return r.real.some(function(x){ return x.diff != null; }); });
-    if (arrived) parts.push('Real vs estimate: <b style="color:'+(st.diff > 0.004 ? 'var(--status-overdue)' : (st.diff < -0.004 ? 'var(--status-paid)' : 'inherit'))+';">'+diffText(st.diff)+'</b>'+
-      (st.toApply ? ' · '+st.toApply+' to apply' : ''));
-    return '<div style="font-size:12px;color:var(--text-dim);background:var(--surface-2, rgba(127,127,127,.08));border-radius:10px;padding:8px 10px;margin:8px 0;line-height:1.5;">'+parts.join('<br>')+'</div>';
-  }
-  function estimateReconciliationHtml(t, r, canEdit){
-    var l = r.line, sub = 'font-size:11.5px;color:var(--text-faint);';
-    var h = '<div class="field-row" style="align-items:flex-start;"><span class="k">'+esc(billTypeLabel(l.billType))+' bill '+
-      '<span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
-      '<br><span style="'+sub+'">Charged '+esc(gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo))+'</span></span>'+
-      '<span class="v" style="color:var(--status-overdue);">-'+money(l.amount)+'</span></div>';
-    r.real.forEach(function(x){
-      var period = shortDate(x.from) + (x.from === x.to ? '' : ' – ' + shortDate(x.to)) + ' (' + x.days + 'd)';
-      var txt, color = 'var(--text-dim)';
-      if (x.real == null) txt = '🧾 Real bill arrived · '+period+' — not split yet';
-      else {
-        color = x.diff > 0.004 ? 'var(--status-overdue)' : (x.diff < -0.004 ? 'var(--status-paid)' : 'var(--text-dim)');
-        txt = '🧾 Real bill · '+period+': '+money(x.real)+(x.paidElsewhere ? ' (already paid by the tenant)' : '')+' vs est. '+money(x.est)+' → <b style="color:'+color+';">'+diffText(x.diff)+'</b>';
-      }
-      h += '<div style="'+sub+'margin:-2px 0 6px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span>'+txt+'</span>'+
-        (x.applied ? '<span class="badge paid" style="font-size:10.5px;">✓ Applied '+(x.applied.amount >= 0 ? '−' : '+')+money(Math.abs(x.applied.amount))+'</span>'
-          : (canEdit && x.diff != null ? '<button type="button" class="mini-btn" style="padding:3px 9px;font-size:11.5px;" title="Adjust the bond by the difference and mark the real share as paid from the bond" onclick="applyEstimateDifference(\''+t.id+'\',\''+esc(l.sourceId)+'\',\''+x.bill.id+'\')">Apply</button>' : ''))+
-        '</div>';
-    });
-    if (r.pendingDays > 0){
-      h += '<div style="'+sub+'margin:-2px 0 6px 10px;">⏳ Waiting for the real bill · '+shortDate(r.pendingFrom)+(r.pendingFrom === r.pendingTo ? '' : ' – '+shortDate(r.pendingTo))+
-        ' ('+r.pendingDays+'d · est. '+money(r.pendingEst)+')</div>';
-    }
-    return h;
-  }
   /** For a tenant who has left: each real bill share still unpaid (or already squared up) that
    *  arrived after the move-out, matched with what the bond already holds for it —
    *   · kind 'estimate': an estimated bill of the new settlement flow (per-day portion),
@@ -2922,12 +2889,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         (m.diff >= 0 ? '+' : '−') + money(Math.abs(m.diff)) + (m.paidElsewhere ? '.' : ' and this share is marked paid from the bond.');
     openConfirmModal(m.kind === 'bond' ? 'Pay ' + name + ' from the bond' : 'Apply the real ' + name + ' bill', body, function(){ return doApplyBondCover(t, bond, m); });
   }
-  /** Kept for the settlement card's per-bill "Apply" buttons. */
-  function applyEstimateDifference(tenantId, estimateSourceId, billId){
-    var t = tenantOf(tenantId); if (!t) return;
-    var b = billOf(billId), a = b && (b.allocations || []).find(function(x){ return x.tenantId === tenantId; });
-    if (a) applyBondCover(tenantId, a.id);
-  }
   async function doApplyBondCover(t, bond, m, quiet){
     try {
       // Another device may have just applied it: re-read the bond and skip if it's already there.
@@ -2990,7 +2951,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     return done;
   }
-  window.applyEstimateDifference = applyEstimateDifference;
   window.applyBondCover = applyBondCover;
 
   /** Bond card on the tenant page: the result up top (to return / still owes), then the lines
@@ -3370,18 +3330,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       ((t.excludedBillTypes && t.excludedBillTypes.length) ? '<div class="field-row"><span class="k">Doesn\'t pay for</span><span class="v">'+esc(t.excludedBillTypes.map(billTypeLabel).join(', '))+'</span></div>' : '')
     ) : '';
 
-    // Bond discount labels stored by the move-out settlement flow read as "Outstanding X Bill" /
-    // "Outstanding Rent" — accurate at the moment they're written (that's what was owed), but
-    // confusing here since by the time they're shown the amount has already been deducted and
-    // the bill/rent is already marked paid via bond deduction. Relabel for display only — the
-    // stored text is untouched, so bondSettlementSummaryHtml's /^Outstanding .+ Bill$/ matcher
-    // above still works on old AND new rows alike.
-    function bondDiscountDisplayLabel(label){
-      var billMatch = /^Outstanding (.+) Bill$/.exec(label || '');
-      if (billMatch) return billMatch[1] + ' bill (paid from bond)';
-      if (label === 'Outstanding Rent') return 'Rent (paid from bond)';
-      return label || 'Discount';
-    }
     var bondCard = bond ? bondCardHtml(t, bond) : '';
 
     return backLink('#/tenants', 'Tenants') +
@@ -3674,37 +3622,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * money back) stays a deliberate manual step via "Edit bond", exactly as before. */
   function bondSettlementSummaryHtml(t){
     return ''; // folded into the Bond card (bondCardHtml) — it repeated the same figures
-  }
-  function bondSettlementSummaryHtmlOld(t){
-    if (!t.moveOutSettledAt) return '';
-    var bond = bondOf(t.id);
-    if (!bond){
-      return '<div class="card"><h2>Bond settlement</h2>'+
-        '<p style="font-size:13px;color:var(--text-dim);margin:0;">This tenant moved out with no bond on file — outstanding rent/bills couldn\'t be deducted from anything.</p></div>';
-    }
-    var discounts = bond.discounts || [];
-    var rentLine = round2(discounts.filter(function(d){ return d.label==='Outstanding Rent'; }).reduce(function(s,d){ return s+(d.amount||0); }, 0));
-    var billsLine = round2(discounts.filter(function(d){ return /^Outstanding .+ Bill$/.test(d.label||''); }).reduce(function(s,d){ return s+(d.amount||0); }, 0));
-    var settlementTotal = round2(rentLine + billsLine);
-    var totalDeducted = round2(bond.deduction || 0);
-    var otherDeductions = round2(totalDeducted - settlementTotal);
-    var refund = round2(bond.amountPaid - totalDeducted);
-    var owed = refund < 0 ? round2(-refund) : 0;
-    if (refund < 0) refund = 0;
-    var rows =
-      '<div class="field-row"><span class="k">Bond</span><span class="v">'+money(bond.amountPaid)+'</span></div>'+
-      (rentLine > 0 ? '<div class="field-row"><span class="k">Rent deducted</span><span class="v" style="color:var(--status-overdue);">-'+money(rentLine)+'</span></div>' : '')+
-      (billsLine > 0 ? '<div class="field-row"><span class="k">Bills deducted</span><span class="v" style="color:var(--status-overdue);">-'+money(billsLine)+'</span></div>' : '')+
-      (otherDeductions > 0.004 ? '<div class="field-row"><span class="k">Other deductions on this bond</span><span class="v" style="color:var(--status-overdue);">-'+money(otherDeductions)+'</span></div>' : '')+
-      '<div class="field-row"><span class="k">Total deducted</span><span class="v">'+money(totalDeducted)+'</span></div>'+
-      (owed > 0
-        ? '<div class="field-row"><span class="k" style="font-weight:650;">Still owed by tenant</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(owed)+'</span></div>'
-        : '<div class="field-row"><span class="k" style="font-weight:650;">Bond refund</span><span class="v" style="font-weight:650;">'+money(refund)+'</span></div>');
-    return '<div class="card"><h2>Bond settlement</h2>'+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">Outstanding rent and bills were settled by deducting them from the bond on move-out — see payment history and each bill\'s allocation for the individual entries. Actually returning a refund is still a manual step, from "Edit bond" below.</p>'+
-      '<div class="field-list">'+rows+'</div>'+
-      bondCoverListHtml(t)+
-      '</div>';
   }
   /** Bills that arrived after the tenant left: real share vs what the bond held (estimate). */
   function bondCoverListHtml(t, only){
@@ -5528,11 +5445,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           // Each tenant folds to one summary line (who, where, what's owed) — open on wide screens,
           // folded on phones unless only one tenant is listed; tapping opens the full detail.
           var ccKey = 'pay-'+t.id;
-          var phone = window.matchMedia && window.matchMedia('(max-width:640px)').matches;
+          var phone = isPhoneWidth();
           var openCard = (ccKey in ccOpenState) ? ccOpenState[ccKey] : (!phone || groupTenants.length === 1);
           var sumBadges = (pending.length ? badge('overdue', pending.length+' due · '+money(pendingTotal)) : badge('paid', 'Up to date'))+
             (billsTotal > 0 ? ' '+badge('due', 'Bills '+money(billsTotal)) : '');
-          return '<details class="card pay-card"'+(openCard?' open':'')+' ontoggle="__setCC(\''+ccKey+'\',this.open)">'+
+          return lazyDetails('<details class="card pay-card"'+(openCard?' open':'')+' ontoggle="__setCC(\''+ccKey+'\',this.open)">'+
             '<summary class="pay-sum"><span class="pay-who"><span class="pay-name">'+esc(t.fullName)+tenantRefChipHtml(t)+'</span>'+
             (prop?'<span class="pay-prop">'+esc(prop.name)+'</span>':'')+'</span>'+
             '<span class="pay-badges">'+sumBadges+'</span></summary>'+
@@ -5553,7 +5470,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             fullSection(owedBills, billOwedRow, 'Nothing owed on bills right now.'))+
             '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:10px;">'+
               '<button class="text-link" onclick="openHistoryModal(\''+t.id+'\')">View history</button></div>'+
-            '</details>';
+            '</details>', openCard);
         }).join('');
 
     var movedOutOwing = paymentsTenantStatusFilter==='active'
@@ -8156,20 +8073,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '</div></a>';
   }
 
-  /** Summary of "what the tenants have to pay" for the Bills table: how many have already
-   *  paid their share and how much has been collected of the total. */
-  function billTenantPaymentsSummary(b){
-    if (b.allocations && b.allocations.length){
-      var tenantAllocs = b.allocations.filter(function(a){ return !a.isAdmin; });
-      var paidCount = tenantAllocs.filter(function(a){ return a.paid; }).length;
-      return '<div>'+paidCount+'/'+tenantAllocs.length+' tenants</div>'+
-        '<div style="font-size:11px;color:var(--text-faint);font-weight:400;">'+money(billPaidAmount(b))+' of '+money(b.amount)+'</div>'+
-        (b.whatsappGroupSharedAt
-          ? '<div class="wa-mini sent" title="Sent '+esc(whatsAppSharedWhen(b.whatsappGroupSharedAt))+'">✓ WhatsApp group</div>'
-          : '<div class="wa-mini">Not sent to group</div>');
-    }
-    return '<span style="color:var(--text-faint);">Not yet allocated</span>';
-  }
   /** Summary of "what the administrator has to pay the provider" — the second leg of the
    *  payment, separate from billTenantPaymentsSummary (see billReadyForAdminPayment). */
   function billAdminPaymentSummary(b){
@@ -8232,10 +8135,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   var billsShowAll = false;
   window.__billsShowAll = function(){ billsShowAll = !billsShowAll; renderPreservingScroll(); };
   var BILL_GROUP_LABEL = { 0:'⚠️ Overdue — tenants still owe', 1:'⏳ Waiting on tenants', 2:'🏦 Tenants paid — pay the provider', 3:'✓ Done' };
+  var PHONE_MQ = window.matchMedia ? window.matchMedia('(max-width:640px)') : null;
+  function isPhoneWidth(){ return !!(PHONE_MQ && PHONE_MQ.matches); }
+  // Crossing the phone/desktop width (rotating a tablet, resizing a window) redraws, so the
+  // layout that's built always matches the screen.
+  if (PHONE_MQ){ var onPhoneMq = function(){ try { renderPreservingScroll(); } catch(_e){} };
+    if (PHONE_MQ.addEventListener) PHONE_MQ.addEventListener('change', onPhoneMq); else if (PHONE_MQ.addListener) PHONE_MQ.addListener(onPhoneMq); }
   function billsTableHtml(list, showPropertyCol){
     var all = list;
     list = billsShowAll ? all : all.slice(0, BILLS_LIMIT);
     var cols = [['provider','Bill'], ['dueDate','Due'], ['amount','Total'], ['tenantPayments','Tenants'], ['providerPayment','Provider'], ['status','Status']];
+    var moreBtn = all.length > BILLS_LIMIT
+      ? '<button type="button" class="show-more-btn" onclick="__billsShowAll()">'+(billsShowAll ? 'Show fewer' : 'Show all '+all.length+' bills')+'</button>' : '';
+    if (isPhoneWidth()) return billsCardListHtml(list, cols, moreBtn);
     var head = '<tr>'+cols.map(function(c){
       return '<th class="sortable-th'+(c[0]==='amount'?' num':'')+'" onclick="setBillsSort(\''+c[0]+'\')">'+c[1]+billsSortArrow(c[0])+'</th>';
     }).join('')+'</tr>';
@@ -8272,8 +8184,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }).join('');
     var more = all.length > BILLS_LIMIT
       ? '<button type="button" class="show-more-btn" onclick="__billsShowAll()">'+(billsShowAll ? 'Show fewer' : 'Show all '+all.length+' bills')+'</button>' : '';
-    return '<div class="card bills-table-card"><div class="report-table-wrap"><table class="report-table bills-table bills-table2"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>'+more+'</div>'+
-      billsCardListHtml(list, cols, more);
+    // Desktop: the table (phones returned the card list above — only one layout is ever built).
+    return '<div class="card bills-table-card"><div class="report-table-wrap"><table class="report-table bills-table bills-table2"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>'+more+'</div>';
   }
   /** Phones: the same bills as a readable list (the 8-column table was squashed into unreadable
    *  slivers). Each bill: service icon, provider, property + due date, total and status, then a
@@ -8409,12 +8321,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var prop = r.tenant ? properties.find(function(p){ return p.id===r.tenant.propertyId; }) : null;
       var itemsHtml = r.items.map(itemRowHtml).join('');
       var waHtml = r.tenant ? pendingBillsWhatsAppRowHtml(r.tenant, r.items, prop) : '';
-      return '<details class="pending-bills-tenant">'+
+      return lazyDetails('<details class="pending-bills-tenant">'+
         '<summary class="field-row" style="cursor:pointer;list-style:none;"><span class="k">'+esc(r.tenant ? r.tenant.fullName : 'Unknown tenant')+
         (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· '+esc(prop.name)+'</span>' : '')+
         '</span><span class="v">'+money(r.amount)+' <span style="color:var(--text-faint);font-weight:400;">('+r.items.length+' bill'+(r.items.length===1?'':'s')+' — tap to see which)</span></span></summary>'+
         waHtml+itemsHtml+
-        '</details>';
+        '</details>', false);
     }).join('');
     return '<div class="card">'+
       '<div class="detail-head" style="margin-top:0;"><h2 style="margin:0;font-size:14px;">Pending bills by tenant</h2></div>'+
@@ -15189,29 +15101,6 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   window.endIncludedBill = endIncludedBill;
   window.deleteIncludedBillConfirm = deleteIncludedBillConfirm;
 
-  /** A room row with edit/delete actions (only in Property detail; the Properties list doesn't have them). */
-  function roomLine(r, propertyId){
-    var t = currentTenantOf(r.id);
-    var isPaying = t && t.rentAmount>0;
-    var tenantLabel = isPaying
-      ? esc(t.fullName)+' · $'+t.rentAmount+'/'+(t.rentFrequency==='weekly'?'week':t.rentFrequency)
-      : (t ? esc(t.fullName) : 'Vacant');
-    var inner = '<span class="rname">'+esc(r.name)+'</span><span class="rtenant">'+tenantLabel+'</span>';
-    var linkOrDiv = isPaying
-      ? '<a class="room-row linked" href="#/tenants/'+t.id+'">'+inner+'</a>'
-      : '<div class="room-row">'+inner+'</div>';
-    var hasAnyTenant = !!t;
-    return '<div class="room-line">'+linkOrDiv+
-      (isViewer() ? '' : '<button type="button" class="icon-mini-btn" title="Room ad — write the post to find a tenant" '+
-      'onclick="event.preventDefault();event.stopPropagation();openRoomAdForRoom(\''+r.id+'\')">📣</button>')+
-      '<button type="button" class="icon-mini-btn" title="Room activity" '+
-      'onclick="event.preventDefault();event.stopPropagation();openRoomActivityModal(\''+r.id+'\')">🕘</button>'+
-      '<button type="button" class="icon-mini-btn" title="Edit room" '+
-      'onclick="event.preventDefault();event.stopPropagation();openRoomModal(\''+propertyId+'\',\''+r.id+'\')">✎</button>'+
-      (canDeleteRecords() ? '<button type="button" class="icon-mini-btn danger" title="Delete room"'+(hasAnyTenant?' disabled':'')+' '+
-      'onclick="event.preventDefault();event.stopPropagation();deleteRoomConfirm(\''+r.id+'\')">✕</button>' : '')+
-      '</div>';
-  }
 
   /* ---------- Tenant form ---------- */
   var tenantModalEditId = null;
@@ -18276,6 +18165,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return tpl.cloneNode(true);
   }
   function decorateButton(b){
+    if (b._decorated) return; // checked once per button — re-scans after each render skip it
+    b._decorated = true;
     if (b.querySelector('svg') || b.classList.contains('add-btn') || b.querySelector('.add-btn-plus')) return; // round "+" add buttons already have their own plus
     var label = (b.textContent || '').trim();
     if (label.length < 2 || !/[a-z]/i.test(label)) return; // icon-only (✕, ✎, ‹ …) or empty

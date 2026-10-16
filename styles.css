@@ -104,7 +104,6 @@
     position:sticky;top:env(safe-area-inset-top,0px);z-index:5;
     display:flex;align-items:center;justify-content:flex-start;gap:8px;
     padding:12px 16px;
-    background:color-mix(in srgb, var(--bg) 88%, transparent);
   }
   .search{
     display:flex;align-items:center;gap:8px;
@@ -285,8 +284,8 @@
   .import-file-chip{display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--text-dim);font-size:12.5px;padding:22px;}
   .import-file-chip svg{width:26px;height:26px;}
   .form-row label{
-    display:block;font-size:12px;color:var(--text-dim);
-    margin-bottom:4px;font-weight:600;
+    display:block;
+    margin-bottom:4px;
   }
   .form-row input, .form-row select{
     width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--border);
@@ -346,7 +345,7 @@
   .modal-overlay{
     position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;
   }
-  .modal-card{width:100%;max-width:min(360px,92vw);max-height:85vh;overflow-y:auto;box-shadow:0 12px 40px rgba(10,12,18,.18);}
+  .modal-card{width:100%;max-width:min(360px,92vw);overflow-y:auto;box-shadow:0 12px 40px rgba(10,12,18,.18);}
   .modal-card h2{margin-top:0;}
   /* Bill/invoice preview — sized to fill most of whatever screen it's viewed on (phone or
      desktop), instead of the small fixed-width modal card used for forms. */
@@ -521,9 +520,6 @@
   .room-row.linked:hover{background:var(--border);}
   .room-row.linked:hover .rtenant{color:var(--accent);}
   .room-row.linked:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
-  .room-line{display:flex;align-items:center;gap:4px;border-top:1px solid var(--border);}
-  .room-line:first-child{margin-top:10px;}
-  .room-line .room-row{border:none;padding:7px 0;margin-top:0;flex:1;min-width:0;}
   .task-row{display:flex;align-items:center;font-size:13px;padding:7px 0;
     border-top:1px solid var(--border);}
   .task-row:first-of-type{border-top:1px solid var(--border);margin-top:10px;}
@@ -585,7 +581,6 @@
   .bottomnav{
     display:grid;grid-template-columns:repeat(5,1fr);
     position:fixed;left:0;right:0;bottom:0;z-index:10;
-    background:color-mix(in srgb, var(--bg-elevated) 92%, transparent);
     padding-bottom:env(safe-area-inset-bottom,0px);
   }
   .bottomnav a{
@@ -1130,9 +1125,6 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 .modal-card{max-height:min(85vh, 85dvh);}
 @media (min-width:641px){ .modal-card{max-width:420px;} }
 @media (max-width:640px){
-  .modal-overlay{align-items:flex-end;padding:0;}
-  .modal-card{max-width:100%;width:100%;border-radius:16px 16px 0 0;
-    max-height:92dvh;padding-bottom:calc(17px + env(safe-area-inset-bottom,0px));}
   .modal-actions{flex-wrap:wrap;}
   .modal-actions .mini-btn{flex:1 1 auto;}
 }
@@ -1250,15 +1242,14 @@ main.content{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));}
 
 /* Close (×) pinned at the top-right of every pop-up window: a slim sticky bar, so rows scroll
    under it instead of being covered by the button */
-.modal-x-bar{position:sticky;top:-17px;z-index:3;display:flex;justify-content:flex-end;
-  margin:-17px -17px 0;padding:8px 8px 4px;border-radius:14px 14px 0 0;}
+.modal-x-bar{border-radius:14px 14px 0 0;}
 .modal-x{width:36px;height:36px;border-radius:999px;border:1px solid var(--border);background:var(--bg-elevated);
   color:var(--text-dim);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
 .modal-x svg{width:18px;height:18px;}
 .modal-x:hover{background:var(--border);color:var(--text);}
 .modal-x:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
 @media (pointer:coarse), (max-width:1024px){ .modal-x{width:44px;height:44px;} }
-@media (max-width:640px){ .modal-x-bar{top:-15px;margin:-15px -15px 0;} }
+@media (max-width:640px){ .modal-x-bar{margin:-15px -15px 0;} }
 .history-row .del svg{display:block;}
 
 /* No pull-to-refresh / bounce reload when swiping down at the top (browser's own gesture too) */
@@ -1704,9 +1695,9 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
 .needs-card .row .view-btn{min-height:34px;padding:6px 14px;font-size:13px;}
 .needs-card .row .amount{text-align:right;}
 /* Payments: one foldable card per tenant */
-.pay-card > summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;padding-right:26px;position:relative;}
+.pay-card > summary{list-style:none;cursor:pointer;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;position:relative;}
 .pay-card > summary::-webkit-details-marker{display:none;}
-.pay-card > summary::after{content:"";position:absolute;right:4px;top:50%;width:8px;height:8px;margin-top:-6px;border-right:2px solid var(--text-dim);border-bottom:2px solid var(--text-dim);transform:rotate(45deg);transition:transform .2s;}
+.pay-card > summary::after{content:"";position:absolute;right:4px;width:8px;height:8px;margin-top:-6px;border-right:2px solid var(--text-dim);border-bottom:2px solid var(--text-dim);transform:rotate(45deg);transition:transform .2s;}
 .pay-card[open] > summary::after{transform:rotate(-135deg);margin-top:-2px;}
 .pay-card[open] > summary{margin-bottom:6px;}
 .pay-who{display:flex;flex-direction:column;min-width:0;}
@@ -2326,8 +2317,7 @@ input, select, textarea, .modal-input, .bills-sort select,
 .mo-money.owes{color:var(--status-overdue);}
 /* Phones: the explanatory sentence under each page title is hidden — the title says enough. */
 @media (max-width:640px){ .page-sub{display:none;} }
-.mo-row .act-row{flex-wrap:nowrap;}
-.mo-row .act-row .mini-btn{flex:1 1 0;min-width:0;padding:0 8px;}
+.mo-row .act-row .mini-btn{padding:0 8px;}
 
 /* Payments: every tenant card has the same layout — name + ref and property on top, the status
    pills always on their own line underneath (left-aligned), chevron centred on the right. Before,
@@ -2472,7 +2462,7 @@ span.bd-as{cursor:default;}
 /* Room ad modal */
 .room-ad-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
 @media (max-width:520px){ .room-ad-grid{grid-template-columns:1fr;} }
-.room-ad-out{font-size:13px;line-height:1.45;white-space:pre-wrap;background:var(--surface-2, rgba(127,127,127,.06));}
+.room-ad-out{line-height:1.45;white-space:pre-wrap;background:var(--surface-2, rgba(127,127,127,.06));}
 .room-ad-out{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:14px;padding:12px;font:inherit;font-size:13px;resize:vertical;}
 .room-ad-edit{margin-top:6px;border-top:1px solid var(--border);padding-top:8px;}
 .room-ad-edit summary{cursor:pointer;font-weight:600;font-size:13.5px;padding:6px 0;}
@@ -2533,3 +2523,13 @@ a.prc-name:hover{color:var(--accent);}
 /* Move-out rows have 4 actions now: let them wrap 2×2 instead of squeezing words ("Dat e"). */
 .mo-row .act-row{flex-wrap:wrap !important;}
 .mo-row .act-row .mini-btn{flex:1 1 calc(50% - 6px) !important;white-space:nowrap;min-width:0;}
+
+/* ── Buttons centred everywhere ─────────────────────────────────────────────────────────────
+   Icon + label sit in the middle of every button, and rows of buttons (window footers, card
+   actions, move-out / payment rows, room cards) are centred instead of pushed to one side. */
+.mini-btn, .view-btn, .wa-btn, .wa-send-one, .show-more-btn, .text-link.btn, .action-tile, .prc-btn, button.chip{
+  justify-content:center !important; text-align:center !important;
+}
+.mini-btn, .view-btn, .wa-btn{display:inline-flex;align-items:center;gap:6px;}
+.actions-row, .modal-actions, .act-row, .prc-actions, .action-tiles, .bd-item-v .act-row{justify-content:center !important;}
+.actions-row .mini-btn.danger, .prc-btn.danger{margin-left:0 !important;}
