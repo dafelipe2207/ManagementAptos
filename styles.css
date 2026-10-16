@@ -2533,3 +2533,103 @@ a.prc-name:hover{color:var(--accent);}
 .mini-btn, .view-btn, .wa-btn{display:inline-flex;align-items:center;gap:6px;}
 .actions-row, .modal-actions, .act-row, .prc-actions, .action-tiles, .bd-item-v .act-row{justify-content:center !important;}
 .actions-row .mini-btn.danger, .prc-btn.danger{margin-left:0 !important;}
+
+/* =====================================================================================
+   iOS 27 consistency pass — one set of headings, buttons, labels and info rows on every page.
+   Keeps the glass look; only evens out sizes, case and spacing that had drifted page to page.
+   Type ladder:  page title 30–32  ·  group heading 20  ·  card title 17  ·  body 15
+                 ·  sub-heading / row label 13  ·  footnote 12.
+   ===================================================================================== */
+
+/* ---- Card titles: "Contact", "Move-outs (1)", "Leaking kitchen tap", "Bond"… ----
+   Were tiny grey CAPITALS on most cards and normal text on others. Now one bold title. */
+.card h2, .card > h2, .card .detail-head > h2, .card .bd-head > h2, .card.needs-card > h2,
+.card > .detail-head > h2, .detail-head.has-add-btn > h2{
+  font-size:17px !important; font-weight:700 !important; letter-spacing:-0.015em !important;
+  text-transform:none !important; color:var(--text) !important; line-height:1.3; margin:0 0 10px !important;
+}
+.card .detail-head{margin-top:0;align-items:center;}
+.card .detail-head > h2, .card .bd-head > h2{margin:0 !important;}
+.card h2 .count-pill, .card h2 > span{vertical-align:2px;}
+
+/* ---- Sub-headings inside a card: "Due & upcoming (5)", "Today's tasks", "Roster"… ---- */
+.card > h3, .card h3, .pp .card h3, .pf-h, .rei-hist-group, .audit-day, .cal-agenda-later{
+  font-size:13px !important; font-weight:650 !important; letter-spacing:0 !important;
+  text-transform:none !important; color:var(--text-dim) !important; margin:14px 0 6px !important;
+}
+.card > h3:first-child{margin-top:0 !important;}
+
+/* ---- Group headings between cards: property names, "Current tenants", "Rent · Oct",
+   month names on My Bills. Were 12px grey capitals; now a clear iOS-style section title. ---- */
+.content-inner > h2, .content-inner > h3, .tenant-section-title, .section-label{
+  font-size:20px !important; font-weight:700 !important; letter-spacing:-0.02em !important;
+  text-transform:none !important; color:var(--text) !important; margin:10px 2px -4px !important;
+}
+.section-label{display:flex;align-items:baseline;}
+.section-link{font-size:14px !important;}
+.tenant-section-title span, .count-pill{font-size:12px;font-weight:650;letter-spacing:0;}
+
+/* ---- Small "kicker" words above a title (THE PLACE, WI-FI, ROOMS, REAL ESTATE) repeated
+   the title right under them — dropped so each card has one heading. ---- */
+.pp-titles .wifi-kicker, .pp-head .wifi-kicker{display:none;}
+
+/* ---- Labels ---- */
+.stat .label, .ps-tile span, .field-row .k, .wifi-label, .form-row label, .ref-card-label{
+  text-transform:none; letter-spacing:0;
+}
+.stat .label{font-size:12px !important;color:var(--text-dim) !important;font-weight:600;}
+.roster-table th, .report-table th, .bills-table2 th{text-transform:none !important;letter-spacing:0 !important;font-size:12.5px !important;color:var(--text-dim) !important;font-weight:650;}
+.cal-weekday{font-size:11px;letter-spacing:.02em;}
+.week-chip{font-size:11.5px;letter-spacing:0;text-transform:none;}
+
+/* ---- Status tags: one size and shape everywhere ---- */
+.badge, .bc-chip, .rl-pill, .rei-flag{font-size:12px !important;font-weight:650 !important;line-height:1.4;padding:3px 10px !important;letter-spacing:0;}
+.badge .dot{width:6px;height:6px;}
+
+/* ---- Buttons: one height, one text size, icon + label ----
+   Regular 40px / 14px, compact rows inside cards 36px / 13.5px. Inline sizes from the page
+   code (11px, 12px…) no longer win. */
+.mini-btn, .view-btn, .pill-btn{font-size:14px !important;font-weight:600 !important;min-height:40px !important;
+  padding-top:0 !important;padding-bottom:0 !important;border-radius:999px !important;gap:6px;}
+.card .mini-btn, .card .view-btn, .modal-card .mini-btn{font-size:13.5px !important;min-height:36px !important;padding-left:14px !important;padding-right:14px !important;}
+.mini-btn.add-btn, .round-icon-btn{min-height:44px !important;}
+.mini-btn svg, .view-btn svg{width:16px;height:16px;flex-shrink:0;}
+.text-link{font-size:14px !important;font-weight:600;color:var(--accent);}
+.show-more-btn{font-size:14px;min-height:40px;}
+/* destructive actions: tinted red, the same on every page (was solid red in some places,
+   red outline in others) */
+.mini-btn.danger{background:color-mix(in srgb, var(--status-overdue) 12%, var(--bg-elevated)) !important;
+  color:var(--status-overdue) !important;border-color:transparent !important;}
+.mini-btn.danger:hover{background:color-mix(in srgb, var(--status-overdue) 20%, var(--bg-elevated)) !important;opacity:1;}
+/* rows of actions under a page title (tenant, bill, property): tidy grid on phones */
+@media (max-width:640px){
+  .content-inner > .actions-row{display:grid !important;grid-template-columns:1fr 1fr;gap:8px;}
+  .content-inner > .actions-row .mini-btn{width:100%;margin:0 !important;}
+  .content-inner > .actions-row .mini-btn:only-child, .content-inner > .actions-row .mini-btn.danger:nth-child(odd):last-child{grid-column:1 / -1;}
+}
+@media (min-width:641px){ .content-inner > .actions-row{justify-content:flex-start !important;} }
+
+/* ---- Info rows (label → value) as an iOS grouped list: one rounded group with thin
+   separators, instead of a stack of separate outlined tiles ---- */
+.card .field-list, .pp .field-list{gap:0 !important;border-radius:14px;overflow:hidden;
+  background:color-mix(in srgb, var(--bg-elevated) 72%, transparent);border:1px solid var(--glass-edge);}
+.card .field-list > .field-row, .pp .field-list > .field-row{background:transparent !important;border:0 !important;border-radius:0 !important;
+  margin:0 !important;padding:12px 14px !important;box-shadow:none !important;position:relative;}
+.card .field-list > .field-row + .field-row::before, .pp .field-list > .field-row + .field-row::before{
+  content:"";position:absolute;top:0;left:14px;right:0;height:.5px;background:var(--glass-edge);}
+.field-row .k{font-size:14px !important;color:var(--text-dim) !important;}
+.field-row .v{font-size:15px !important;font-weight:600 !important;}
+
+/* ---- Real estate inspection banner: compact on phones (date tile on the left) instead of
+   a full-width blue bar above each one ---- */
+@media (max-width:520px){
+  .rei-banner{flex-direction:row !important;gap:12px !important;padding:12px !important;}
+  .rei-count{align-self:flex-start;min-height:66px;flex-direction:column !important;min-width:58px !important;padding:8px 6px !important;justify-content:center !important;}
+  .rei-count b{font-size:24px;}
+  .rei-count span{font-size:10.5px;margin-top:2px !important;text-align:center;line-height:1.15;}
+  .rei-when{font-size:15.5px;}
+}
+
+/* ---- Small fixes ---- */
+.wifi-value{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;}
+.nav-section-header{text-transform:none;letter-spacing:0;font-size:12.5px;}

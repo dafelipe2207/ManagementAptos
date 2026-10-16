@@ -1178,7 +1178,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
   ];
   var TENANT_NAV = [
-    { hash:'#/', label:'My Dashboard', icon:'dashboard', primary:true },
+    { hash:'#/', label:'Dashboard', icon:'dashboard', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
     { hash:'#/rules', label:'House Rules', icon:'rules', primary:true },
@@ -11615,7 +11615,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         '</tr>';
     }).join('');
     return '<div class="roster-table-wrap"><table class="roster-table">'+
-      '<thead><tr><th>Aseo</th>'+(showBin?'<th>Bin</th><th>Tipo</th>':'')+'<th>Habitación</th></tr></thead>'+
+      '<thead><tr><th>Cleaning</th>'+(showBin?'<th>Bin out</th><th>Bins</th>':'')+'<th>Room</th></tr></thead>'+
       '<tbody>'+bodyRows+'</tbody></table></div>';
   }
 
