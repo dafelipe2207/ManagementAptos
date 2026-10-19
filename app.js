@@ -208,7 +208,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     // to look further ahead than what's actually needed to show as "upcoming": 1 if the cycle is
     // fortnightly or monthly, 2 if it's weekly (so the notice window is always ~2 weeks in
     // both cases, instead of generating charges further and further ahead that aren't due yet).
-    function futureLookahead(frequency){ return frequency === 'weekly' ? 2 : 1; }
+    function futureLookahead(frequency){ return frequency === 'weekly' ? 3 : 1; }
     function generateAllPeriods(schedule, tenant, asOfIso){
       var periods = [];
       var cutoff = tenant.actualMoveOutDate || tenant.expectedMoveOutDate || null;
@@ -230,7 +230,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         // the move-in date itself, and only from the second period onward is the
         // 2-week buffer required.
         var dueDate = isFirstPeriod ? cursor : stepDate(cursor, -ADVANCE_DAYS);
-        periods.push({ periodStart: cursor, periodEnd: end, dueDate: dueDate });
+        // When the period counts as OWED (Due / Overdue). Rule: the tenant always has two
+        // weeks paid — the current one and the next. Weekly rent: each week is owed from the
+        // start of the week before it (e.g. on 19/10 the weeks 13–19 and 20–26 are owed, and
+        // from 20/10 the week 27/10–02/11 is too). A fortnight already covers two weeks, so
+        // fortnightly/monthly rent is owed from the first day of the period. The first period
+        // is owed from the move-in date.
+        var overdueFrom = isFirstPeriod ? cursor : (schedule.frequency === 'weekly' ? stepDate(cursor, -7) : cursor);
+        if (schedule.frequency === 'weekly' && !isFirstPeriod) dueDate = overdueFrom;
+        periods.push({ periodStart: cursor, periodEnd: end, dueDate: dueDate, overdueFrom: overdueFrom });
         isFirstPeriod = false;
         if (isFuture) futurePushed++;
         cursor = schedule.frequency === 'monthly' ? addMonths(cursor, 1) : stepDate(cursor, periodLengthDays(schedule.frequency));
@@ -247,7 +255,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     function computeStatus(period, amountPaid, remaining, asOfIso){
       if (remaining <= 0.004) return 'paid';
       if (amountPaid > 0) return 'partially_paid';
-      if (period.periodStart <= asOfIso) return 'overdue';
+      if ((period.overdueFrom || period.periodStart) <= asOfIso) return 'overdue';
       return 'upcoming';
     }
 
@@ -294,6 +302,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           periodEnd: periodEnd,
           prorated: periodEnd !== period.periodEnd,
           dueDate: period.dueDate,
+          overdueFrom: period.overdueFrom || period.periodStart,
           amountDue: amountDue,
           amountPaid: amountPaid,
           remaining: remaining,
@@ -948,7 +957,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       });
       if (!rent.length && !billsDue.length) return;
       var oldest = [];
-      if (rent.length) oldest.push(rent[0].periodStart <= TODAY ? rent[0].periodStart : rent[0].dueDate);
+      if (rent.length) oldest.push(rent[0].overdueFrom <= TODAY ? rent[0].overdueFrom : rent[0].dueDate);
       if (billsDue.length) oldest.push(billsDue[0].bill.dueDate);
       oldest.sort();
       var room = roomOf(t.roomId), property = propertyOf(t.propertyId);
@@ -1834,7 +1843,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var includedWeekly = round2(pb.weeklyIncludedBillsTotal || 0);
     var margin = round2(income - includedWeekly - lease);
     var propTenantIds = tenants.filter(function(t){ return t.propertyId===p.id; }).map(function(t){ return t.id; });
-    var rentOwed = rentCharges.filter(function(c){ return propTenantIds.indexOf(c.tenantId) > -1 && c.status!=='paid' && c.periodStart <= TODAY; })
+    var rentOwed = rentCharges.filter(function(c){ return propTenantIds.indexOf(c.tenantId) > -1 && c.status!=='paid' && c.overdueFrom <= TODAY; })
       .reduce(function(s,c){ return s + c.remaining; }, 0);
     // "Owed now" = only what is already due (due date today or earlier); bill shares that aren't
     // due yet are shown separately underneath instead of being added in.
@@ -5141,7 +5150,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   function chargeMatchesFilter(c, filter){
     var owing = c.status !== 'paid' && c.remaining > 0.004;
     if (filter==='paid') return c.status==='paid';
-    if (filter==='overdue') return owing && c.periodStart <= TODAY;
+    if (filter==='overdue') return owing && c.overdueFrom <= TODAY;
     if (filter==='due') return owing;
     return true;
   }
@@ -5271,7 +5280,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return list.slice().sort(function(a,b){ return paymentsDateSort==='asc' ? a.periodStart.localeCompare(b.periodStart) : b.periodStart.localeCompare(a.periodStart); });
     }
     function pendingRow(c){
-      return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</span>'+
+      var ahead = c.periodStart > TODAY ? ' <span style="color:var(--text-faint);">· in advance, starts in '+daysBetween(TODAY, c.periodStart)+' day'+(daysBetween(TODAY, c.periodStart)===1?'':'s')+'</span>' : '';
+      return '<div class="field-row"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+ahead+'</span>'+
         '<span class="v" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+
         money(c.remaining)+chargeStatusBadge(c)+
         '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openChargePaidModal(\''+c.id+'\')">Pay</button>'+
@@ -5281,7 +5291,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     function upcomingRow(c){
       var paidAhead = c.remaining <= 0.004;
       return '<div class="field-row upcoming-rent"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+
-        ' <span style="color:var(--text-faint);">· starts in '+daysBetween(TODAY, c.periodStart)+' day'+(daysBetween(TODAY, c.periodStart)===1?'':'s')+'</span></span>'+
+        ' <span style="color:var(--text-faint);">· '+(paidAhead ? 'starts in '+daysBetween(TODAY, c.periodStart)+' day'+(daysBetween(TODAY, c.periodStart)===1?'':'s') : (daysBetween(TODAY, c.overdueFrom)===1 ? 'owed from tomorrow' : 'owed from '+shortDate(c.overdueFrom)))+'</span></span>'+
         '<span class="v" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">'+
         money(c.amountDue)+(paidAhead ? badge('paid','Paid ahead') : chargeStatusBadge(c)+
           '<button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openChargePaidModal(\''+c.id+'\')">Pay</button>'+
@@ -5405,7 +5415,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           var tCharges = filtered.filter(function(c){ return c.tenantId===t.id; });
           // Periods that haven't started yet live in their own "Upcoming" block (below), so Due
           // only lists what's owed now.
-          var pending = sortByDate(tCharges.filter(function(c){ return c.status!=='paid' && c.periodStart <= TODAY; }));
+          var pending = sortByDate(tCharges.filter(function(c){ return c.status!=='paid' && c.overdueFrom <= TODAY; }));
           var paid = sortByDate(tCharges.filter(function(c){ return c.status==='paid'; }));
           var owedBills = unpaidBillAllocationsFor(t.id)
             .filter(function(o){ return billOwedMatchesFilter(o, paymentsFilter); })
@@ -5434,7 +5444,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           // Always shown for a tenant who still lives there, whatever month/chip filter is on:
           // their next period(s) that haven't started yet — to pay (Pay button) or already paid ahead.
           var upcomingCharges = tenantHasMovedOut(t) ? [] : allTenantCharges
-            .filter(function(c){ return c.periodStart > TODAY; })
+            .filter(function(c){ return c.overdueFrom > TODAY || (c.periodStart > TODAY && c.status === 'paid'); })
             .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); })
             .slice(0, upcomingCount);
           upcomingCharges = sortByDate(upcomingCharges); // follow the Date sort (newest first by default)
@@ -9611,7 +9621,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  that starts later isn't asked for yet (it's left out of "What you owe" and the to-collect
    *  list). Bank matching still uses tenantRentOwed, so rent paid early still matches. */
   function tenantRentOverdue(t){
-    return tenantRentOwed(t).filter(function(c){ return c.periodStart <= TODAY; });
+    return tenantRentOwed(t).filter(function(c){ return c.overdueFrom <= TODAY; });
   }
   function sendTenantOwedStatement(tenantId){
     var t = tenantOf(tenantId); if (!t) return;
@@ -9696,9 +9706,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (rent.length){
       section('RENT' + (t.rentAmount ? ' · ' + money(t.rentAmount) + ' / ' + (t.rentFrequency === 'fortnightly' ? 'FORTNIGHT' : (t.rentFrequency === 'monthly' ? 'MONTH' : 'WEEK')) : ''), '#c0392b');
       rent.forEach(function(cg){
-        var late = cg.periodStart <= TODAY;
+        var late = cg.overdueFrom <= TODAY;
         line(shortDate(cg.periodStart) + ' – ' + shortDate(cg.periodEnd),
-          (late ? 'Overdue since ' + shortDate(cg.periodStart) : 'Due ' + shortDate(cg.dueDate)) + (cg.amountPaid > 0 ? ' · ' + money(cg.amountPaid) + ' already paid' : ''), cg.remaining, late);
+          (late ? 'Overdue since ' + shortDate(cg.overdueFrom) : 'Due ' + shortDate(cg.dueDate)) + (cg.amountPaid > 0 ? ' · ' + money(cg.amountPaid) + ' already paid' : ''), cg.remaining, late);
       });
       y += 20;
     }
@@ -13872,7 +13882,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  since it should have been paid (from the oldest unpaid period's due date). Shows "under
    *  review" instead of the button while a payment they reported is waiting for confirmation. */
   function tenantOverdueRentBannerHtml(t){
-    var overdue = rentCharges.filter(function(c){ return c.tenantId===t.id && c.status!=='paid' && c.periodStart <= TODAY && c.remaining > 0.004; })
+    var overdue = rentCharges.filter(function(c){ return c.tenantId===t.id && c.status!=='paid' && c.overdueFrom <= TODAY && c.remaining > 0.004; })
       .sort(function(a,b){ return a.periodStart.localeCompare(b.periodStart); });
     if (!overdue.length) return '';
     var total = overdue.reduce(function(sum,c){ return sum + c.remaining; }, 0);
