@@ -970,6 +970,85 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   /** Properties whose ADMIN-to-real-estate rent payment is due today, tomorrow, or the day
    *  after tomorrow (warns 2 days ahead, as requested) — or that is ALREADY overdue and wasn't
    *  marked as paid ("generate an alert in case the payment isn't made"), so the date doesn't get missed. */
+  /** Tapping a chip in "Needs attention" (🏠 Rent, ♨️ Hot water ×5 …) opens what's behind it:
+   *  each rent week or each bill still owed, with its dates, how overdue it is and what was
+   *  already paid — and the actions for that one item (Mark paid, Partial, View bill).
+   *  `what` is 'rent' or a bill type ('hot_water', 'internet' …). Built fresh on every tap, so
+   *  it always shows the current numbers. */
+  function owedOverdueText(dateIso){
+    var d = dateIso ? daysBetween(dateIso, TODAY) : 0;
+    return d > 0 ? badge('overdue', d + ' day' + (d === 1 ? '' : 's') + ' overdue') : badge('due', 'Due today');
+  }
+  function openOwedDetail(tenantId, what){
+    var t = tenantOf(tenantId); if (!t) return;
+    var room = roomOf(t.roomId), property = propertyOf(t.propertyId);
+    var rows = [], total = 0, title;
+    if (what === 'rent'){
+      title = '🏠 Rent owed';
+      tenantRentOverdue(t).forEach(function(c){
+        total += c.remaining;
+        var paidPart = c.amountPaid > 0 ? 'Paid '+money(c.amountPaid)+' of '+money(c.amountDue) : 'Nothing paid yet';
+        rows.push('<div class="owed-item">'+
+          '<div class="owed-top"><div class="who"><div class="name">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+'</div>'+
+          '<div class="meta">'+paidPart+(c.prorated ? ' · part week' : '')+'</div></div>'+
+          '<div class="amount">'+money(c.remaining)+'<br/>'+owedOverdueText(c.periodStart <= TODAY ? c.periodStart : c.dueDate)+'</div></div>'+
+          '<div class="owed-actions">'+
+          '<button type="button" class="mini-btn" onclick="owedDetailThen(function(){ openPartialModal(\''+c.id+'\'); })">Partial</button>'+
+          '<button type="button" class="mini-btn primary" onclick="owedDetailThen(function(){ openChargePaidModal(\''+c.id+'\'); })">Mark paid</button>'+
+          '</div></div>');
+      });
+    } else {
+      title = (BILL_TYPE_ICON[what] || BILL_TYPE_ICON.other)[0] + ' ' + billTypeLabel(what) + ' owed';
+      unpaidBillAllocationsFor(t.id).filter(function(o){
+        return (o.bill.billType || 'other') === what && o.bill.dueDate && o.bill.dueDate <= TODAY;
+      }).forEach(function(o){
+        var b = o.bill, a = o.alloc;
+        total += a.amount || 0;
+        var period = (b.billingPeriodStart && b.billingPeriodEnd) ? shortDate(b.billingPeriodStart)+' – '+shortDate(b.billingPeriodEnd) : 'No period';
+        var detail = [];
+        if (b.dueDate) detail.push('Due '+shortDate(b.dueDate));
+        if (b.amount != null) detail.push('Bill total '+money(b.amount));
+        if (typeof a.daysOccupied === 'number') detail.push(a.daysOccupied+' days charged');
+        rows.push('<div class="owed-item">'+
+          '<div class="owed-top"><div class="who"><div class="name">'+esc(b.provider || billTypeLabel(what))+' · '+period+'</div>'+
+          '<div class="meta">'+detail.join(' · ')+'</div></div>'+
+          '<div class="amount">'+money(a.amount || 0)+'<br/>'+owedOverdueText(b.dueDate)+'</div></div>'+
+          '<div class="owed-actions">'+
+          '<button type="button" class="mini-btn" onclick="owedDetailThen(function(){ location.hash=\'#/bills/'+b.id+'\'; })">View bill</button>'+
+          '<button type="button" class="mini-btn primary" onclick="owedDetailThen(function(){ openAllocPaidModal(\''+b.id+'\',\''+t.id+'\'); })">Mark paid</button>'+
+          '</div></div>');
+      });
+    }
+    var m = document.getElementById('owed-detail-modal');
+    if (!m){
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'owed-detail-modal';
+      m.addEventListener('click', function(e){ if (e.target === m) closeOwedDetail(); });
+      document.body.appendChild(m);
+    }
+    m.innerHTML = '<div class="card modal-card owed-card" role="dialog" aria-modal="true" aria-labelledby="owed-detail-title">'+
+      '<h2 class="modal-title" id="owed-detail-title">'+esc(title)+'</h2>'+
+      '<p class="modal-sub">'+esc(t.fullName)+' · '+esc(property ? property.name : '—')+' · '+esc(room ? room.name : '—')+'</p>'+
+      (rows.length ? '<div class="owed-list">'+rows.join('')+'</div>'+
+        '<div class="owed-total"><span>Total</span><b>'+money(round2(total))+'</b></div>'
+        : '<p class="modal-hint">Nothing owed here anymore.</p>')+
+      '<div class="modal-actions"><button type="button" class="mini-btn" onclick="closeOwedDetail()">Close</button>'+
+      '<button type="button" class="mini-btn" onclick="owedDetailThen(function(){ viewTenantPayments(\''+t.id+'\'); })">View all payments</button></div>'+
+      '</div>';
+    m.hidden = false;
+    if (typeof syncPageLock === 'function') syncPageLock();
+  }
+  function closeOwedDetail(){
+    var m = document.getElementById('owed-detail-modal');
+    if (m) m.hidden = true;
+    if (typeof syncPageLock === 'function') syncPageLock();
+  }
+  /** Close the breakdown first, then run the action (the Mark paid / Partial windows are older
+   *  in the page, so they'd open underneath it). */
+  function owedDetailThen(fn){ closeOwedDetail(); fn(); }
+  window.openOwedDetail = openOwedDetail;
+  window.closeOwedDetail = closeOwedDetail;
+  window.owedDetailThen = owedDetailThen;
+
   function getUpcomingLeasePayments(){
     return properties
       .map(function(p){
@@ -1402,11 +1481,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
             // there's just one thing owed (otherwise View has the breakdown).
             // Rent and bills as separate chips (bills of the same service merged: "Hot water ×4").
             var chips = [];
-            if (item.rent.length) chips.push('<span class="owe-chip rent">🏠 Rent'+(item.rent.length > 1 ? ' ×'+item.rent.length : '')+' <b>'+money(item.rent.reduce(function(s,c){ return s + c.remaining; }, 0))+'</b></span>');
+            if (item.rent.length) chips.push('<button type="button" class="owe-chip rent" onclick="openOwedDetail(\''+item.tenantId+'\',\'rent\')" aria-label="See the rent owed">🏠 Rent'+(item.rent.length > 1 ? ' ×'+item.rent.length : '')+' <b>'+money(item.rent.reduce(function(s,c){ return s + c.remaining; }, 0))+'</b></button>');
             var byType = {}, order = [];
             item.bills.forEach(function(o){ var k = o.bill.billType || 'other'; if (!byType[k]){ byType[k] = { n:0, sum:0 }; order.push(k); } byType[k].n++; byType[k].sum += o.alloc.amount || 0; });
             order.forEach(function(k){ var ic = (BILL_TYPE_ICON[k] || BILL_TYPE_ICON.other)[0];
-              chips.push('<span class="owe-chip bill">'+ic+' '+esc(billTypeLabel(k))+(byType[k].n > 1 ? ' ×'+byType[k].n : '')+' <b>'+money(round2(byType[k].sum))+'</b></span>'); });
+              chips.push('<button type="button" class="owe-chip bill" onclick="openOwedDetail(\''+item.tenantId+'\',\''+k+'\')" aria-label="See the '+esc(billTypeLabel(k))+' bills owed">'+ic+' '+esc(billTypeLabel(k))+(byType[k].n > 1 ? ' ×'+byType[k].n : '')+' <b>'+money(round2(byType[k].sum))+'</b></button>'); });
             var status = item.daysOverdue > 0 ? badge('overdue', item.daysOverdue + ' day' + (item.daysOverdue === 1 ? '' : 's') + ' overdue') : badge('due', 'Due today');
             var single = item.rent.length + item.bills.length === 1;
             var markPaid = !single ? '' : item.rent.length
