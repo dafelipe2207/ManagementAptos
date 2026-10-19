@@ -2662,3 +2662,10 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 /* Send to one tenant: secondary "share instead" link under the big WhatsApp button */
 .send-alt-btn{display:block;margin:10px auto 0;padding:8px 12px;border:0;background:none;font:inherit;font-size:13.5px;font-weight:600;color:var(--accent);cursor:pointer;text-decoration:underline;text-underline-offset:3px;}
 .wa-send-one.is-copied{background:#128c7e;}
+/* Payments reported: what one transfer covers, and whether it matches what the tenant paid */
+.rp-parts b{font-weight:650;color:var(--text);}
+.rp-check{margin-top:6px;font-size:13px;line-height:1.35;padding:6px 10px;border-radius:10px;display:inline-block;}
+.rp-check.ok{background:var(--status-paid-bg);color:var(--status-paid);}
+.rp-check.bad{background:var(--status-overdue-bg);color:var(--status-overdue);}
+.rp-check.none{background:color-mix(in srgb, var(--text) 6%, transparent);color:var(--text-dim);}
+.rp-row .act-row .mini-btn{white-space:nowrap;word-break:normal;overflow-wrap:normal;}

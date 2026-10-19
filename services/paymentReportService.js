@@ -17,6 +17,7 @@ function fromRow(row) {
     paymentMethod: row.payment_method || null,
     reference: row.reference || null,
     tenantReference: row.tenant_reference || null,
+    amount: row.amount != null ? Number(row.amount) : null,
     proofPath: row.proof_path || null,
     reportedAt: row.reported_at,
     reviewedByProfileId: row.reviewed_by_profile_id || null,
@@ -44,7 +45,8 @@ export async function create(opts) {
     payment_method: opts.paymentMethod || null,
     reference: opts.reference || null,
     proof_path: opts.proofPath || null,
-    tenant_reference: opts.tenantReference || null
+    tenant_reference: opts.tenantReference || null,
+    amount: (typeof opts.amount === 'number' && opts.amount > 0) ? opts.amount : null
   }).select().single();
   if (error) throw error;
   return fromRow(data);

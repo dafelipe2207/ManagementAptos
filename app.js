@@ -23,7 +23,7 @@ import * as billExtractionService from './services/billExtractionService.js?v=1'
 import * as profileService from './services/profileService.js?v=7';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js?v=2';
-import * as paymentReportService from './services/paymentReportService.js?v=2';
+import * as paymentReportService from './services/paymentReportService.js?v=3';
 import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=5';
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
@@ -1571,68 +1571,110 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  same payment date and receipt). Shows who, how much, what it covers, when, and the receipt,
    *  with Confirm right there; Review opens the bill (or Payments, for rent). */
   function dashboardReportedPaymentsHtml(){
-    var items = [];
+    // One row per TRANSFER: everything a tenant reported with the same payment date (rent and
+    // bill shares together), so a single transfer that paid rent + bills is one row with the sum.
+    var groups = {}, order = [];
+    function groupFor(tenantId, date, at, proof){
+      var key = tenantId + '|' + (date || '');
+      var g = groups[key];
+      if (!g){ g = groups[key] = { tenantId:tenantId, date:date, at:'', proofs:[], rent:[], bills:[], billSubmissions:{} }; order.push(key); }
+      if ((at || '') > g.at) g.at = at || '';
+      if (proof && g.proofs.indexOf(proof) < 0) g.proofs.push(proof);
+      return g;
+    }
     rentPaymentReports.filter(function(r){ return r.status === 'pending'; }).forEach(function(r){
-      items.push({ kind:'rent', tenantId:r.tenantId, amount:r.amount, date:r.paymentDate, at:r.reportedAt || '', proof:r.proofPath,
-        what:'Rent' + (r.periodLabel ? ' from ' + shortDate(r.periodLabel) : ''), rentId:r.id });
+      var g = groupFor(r.tenantId, r.paymentDate, r.reportedAt, r.proofPath);
+      // What that rent report covers: everything owed up to the period it was reported for.
+      var owed = round2(rentCharges.filter(function(c){ return c.tenantId === r.tenantId && c.remaining > 0.004 && (r.periodLabel ? c.periodStart <= r.periodLabel : c.overdueFrom <= TODAY); })
+        .reduce(function(s2, c){ return s2 + c.remaining; }, 0));
+      g.rent.push({ id:r.id, amount:r.amount, owed:owed, label:'Rent' + (r.periodLabel ? ' from ' + shortDate(r.periodLabel) : '') });
     });
-    var groups = {};
     paymentReports.filter(function(r){ return r.status === 'pending'; }).forEach(function(r){
       var b = billOf(r.billId); if (!b) return;
       var a = (b.allocations || []).find(function(x){ return x.id === r.allocationId; }) || (b.allocations || []).find(function(x){ return x.tenantId === r.tenantId; });
-      var key = r.tenantId + '|' + (r.paymentDate || '') + '|' + (r.proofPath || (r.reportedAt || '').slice(0,16));
-      var g = groups[key] || (groups[key] = { kind:'bills', tenantId:r.tenantId, amount:0, date:r.paymentDate, at:r.reportedAt || '', proof:r.proofPath, bills:[] });
-      g.amount = round2(g.amount + (a ? a.amount : 0));
-      g.bills.push({ billId:b.id, name: billTypeLabel(b.billType) + (b.provider ? ' · ' + b.provider : ''), amount: a ? a.amount : 0 });
-      if ((r.reportedAt || '') > g.at) g.at = r.reportedAt || '';
-      if (!g.proof && r.proofPath) g.proof = r.proofPath;
+      var g = groupFor(r.tenantId, r.paymentDate, r.reportedAt, r.proofPath);
+      g.bills.push({ billId:b.id, type:b.billType, name: billTypeLabel(b.billType) + (b.provider ? ' · ' + b.provider : ''), amount: a ? a.amount : 0 });
+      // Bills ticked together in one report share the amount typed once — count it once.
+      if (r.amount != null){ var sk = (r.proofPath || '') + '|' + (r.reportedAt || '').slice(0, 16); g.billSubmissions[sk] = r.amount; }
     });
-    Object.keys(groups).forEach(function(k){ items.push(groups[k]); });
+    var items = order.map(function(k){
+      var g = groups[k];
+      var rentCovered = round2(g.rent.reduce(function(s2, x){ return s2 + x.owed; }, 0));
+      var billsCovered = round2(g.bills.reduce(function(s2, x){ return s2 + x.amount; }, 0));
+      var entered = g.rent.map(function(x){ return x.amount; }).concat(Object.keys(g.billSubmissions).map(function(k2){ return g.billSubmissions[k2]; }))
+        .filter(function(v){ return v != null && v > 0; });
+      // The same transfer reported twice (rent and bills, same receipt, same amount typed) is one
+      // transfer, not two.
+      var oneTransfer = entered.length > 1 && g.proofs.length === 1 && entered.every(function(v){ return Math.abs(v - entered[0]) < 0.005; });
+      var transferred = !entered.length ? null : oneTransfer ? entered[0] : round2(entered.reduce(function(s2, v){ return s2 + v; }, 0));
+      return { tenantId:g.tenantId, date:g.date, at:g.at, proof:g.proofs[0] || null, rent:g.rent, bills:g.bills,
+        rentCovered:rentCovered, billsCovered:billsCovered, covered: round2(rentCovered + billsCovered),
+        transferred: transferred, oneTransfer: oneTransfer };
+    });
     if (!items.length) return '';
     items.sort(function(x, y){ return (y.at || '').localeCompare(x.at || ''); });
     var rows = items.map(function(it, i){
       var t = tenantOf(it.tenantId), p = t ? propertyOf(t.propertyId) : null;
       var when = it.at ? actorWhen(it.at) : '';
-      var what = it.kind === 'rent' ? it.what
-        : it.bills.length === 1 ? it.bills[0].name : it.bills.length + ' bills: ' + it.bills.map(function(b){ return b.name.split(' · ')[0]; }).join(', ');
-      var confirm = it.kind === 'rent'
-        ? 'confirmRentReport(\''+it.rentId+'\', this)'
-        : 'confirmReportedBills('+i+', this)';
-      var review = it.kind === 'rent' ? 'location.hash=\'#/payments\''
+      var parts = it.rent.map(function(x){ return '<span><i>🏠</i>'+esc(x.label)+' <b>'+money(x.owed)+'</b></span>'; })
+        .concat(it.bills.map(function(x){ var ic = (BILL_TYPE_ICON[x.type] || BILL_TYPE_ICON.other)[0]; return '<span><i>'+ic+'</i>'+esc(x.name.split(' · ')[0])+' <b>'+money(x.amount)+'</b></span>'; }));
+      var check;
+      if (it.transferred == null) check = '<div class="rp-check none">Covers <b>'+money(it.covered)+'</b> · the tenant didn\'t say how much they transferred</div>';
+      else {
+        var diff = round2(it.transferred - it.covered);
+        check = Math.abs(diff) < 0.005
+          ? '<div class="rp-check ok">✓ Matches — paid <b>'+money(it.transferred)+'</b> = covers <b>'+money(it.covered)+'</b></div>'
+          : '<div class="rp-check bad">⚠️ Doesn\'t match — paid <b>'+money(it.transferred)+'</b>, covers <b>'+money(it.covered)+'</b> ('+(diff > 0 ? money(diff)+' more' : money(-diff)+' short')+')</div>';
+      }
+      var review = it.rent.length ? 'location.hash=\'#/payments\''
         : it.bills.length === 1 ? 'location.hash=\'#/bills/'+it.bills[0].billId+'\'' : 'viewTenantPayments(\''+it.tenantId+'\')';
       return '<div class="row rp-row">'+
         '<div class="who"><div class="name">'+esc(t ? t.fullName : 'Tenant')+tenantRefChipHtml(t)+'</div>'+
-          '<div class="facts"><span><i>'+(it.kind === 'rent' ? '🏠' : '🧾')+'</i>'+esc(what)+'</span>'+
-          (it.date ? '<span><i>📅</i>Paid '+esc(shortDate(it.date))+'</span>' : '')+
+          '<div class="facts rp-parts">'+parts.join('')+'</div>'+
+          '<div class="facts">'+(it.date ? '<span><i>📅</i>Paid '+esc(shortDate(it.date))+'</span>' : '')+
           (p ? '<span><i>📍</i>'+esc(p.name)+'</span>' : '')+'</div>'+
+          check+
           (when ? '<div class="meta">Reported '+esc(when)+'</div>' : '')+'</div>'+
-        '<div class="amount" style="text-align:right;"><div class="rp-amt">'+money(it.amount)+'</div>'+(it.proof ? badge('paid', 'Receipt ✓') : badge('due', 'No receipt'))+'</div>'+
+        '<div class="amount" style="text-align:right;"><div class="rp-amt">'+money(it.transferred != null ? it.transferred : it.covered)+'</div>'+(it.proof ? badge('paid', 'Receipt ✓') : badge('due', 'No receipt'))+'</div>'+
         '<div class="act-row">'+
-          (it.proof ? '<button type="button" class="mini-btn" onclick="viewReceipt(\'receipts\',\''+it.proof+'\')">View receipt</button>' : '')+
+          (it.proof ? '<button type="button" class="mini-btn" onclick="viewReceipt(\'receipts\',\''+it.proof+'\')">Receipt</button>' : '')+
           '<button type="button" class="mini-btn" onclick="'+review+'">Review</button>'+
-          '<button type="button" class="mini-btn primary" onclick="'+confirm+'">Confirm paid</button>'+
+          '<button type="button" class="mini-btn primary" onclick="confirmReportedTransfer('+i+', this)">Confirm paid</button>'+
         '</div></div>';
     }).join('');
     dashReportedItems = items;
-    var total = round2(items.reduce(function(s2, it){ return s2 + it.amount; }, 0));
+    var total = round2(items.reduce(function(s2, it){ return s2 + (it.transferred != null ? it.transferred : it.covered); }, 0));
     return '<div class="card needs-card rp-card"><h2>💸 Payments reported <span class="count-pill">'+items.length+'</span></h2>'+
       '<p class="modal-hint" style="margin:-4px 0 8px;">'+money(total)+' waiting for you to confirm</p>'+rows+'</div>';
   }
   var dashReportedItems = [];
-  /** Confirm every bill share in one reported transfer (Dashboard "Payments reported"). */
-  async function confirmReportedBills(i, btn){
+  /** Confirm everything in one reported transfer (Dashboard "Payments reported"): the rent
+   *  report(s) and the bill shares. If the tenant typed the whole transfer (rent + bills) on the
+   *  rent report, only the rent part is recorded as rent — the bills are marked paid on their own,
+   *  so the bills' money isn't counted twice. */
+  async function confirmReportedTransfer(i, btn){
     var it = dashReportedItems[i];
-    if (!it || it.kind !== 'bills') return;
+    if (!it) return;
+    var btnHtml = btn ? btn.innerHTML : '';
     if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
     try {
-      for (var k = 0; k < it.bills.length; k++) await confirmPaymentReport(it.bills[k].billId, it.tenantId, it.date || TODAY);
-      showToast('Confirmed ' + money(it.amount) + (it.bills.length > 1 ? ' for ' + it.bills.length + ' bills' : '') + '.', 'success');
+      for (var k = 0; k < it.rent.length; k++){
+        var rr = it.rent[k], override = null;
+        // The tenant typed the whole transfer on the rent report (same amount and receipt as the
+        // bills) — record only what's left after the bills as rent.
+        if (it.bills.length && it.rent.length === 1 && it.billsCovered > 0 && (it.oneTransfer || Math.abs(rr.amount - it.covered) < 0.005) && rr.amount - it.billsCovered > 0.004)
+          override = round2(rr.amount - it.billsCovered);
+        await confirmRentReport(rr.id, null, override);
+      }
+      for (var j = 0; j < it.bills.length; j++) await confirmPaymentReport(it.bills[j].billId, it.tenantId, it.date || TODAY);
+      if (it.bills.length) showToast('Confirmed ' + money(it.transferred != null ? it.transferred : it.covered) + '.', 'success');
     } catch(err){
+      if (btn){ btn.disabled = false; btn.innerHTML = btnHtml; }
       showToast('Could not confirm. ' + friendlyErrorMessage(err), 'error');
     }
     render();
   }
-  window.confirmReportedBills = confirmReportedBills;
+  window.confirmReportedTransfer = confirmReportedTransfer;
 
   /** Dashboard "Damage reported" card: open maintenance requests (anything not finished yet),
    *  most urgent first, then newest. Requests a tenant reported are marked as such. Tapping a row
@@ -5119,12 +5161,13 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     removeReportProof(reportId);
   }
   window.deleteRentReportProof = deleteRentReportProof;
-  async function confirmRentReport(reportId, btn){
+  async function confirmRentReport(reportId, btn, amountOverride){
     var r = rentPaymentReports.find(function(x){ return x.id===reportId; });
     if (!r || r.status!=='pending') return;
     var btnHtml = btn ? btn.innerHTML : '';
     if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
-    var saved = await recordPayment(r.tenantId, r.amount, r.paymentDate, 'cash', r.proofPath || null);
+    var rentAmount = (typeof amountOverride === 'number' && amountOverride > 0) ? amountOverride : r.amount;
+    var saved = await recordPayment(r.tenantId, rentAmount, r.paymentDate, 'cash', r.proofPath || null);
     if (!saved){ if (btn){ btn.disabled = false; btn.innerHTML = btnHtml; } return; }
     try {
       var updated = await rentPaymentReportService.confirm(r.id, currentProfile ? currentProfile.id : null, saved.id);
@@ -14340,6 +14383,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     picks.sort(function(x, y){ return (x.on === y.on ? 0 : x.on ? -1 : 1) || (x.due || '9999').localeCompare(y.due || '9999'); });
     paymentReportPicks = picks;
     document.getElementById('payment-report-date').value = TODAY;
+    var amtIn = document.getElementById('payment-report-amount'); if (amtIn){ amtIn.value = ''; delete amtIn.dataset.edited; }
     document.getElementById('payment-report-method').value = 'bank_transfer';
     var billTenant = tenantOf(tenantId);
     document.getElementById('payment-report-reference').value = tenantPaymentRef(billTenant);
@@ -14358,6 +14402,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var ref = t ? tenantPaymentRef(t) : '';
     document.getElementById('payment-report-modal-sub').innerHTML =
       (chosen.length === 1 ? esc(chosen[0].label) : chosen.length + ' bills') + ' · <b>' + money(total) + '</b>' + (ref ? ' · your reference ' + esc(ref) : '');
+    var amtEl = document.getElementById('payment-report-amount');
+    if (amtEl && !amtEl.dataset.edited) amtEl.value = total > 0 ? total.toFixed(2) : '';
     var btn = document.querySelector('#payment-report-modal .modal-actions .mini-btn.primary');
     if (btn){ btn.disabled = !chosen.length; }
     if (paymentReportPicks.length < 2){ box.hidden = true; box.innerHTML = ''; return; }
@@ -14401,6 +14447,9 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var chosen = paymentReportChosen();
     if (!chosen.length){ errorEl.textContent = 'Tick at least one bill.'; errorEl.hidden = false; return; }
     if (!paymentReportModalProofPath && !noProofNudgeShown('payment-report')) return;
+    var amtField = document.getElementById('payment-report-amount');
+    var reportedAmount = amtField ? Math.round(parseFloat(amtField.value) * 100) / 100 : NaN;
+    if (amtField && (!isFinite(reportedAmount) || reportedAmount <= 0)){ errorEl.textContent = 'Enter the amount you transferred.'; errorEl.hidden = false; return; }
     var paymentDate = document.getElementById('payment-report-date').value || null;
     var paymentMethod = document.getElementById('payment-report-method').value || null;
     var reference = document.getElementById('payment-report-reference').value.trim() || null;
@@ -14415,7 +14464,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           allocationId: p.allocationId, billId: p.billId, tenantId: target.tenantId,
           paymentDate: paymentDate, paymentMethod: paymentMethod, reference: reference,
           proofPath: paymentReportModalProofPath, // the same screenshot on every ticked bill
-          tenantReference: tenantPaymentRef(tenantOf(target.tenantId))
+          tenantReference: tenantPaymentRef(tenantOf(target.tenantId)),
+          amount: isFinite(reportedAmount) ? reportedAmount : null // the whole transfer, the same on every ticked bill
         });
         paymentReports.unshift(created);
         done++;
