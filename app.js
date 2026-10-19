@@ -24,7 +24,7 @@ import * as profileService from './services/profileService.js?v=7';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js?v=2';
 import * as paymentReportService from './services/paymentReportService.js?v=2';
-import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=4';
+import * as rentPaymentReportService from './services/rentPaymentReportService.js?v=5';
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
@@ -399,10 +399,26 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   window.undoRecordedPayment = undoRecordedPayment;
   async function removePayment(paymentId){
+    var removed = paymentRecords.find(function(p){ return p.id === paymentId; });
     try {
       await paymentService.remove(paymentId);
       paymentRecords = paymentRecords.filter(function(p){ return p.id !== paymentId; });
       recomputeRentCharges();
+      // A tenant's "I paid" report that this payment came from goes back to "pending review",
+      // so it can be accepted again with the right date — or rejected if it never happened.
+      if (removed){
+        var linked = rentPaymentReports.filter(function(r){
+          return r.status === 'confirmed' && (r.paymentId === paymentId ||
+            (!r.paymentId && r.tenantId === removed.tenantId && r.paymentDate === removed.date));
+        });
+        for (var i = 0; i < linked.length; i++){
+          try {
+            var reopened = await rentPaymentReportService.reopen(linked[i].id);
+            var idx = rentPaymentReports.indexOf(linked[i]);
+            if (idx >= 0) rentPaymentReports[idx] = reopened;
+          } catch(_e){ /* the payment is gone either way; the report just stays as it was */ }
+        }
+      }
       return true;
     } catch(err){
       showToast('Could not remove the payment. ' + friendlyErrorMessage(err), 'error');
@@ -646,6 +662,28 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     if (rep) return { path: rep.proofPath, removeCall: 'removeReportProof(\''+rep.id+'\')', pmt: pmt || null };
     return { path:null, removeCall:'', pmt: pmt || null };
   }
+  /** Delete button on a paid rent period (Payments page, staff only): removes the payment made
+   *  that day — for when it was recorded with the wrong date or by mistake, even after it was
+   *  accepted from the tenant's report. The periods it covered go back to unpaid. */
+  function paymentsOnPaidDate(tenantId, date){
+    return paymentRecords.filter(function(x){ return x.tenantId === tenantId && x.date === date && x.method !== 'bond_deduction'; });
+  }
+  function paidChargeDeleteHtml(c){
+    if (!c.paidDate || !canDeleteRecords() || isViewer()) return '';
+    if (!paymentsOnPaidDate(c.tenantId, c.paidDate).length) return '';
+    return '<button type="button" class="rcpt-btn pay-del" style="width:34px;height:34px;" title="Delete this payment" aria-label="Delete this payment" '+
+      'onclick="deletePaidPeriodPayment(\''+c.tenantId+'\',\''+c.paidDate+'\')">'+TRASH_ICON+'</button>';
+  }
+  async function deletePaidPeriodPayment(tenantId, date){
+    var list = paymentsOnPaidDate(tenantId, date);
+    if (list.length !== 1){ openHistoryModal(tenantId); return; } // several payments that day: pick the one in the history
+    var ok = await removePayment(list[0].id);
+    if (!ok) return;
+    renderPreservingScroll();
+    showToast('Payment deleted — those weeks show as unpaid again.', 'success');
+  }
+  window.deletePaidPeriodPayment = deletePaidPeriodPayment;
+
   /** Rent periods settled by ONE payment (same tenant, same paid date) as one group — one
    *  transfer = one receipt. `list` must already be sorted by date. */
   function groupChargesByPayment(list){
@@ -5383,12 +5421,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var total = g.items.reduce(function(sum,c){ return sum + (Number(c.amountDue)||0); }, 0);
       return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(sorted[0].periodStart)+' – '+shortDate(sorted[sorted.length-1].periodEnd)+
         ' <span style="color:var(--text-faint);">(paid '+shortDate(g.paidDate)+' · '+g.items.length+' periods in one payment)</span>'+paidChargeByLine(g.items[0])+'</span>'+
-        '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(total)+paidChargeReceiptHtml(g.items[0])+'</span></div>';
+        '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(total)+paidChargeReceiptHtml(g.items[0])+paidChargeDeleteHtml(g.items[0])+'</span></div>';
     }
     function paidRow(c){
       var paidNote = c.paidDate ? ' <span style="color:var(--text-faint);">(paid '+shortDate(c.paidDate)+')</span>' : '';
       return '<div class="field-row" style="align-items:center;"><span class="k">'+shortDate(c.periodStart)+' – '+shortDate(c.periodEnd)+paidNote+paidChargeByLine(c)+'</span>'+
-        '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(c.amountDue)+paidChargeReceiptHtml(c)+'</span></div>';
+        '<span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+money(c.amountDue)+paidChargeReceiptHtml(c)+paidChargeDeleteHtml(c)+'</span></div>';
     }
     function billOwedRow(o){
       var b = o.bill, a = o.alloc;
@@ -17939,6 +17977,16 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var p = paymentRecords.find(function(x){ return x.id===id; });
     var t = p && tenantOf(p.tenantId);
     return (p ? money(p.amount) + ' paid on ' + shortDate(p.date) + (t ? ' by ' + t.fullName : '') + ' will be deleted and the rent periods recalculated.' : 'This payment will be deleted.') + ' This can\'t be undone.';
+  });
+  requireConfirm('deletePaidPeriodPayment', 'Delete this payment?', function(tenantId, date){
+    var list = paymentsOnPaidDate(tenantId, date);
+    if (list.length !== 1) return null; // opens the history instead — nothing to confirm yet
+    var p = list[0], t = tenantOf(tenantId);
+    var fromReport = rentPaymentReports.some(function(r){ return r.status === 'confirmed' && (r.paymentId === p.id || (r.tenantId === tenantId && r.paymentDate === date)); });
+    return money(p.amount) + ' paid on ' + shortDate(p.date) + (t ? ' by ' + t.fullName : '') +
+      ' will be deleted and the weeks it covered will show as unpaid again (rent is recalculated).' +
+      (fromReport ? ' The tenant\'s report goes back to "pending review" so you can accept it again with the right date, or reject it.' : '') +
+      ' This can\'t be undone.';
   });
   requireConfirm('removeMoveOutDeduction', 'Remove this deduction?', 'The deduction will be removed from the move-out settlement.', 'Remove');
   requireConfirm('removeImportQueueItem', 'Remove this file?', 'The uploaded bill will be removed from the import list (nothing saved yet is affected).', 'Remove');

@@ -59,6 +59,16 @@ export async function reject(id, reviewedByProfileId, reason) {
   return fromRow(data);
 }
 
+/** Puts a confirmed report back to "pending review" — used when staff delete the payment it
+ *  created (wrong date, or recorded by mistake), so it can be accepted again or rejected. */
+export async function reopen(id) {
+  const { data, error } = await supabase.from('rent_payment_reports').update({
+    status: 'pending', payment_id: null, reviewed_by_profile_id: null, reviewed_at: null, rejection_reason: null
+  }).eq('id', id).eq('status', 'confirmed').select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
 /** Detaches the proof file from a report (e.g. the wrong photo was uploaded). Staff only (RLS). */
 export async function clearProof(id) {
   const { error } = await supabase.from('rent_payment_reports').update({ proof_path: null }).eq('id', id);
