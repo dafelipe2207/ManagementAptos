@@ -2533,3 +2533,25 @@ a.prc-name:hover{color:var(--accent);}
 .mini-btn, .view-btn, .wa-btn{display:inline-flex;align-items:center;gap:6px;}
 .actions-row, .modal-actions, .act-row, .prc-actions, .action-tiles, .bd-item-v .act-row{justify-content:center !important;}
 .actions-row .mini-btn.danger, .prc-btn.danger{margin-left:0 !important;}
+
+/* ---------- "Needs attention" chips are tappable: they open what's owed behind them ---------- */
+button.owe-chip{border:0;font:inherit;font-size:11.5px;cursor:pointer;-webkit-tap-highlight-color:transparent;
+  transition:transform .12s ease, filter .15s ease;}
+button.owe-chip::after{content:"›";margin-left:2px;opacity:.55;font-weight:700;}
+button.owe-chip:hover{filter:brightness(.96);}
+button.owe-chip:active{transform:scale(.96);}
+button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.owed-card{max-width:min(460px,94vw) !important;}
+.owed-list{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px;}
+.owed-item{border-radius:14px;padding:12px;background:color-mix(in srgb, var(--bg-elevated) 72%, transparent);border:1px solid var(--glass-edge, var(--border));}
+.owed-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;}
+.owed-top .who{min-width:0;}
+.owed-top .name{font-size:14.5px;font-weight:650;}
+.owed-top .meta{font-size:12.5px;color:var(--text-dim);margin-top:2px;}
+.owed-top .amount{font-size:15px;font-weight:700;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.owed-top .amount .badge{margin-top:4px;}
+.owed-actions{display:flex;gap:8px;justify-content:flex-end !important;margin-top:10px;}
+.owed-total{display:flex;justify-content:space-between;align-items:baseline;padding:10px 4px 2px;font-size:15px;}
+.owed-total b{font-size:20px;font-variant-numeric:tabular-nums;}
+.owed-card .modal-title{font-size:19px !important;font-weight:750 !important;color:var(--text) !important;text-transform:none !important;letter-spacing:-.01em !important;margin:0 !important;padding-bottom:0 !important;}
+.owed-card .modal-sub{margin:4px 0 0;font-size:13.5px;color:var(--text-dim);}
