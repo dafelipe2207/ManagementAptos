@@ -9177,6 +9177,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    *  null (there's no one to send the message to). */
   function phoneDigitsForWhatsApp(phone){
     var digits = (phone || '').replace(/[^0-9]/g, '');
+    if (digits.indexOf('00') === 0) digits = digits.slice(2);
+    if (digits.length === 10 && digits.charAt(0) === '0') digits = '61' + digits.slice(1); // Australian 04xx… → 614xx…
     return digits.length >= 8 ? digits : null;
   }
 
@@ -9569,7 +9571,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         :
         // Phone: the share sheet sends the image itself (WhatsApp Business → pick the tenant).
         // Opening the chat and pasting didn't work reliably on iPhone — the image never arrived.
-        (touch && canShare1
+        (touch && st.chatUrl && st.imageBlob && navigator.clipboard && window.ClipboardItem
+          ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Copy image &amp; open '+esc(who1)+'\'s chat</span></button>'+
+            '<p class="send-howto">It copies the image and opens <b>'+esc(who1)+'</b>\'s chat in <b>WhatsApp Business</b> → touch and hold the message box → <b>Paste</b> → send.</p>'+
+            (canShare1 ? '<button type="button" class="send-alt-btn" onclick="groupSendShare(this)">Or share the image instead (pick the chat yourself)</button>' : '')
+        : touch && canShare1
           ? '<button type="button" class="wa-send-one" onclick="groupSendShare(this)">'+WA_ICON+'<span>Send image to '+esc(who1)+'</span></button>'+
             '<p class="send-howto">Tap it → <b>WhatsApp Business</b> → pick <b>'+esc(who1)+'</b> → send.</p>'
         : st.chatUrl
@@ -9668,23 +9674,42 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       if (!err || err.name !== 'AbortError') groupSendDownloadBill();
     });
   }
-  /** One tap: copy the image (when the browser allows it) and open the tenant's chat with the
-   *  message typed. Both start inside the tap — iPhone only allows them during it. */
+  /** One tap: copy the image, then open the tenant's chat in WhatsApp Business — there you
+   *  touch and hold in the message box → Paste → send. The chat only opens once the copy has
+   *  really finished (opening it straight away left the clipboard empty on iPhone, so nothing
+   *  could be pasted). If the phone doesn't jump to WhatsApp by itself, the button turns into
+   *  "Open chat" so a second tap gets there. */
   function groupSendToTenant(el){
     var st = groupSendState; if (!st || !st.chatUrl) return;
-    var copied = false;
-    try {
-      if (st.imageBlob && navigator.clipboard && window.ClipboardItem){
-        navigator.clipboard.write([new ClipboardItem({ 'image/png': st.imageBlob })]).catch(function(err){ console.warn('copy image', err); });
-        copied = true;
-      }
-    } catch(_e){ copied = false; }
-    if (!copied && st.imageUrl){ // can't copy here: save it so it can be attached
-      var a = document.createElement('a'); a.href = st.imageUrl; a.download = st.imageName; document.body.appendChild(a); a.click(); a.remove();
+    var who = st.recipientName || 'the tenant';
+    var label = el ? el.querySelector('span') : null;
+    if (el && el.dataset.copied === '1'){ openWhatsApp(st.chatUrl); return; } // second tap: just open the chat
+    var canCopy = !!(st.imageBlob && navigator.clipboard && window.ClipboardItem);
+    if (!canCopy){ // this browser can't copy images: save it so it can be attached
+      if (st.imageUrl){ var a = document.createElement('a'); a.href = st.imageUrl; a.download = st.imageName; document.body.appendChild(a); a.click(); a.remove(); }
+      openWhatsApp(st.chatUrl);
+      groupSendMarkSent();
+      showToast('Image saved — attach it in the chat and send.', 'success');
+      return;
     }
-    openWhatsApp(st.chatUrl);
-    groupSendMarkSent();
-    showToast(copied ? 'Image copied — paste it in the chat and send.' : 'Image saved — attach it in the chat and send.', 'success');
+    if (label) label.textContent = 'Copying image…';
+    var copying;
+    try {
+      // Safari keeps the tap "alive" for the copy only when it gets a promise of the image.
+      var item = isAppleMobile() ? new ClipboardItem({ 'image/png': Promise.resolve(st.imageBlob) }) : new ClipboardItem({ 'image/png': st.imageBlob });
+      copying = navigator.clipboard.write([item]);
+    } catch(err){ copying = Promise.reject(err); }
+    copying.then(function(){
+      groupSendMarkSent();
+      if (el){ el.dataset.copied = '1'; el.classList.add('is-copied'); }
+      if (label) label.textContent = 'Image copied — open ' + who + '\'s chat';
+      showToast('Image copied ✓ In the chat: touch and hold the message box → Paste → send.', 'success');
+      openWhatsApp(st.chatUrl);
+    }, function(err){
+      console.warn('copy image', err);
+      if (label) label.textContent = 'Copy image & open ' + who + '\'s chat';
+      showToast('Couldn\'t copy the image on this phone — use "Share image" below instead.', 'error');
+    });
   }
   window.groupSendToTenant = groupSendToTenant;
   /** WhatsApp Cloud API (edge function whatsapp-send): is it set up? Asked once per session. */
