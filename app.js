@@ -8727,9 +8727,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var left = pct(segStart);
       var width = Math.max(1.2, pct(stepDateIso(segEnd, 1)) - left);
       var tip = esc(b.provider) + ': ' + shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) +
-        ' • ' + money(b.amount) + ' • ' + ((BILL_STATUS_META[billEffectiveStatus(b)] || [])[1] || billEffectiveStatus(b));
-      return '<div title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
-        'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+billTimelineColorVar(b)+';"></div>';
+        ' • Tenants: ' + ((BILL_STATUS_META[billEffectiveStatus(b)] || [])[1] || billEffectiveStatus(b)) +
+        ' • ' + (b.adminPaid ? 'Paid to the provider' : 'NOT paid to the provider yet');
+      // Not paid to the provider yet → the bar is black (green only once YOU have paid it, so a
+      // bill the tenants paid but you haven't doesn't look settled). The tenants' status stays
+      // visible as a coloured line along the bottom of the black bar.
+      var bg = b.adminPaid ? billTimelineColorVar(b)
+        : 'linear-gradient(to top, '+billTimelineColorVar(b)+' 0 4px, var(--tl-unpaid) 4px)';
+      return '<div class="tl-bar'+(b.adminPaid ? '' : ' tl-unpaid')+'" title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
+        'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+bg+';"></div>';
     }
     /** Splits bills of the same type into "the usual charge" (the amount that repeats most) and
      *  "adjustments" (a different amount — e.g. Kleenheat raises its rate every 3 months). Only
@@ -8822,10 +8828,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<details class="card collapsible-card"'+(openNow?' open':'')+' ontoggle="__setBillsTimelineOpen(this.open)">'+
       '<summary><span>Invoice timeline</span><span class="cc-hint">'+esc(rangeLabel)+' · tap a property or service to filter · tap a bar to open the bill</span></summary>'+
       rangeControls+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 10px;">Each bar is a bill across its billing period. Striped = no bill loaded. Gas gets a separate "rate change" line when its price changes.</p>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 10px;">Each bar is a bill across its billing period. Black = you haven\'t paid the provider yet (its bottom line shows what the tenants paid); green only once it\'s paid to the provider. Striped = no bill loaded. Gas gets a separate "rate change" line when its price changes.</p>'+
       '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+
       rows.join('')+
       '<div style="margin-top:8px;">'+
+      legendItem('var(--tl-unpaid)','Not paid to provider yet (line underneath = tenants)') +
       legendItem('var(--status-paid)','Paid') + legendItem('var(--status-due)','Due') +
       legendItem('var(--status-overdue)','Overdue') + legendItem('var(--status-upcoming)','Allocated') +
       '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
