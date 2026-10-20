@@ -17482,14 +17482,24 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       pageLockY = window.scrollY || window.pageYOffset || 0;
       b.style.top = (-pageLockY) + 'px';
       b.classList.add('page-locked');
-    } else if (!open && pageLockY !== null){
-      var y = pageLockY;
-      pageLockY = null;
-      b.classList.remove('page-locked');
-      b.style.top = '';
-      window.scrollTo(0, y);
+    } else if (!open && pageLockY !== null && !unlockQueued){
+      // Closing: let the window disappear on screen FIRST, then free the page. Un-pinning the body
+      // makes iPhone Safari lay out and repaint the whole page (slow on long pages like Payments),
+      // and doing it in the same frame kept the closed window on screen until that finished —
+      // the Close button felt like it took ages.
+      unlockQueued = true;
+      requestAnimationFrame(function(){ setTimeout(function(){
+        unlockQueued = false;
+        if (anyModalOpen() || pageLockY === null) return; // another window opened meanwhile
+        var y = pageLockY;
+        pageLockY = null;
+        b.classList.remove('page-locked');
+        b.style.top = '';
+        window.scrollTo(0, y);
+      }, 0); });
     }
   }
+  var unlockQueued = false;
   if (window.MutationObserver){
     new MutationObserver(function(muts){
       for (var i = 0; i < muts.length; i++){

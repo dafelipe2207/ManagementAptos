@@ -2669,3 +2669,15 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .rp-check.bad{background:var(--status-overdue-bg);color:var(--status-overdue);}
 .rp-check.none{background:color-mix(in srgb, var(--text) 6%, transparent);color:var(--text-dim);}
 .rp-row .act-row .mini-btn{white-space:nowrap;word-break:normal;overflow-wrap:normal;}
+
+/* Phones/tablets: the soft colour wallpaper used four huge circles blurred with filter:blur(90px).
+   Safari re-renders that blur whenever the page behind is repainted — e.g. when a window closes
+   and the page is put back — which made closing windows slow. The same soft glow is drawn here
+   with radial gradients, which cost nothing to repaint. */
+@media (hover: none), (pointer: coarse), (max-width: 1024px){
+  .ios-wall i{filter:none !important;}
+  .ios-wall i:nth-child(1){background:radial-gradient(circle at center, var(--wall-1) 0%, var(--wall-1) 22%, transparent 70%) !important;}
+  .ios-wall i:nth-child(2){background:radial-gradient(circle at center, var(--wall-2) 0%, var(--wall-2) 22%, transparent 70%) !important;}
+  .ios-wall i:nth-child(3){background:radial-gradient(circle at center, var(--wall-3) 0%, var(--wall-3) 22%, transparent 70%) !important;}
+  .ios-wall i:nth-child(4){background:radial-gradient(circle at center, var(--wall-4) 0%, var(--wall-4) 22%, transparent 70%) !important;}
+}
