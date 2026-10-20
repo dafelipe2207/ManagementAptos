@@ -7562,9 +7562,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       : [];
     // Always opens on "By occupancy factor" (the admin's default). The amounts already saved are
     // kept aside so choosing "Custom" starts from them instead of from the factor split.
-    // Always starts from each tenant's default factor; any by-hand change (− / +) applies only
-    // while the modal is open and is saved on this bill's allocation when confirmed.
+    // Starts from the LAST factors saved on this bill (so re-allocating keeps the − / + changes
+    // the admin already made); a tenant with no saved factor on this bill uses their default.
     var factorOverrides = {};
+    (bill.allocations || []).forEach(function(a){
+      if (!a.isAdmin && a.tenantId && a.occupancyFactor != null && isFinite(Number(a.occupancyFactor))) factorOverrides[a.tenantId] = Number(a.occupancyFactor);
+    });
     allocationDraft = { billId: billId, method: 'occupancy', periodDays: totalDays, factorOverrides: factorOverrides,
       rows: computeAllocationRows(bill, 'occupancy', factorOverrides), savedRows: existingRows };
     document.getElementById('allocate-modal-sub').textContent =
