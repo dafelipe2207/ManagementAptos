@@ -9976,11 +9976,19 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }
     // Each tenant is a tile: name + ref on top, days/factor below, amount on the right with a
     // PAID / TO PAY tag under it (a paid share still shows how much was paid).
-    var rowH = 118, rowGap = 14, headerH = 250, tableH = rows.length * (rowH + rowGap) + 50, totalH = 90, footH = 70;
+    var rowH = 118, rowGap = 14, headerH = 250 + 120, tableH = rows.length * (rowH + rowGap) + 50, totalH = 90, footH = 70;
     var docH = docCanvas ? Math.round(docCanvas.height * (W - 2*pad) / docCanvas.width) + 70 : 0;
     var H = 32 + headerH + tableH + totalH + footH + docH + 40;
     var card = imageCard(W, H), g = card.g, rr = card.rr;
     var L = pad + 32, R = W - pad - 32, y = 32 + 80;
+    // A friendly hello first, about this bill.
+    var BILL_GREET_EMOJI = { electricity:'⚡', water:'💧', hot_water:'♨️', gas:'🔥', internet:'📶' };
+    var greetType = (billTypeLabel(bill.billType) || 'new').toLowerCase();
+    g.fillStyle = '#374151'; g.font = '600 32px ' + font;
+    g.fillText('Hi everyone 👋 the ' + greetType + ' bill is here ' + (BILL_GREET_EMOJI[bill.billType] || '🧾'), L, y);
+    g.fillStyle = '#6b7280'; g.font = '400 28px ' + font;
+    g.fillText('Here’s each person’s share — thanks for paying on time 🙏', L, y + 44);
+    y += 128;
     g.fillStyle = '#1d2433'; g.font = '700 46px ' + font;
     g.fillText(billTypeLabel(bill.billType) + ' bill' + (tenantProviderText(bill) ? ' · ' + bill.provider : ''), L, y);
     g.fillStyle = '#6b7280'; g.font = '400 30px ' + font;
