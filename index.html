@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=305">
+<link rel="modulepreload" href="app.js?v=306">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -659,6 +659,13 @@
       <h2 class="modal-title" id="property-modal-title">Add property</h2>
       <div class="form-row"><label for="property-name">Name</label><input id="property-name" type="text" /></div>
       <div class="form-row"><label for="property-address">Address</label><input id="property-address" type="text" /></div>
+      <div class="form-row"><label for="property-state">State</label><select id="property-state">
+        <option value="">— Choose the state —</option>
+        <option value="WA">Western Australia (WA)</option><option value="VIC">Victoria (VIC)</option>
+        <option value="NSW">New South Wales (NSW)</option><option value="QLD">Queensland (QLD)</option>
+        <option value="SA">South Australia (SA)</option><option value="TAS">Tasmania (TAS)</option>
+        <option value="ACT">Australian Capital Territory (ACT)</option><option value="NT">Northern Territory (NT)</option>
+      </select><p class="modal-hint" style="margin:4px 2px 0;font-size:11.5px;">The house rules name this state's tenancy law (e.g. "Victorian law").</p></div>
       <div class="form-row form-row-2">
         <div><label for="property-bedrooms">Bedrooms</label><input id="property-bedrooms" type="number" min="0" step="1" /></div>
         <div><label for="property-bathrooms">Bathrooms</label><input id="property-bathrooms" type="number" min="0" step="1" /></div>
@@ -1341,6 +1348,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=305"></script>
+<script type="module" src="app.js?v=306"></script>
 </body>
 </html>

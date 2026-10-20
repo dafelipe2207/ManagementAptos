@@ -2526,7 +2526,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<div class="pp">' + backLink('#/properties', 'Properties') +
       '<div class="card pp-hero">'+
         '<div class="pp-hero-top"><div><h1 class="page-title" style="margin:0;">'+esc(p.name)+'</h1>'+
-          '<p class="pp-addr">📍 '+esc(p.address)+'</p></div>'+
+          '<p class="pp-addr">📍 '+esc(p.address)+(propertyState(p) ? ' · ' + esc(propertyState(p)) : '')+'</p></div>'+
           '<div class="pp-hero-actions">'+
             (p.whatsappGroupLink ? waButton('openWhatsApp(\''+esc(p.whatsappGroupLink)+'\')', 'Open the WhatsApp group') : '')+
             '<button class="mini-btn" onclick="openPropertyModal(\''+p.id+'\')">Edit</button>'+
@@ -9148,8 +9148,120 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       '<button class="mini-btn" onclick="openEditBillModal(\''+b.id+'\')">Edit bill</button>'+
       (canDeleteRecords() ? '<button class="mini-btn danger" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
       '</div>'+
+      providerAccountCardHtml(b) +
       billAllocationCard(b);
   }
+
+  /* ---------- The admin's account with each provider (per property) ----------
+   * Kept in the property's listing_info.providerAccounts (staff-only: never sent to tenants),
+   * keyed by provider name. What the account is, its number, the link to sign in and the
+   * username — so the bill can be downloaded straight from the provider's website. Passwords
+   * are NOT stored here: they stay in the admin's password manager / iPhone Keychain. */
+  function providerKey(name){ return String(name || '').trim().toLowerCase(); }
+  function providerAccountOf(propertyId, provider){
+    var p = propertyOf(propertyId);
+    var all = (p && p.listingInfo && p.listingInfo.providerAccounts) || {};
+    return all[providerKey(provider)] || null;
+  }
+  function safeLoginUrl(u){
+    u = String(u || '').trim(); if (!u) return '';
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    return /^https?:\/\/[^\s"'<>]+$/i.test(u) ? u : '';
+  }
+  function providerAccountCardHtml(b){
+    if (isTenantRole() || !b.provider) return '';
+    var acc = providerAccountOf(b.propertyId, b.provider);
+    var canEdit = !isViewer();
+    var edit = canEdit ? '<button type="button" class="mini-btn" onclick="openProviderAccountModal(\''+b.id+'\')">'+(acc ? 'Edit access' : 'Add account access')+'</button>' : '';
+    if (!acc) return '<div class="card"><h2>'+esc(b.provider)+' account</h2>'+
+      '<p style="font-size:13.5px;color:var(--text-dim);margin:0 0 10px;">Save how to get into '+esc(b.provider)+'\'s website for this property, to download the bill from there.</p>'+
+      '<div class="actions-row">'+edit+'</div></div>';
+    var url = safeLoginUrl(acc.loginUrl);
+    var accNo = acc.accountNumber || b.accountNumber || '';
+    function row(k, v, copyField){
+      return '<div class="field-row"><span class="k">'+k+'</span><span class="v" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">'+v+
+        (copyField ? '<button type="button" class="text-link" style="margin:0;" onclick="copyProviderField(\''+b.id+'\',\''+copyField+'\')">Copy</button>' : '')+'</span></div>';
+    }
+    return '<div class="card"><h2>'+esc(acc.provider || b.provider)+' account</h2>'+
+      (acc.description ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0 0 10px;white-space:pre-line;">'+esc(acc.description)+'</p>' : '')+
+      '<div class="field-list">'+
+        (accNo ? row('Account number', esc(accNo), 'accountNumber') : '')+
+        (acc.username ? row('Username / email', esc(acc.username), 'username') : '')+
+        (url ? row('Website', '<span style="overflow-wrap:anywhere;font-weight:500;">'+esc(url.replace(/^https?:\/\//, ''))+'</span>', '') : '')+
+        (acc.notes ? '<div class="field-row"><span class="k">Notes</span><span class="v" style="font-weight:400;white-space:pre-line;">'+esc(acc.notes)+'</span></div>' : '')+
+      '</div>'+
+      '<p class="modal-hint" style="margin:8px 2px 0;">🔒 The password isn\'t saved here — use your password manager or iPhone Keychain.</p>'+
+      '<div class="actions-row" style="margin-top:10px;">'+
+        (url ? '<button type="button" class="mini-btn primary" onclick="window.open(\''+esc(url)+'\', \'_blank\', \'noopener\')">Open '+esc(acc.provider || b.provider)+' account</button>' : '')+
+        edit+
+      '</div></div>';
+  }
+  var providerAccountBillId = null;
+  function openProviderAccountModal(billId){
+    var b = billOf(billId); if (!b) return;
+    providerAccountBillId = billId;
+    var acc = providerAccountOf(b.propertyId, b.provider) || {};
+    var p = propertyOf(b.propertyId);
+    var m = document.getElementById('provider-account-modal');
+    if (!m){
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'provider-account-modal';
+      m.addEventListener('click', function(e){ if (e.target === m) m.hidden = true; });
+      document.body.appendChild(m);
+    }
+    var f = function(id, label, val, ph, type){ return '<div class="form-row"><label for="'+id+'">'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'" autocomplete="off" /></div>'; };
+    m.innerHTML = '<div class="card modal-card" style="max-width:440px;">'+
+      '<h2 class="modal-title">'+esc(b.provider)+' account'+(p ? ' · '+esc(p.name) : '')+'</h2>'+
+      '<p class="modal-sub">How to get into the provider\'s website to download this property\'s bills. Only you and the administrators see this — never the tenants.</p>'+
+      '<div class="form-row"><label for="pa-description">What this account is</label><textarea id="pa-description" rows="2" placeholder="e.g. Electricity for the whole house, in Daniel\'s name">'+esc(acc.description||'')+'</textarea></div>'+
+      f('pa-account', 'Account number', acc.accountNumber || b.accountNumber || '', 'As it appears on the bill')+
+      f('pa-url', 'Website to sign in', acc.loginUrl || '', 'e.g. synergy.net.au/myaccount', 'url')+
+      f('pa-username', 'Username / email', acc.username || '', 'The login for the account')+
+      '<div class="form-row"><label for="pa-notes">Notes</label><textarea id="pa-notes" rows="2" placeholder="e.g. Bills are under Billing → Past bills">'+esc(acc.notes||'')+'</textarea></div>'+
+      '<p class="modal-hint">🔒 Don\'t write the password here — keep it in your password manager or iPhone Keychain.</p>'+
+      '<p id="pa-error" class="form-error" hidden></p>'+
+      '<div class="modal-actions"><button type="button" class="mini-btn" onclick="document.getElementById(\'provider-account-modal\').hidden=true">Cancel</button>'+
+      '<button type="button" class="mini-btn primary" id="pa-save" onclick="saveProviderAccount()">Save</button></div></div>';
+    m.hidden = false;
+  }
+  async function saveProviderAccount(){
+    var b = billOf(providerAccountBillId); if (!b) return;
+    var p = propertyOf(b.propertyId); if (!p) return;
+    var err = document.getElementById('pa-error');
+    var urlRaw = document.getElementById('pa-url').value.trim();
+    if (urlRaw && !safeLoginUrl(urlRaw)){ err.textContent = 'That website doesn\'t look right — paste the link to the provider\'s sign-in page.'; err.hidden = false; return; }
+    var entry = {
+      provider: b.provider, billType: b.billType,
+      description: document.getElementById('pa-description').value.trim(),
+      accountNumber: document.getElementById('pa-account').value.trim(),
+      loginUrl: urlRaw ? safeLoginUrl(urlRaw) : '',
+      username: document.getElementById('pa-username').value.trim(),
+      notes: document.getElementById('pa-notes').value.trim(),
+      updatedAt: new Date().toISOString(), updatedBy: currentProfile ? currentProfile.id : null
+    };
+    var btn = document.getElementById('pa-save'); if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      var info = Object.assign({}, p.listingInfo || {});
+      info.providerAccounts = Object.assign({}, info.providerAccounts || {});
+      info.providerAccounts[providerKey(b.provider)] = entry;
+      p.listingInfo = await propertyService.updateListingInfo(p.id, info);
+      document.getElementById('provider-account-modal').hidden = true;
+      showToast(b.provider + ' account saved for ' + p.name + '.', 'success');
+      render();
+    } catch(e){
+      err.textContent = 'Could not save. ' + friendlyErrorMessage(e); err.hidden = false;
+      if (btn){ btn.disabled = false; btn.textContent = 'Save'; }
+    }
+  }
+  function copyProviderField(billId, field){
+    var b = billOf(billId); if (!b) return;
+    var acc = providerAccountOf(b.propertyId, b.provider) || {};
+    var val = field === 'accountNumber' ? (acc.accountNumber || b.accountNumber || '') : (acc[field] || '');
+    if (!val) return;
+    copyTextReliably(val).then(function(ok){ showToast(ok ? 'Copied.' : 'Couldn\'t copy.', ok ? 'success' : 'error'); });
+  }
+  window.copyProviderField = copyProviderField;
+  window.openProviderAccountModal = openProviderAccountModal;
+  window.saveProviderAccount = saveProviderAccount;
 
   /** Shows the bill's original document (the photo/PDF attached when it was added). A PDF opens
    *  in the full PDF viewer (openPdfViewer — pagination, zoom, search, thumbnails, etc.); a photo
@@ -14617,6 +14729,34 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       return { id:newRuleId(), topic:s.topic, title:s.title, rules: s.rules.map(function(r){ return { id:newRuleId(), level:r[0], text:r[1], note:r[2] }; }) };
     }) };
   }
+  /* ---------- Property state → the tenancy law named in the house rules ----------
+   * The state is kept in the property's listing_info (staff-only details). The house rules say
+   * "...your tenancy agreement and WA law."; when a property's state is set, every "<state> law"
+   * in its rules is rewritten for that state — also when one set of rules is published to every
+   * property, so a Victorian property never ends up saying "WA law". */
+  var STATE_LAW_NAME = { WA:'WA', VIC:'Victorian', NSW:'NSW', QLD:'Queensland', SA:'South Australian', TAS:'Tasmanian', ACT:'ACT', NT:'NT' };
+  var STATE_LAW_RE = /\b(?:WA|W\.A\.|Western Australian|Victorian|VIC|Vic|NSW|New South Wales|Queensland|QLD|South Australian|SA|Tasmanian|TAS|ACT|NT|Northern Territory) law\b/g;
+  function propertyState(p){ return (p && p.listingInfo && p.listingInfo.state) || ''; }
+  function localizeRulesForState(content, state){
+    var name = STATE_LAW_NAME[state];
+    return (content && name) ? content.replace(STATE_LAW_RE, name + ' law') : content;
+  }
+  async function applyStateToHouseRules(propertyId){
+    var p = propertyOf(propertyId), r = houseRulesOf(propertyId);
+    var state = propertyState(p);
+    if (!r || !state) return '';
+    var next = localizeRulesForState(r.content, state);
+    if (next === r.content) return '';
+    try {
+      var saved = await houseRulesService.save({ propertyId: propertyId, content: next, filePath: r.filePath, fileName: r.fileName,
+        updatedByProfileId: currentProfile ? currentProfile.id : null });
+      houseRules = houseRules.filter(function(x){ return x.propertyId !== propertyId; }).concat([saved]);
+      delete rulesDrafts[propertyId]; delete rulesDirty[propertyId];
+      return 'House rules now say "' + STATE_LAW_NAME[state] + ' law".';
+    } catch(err){
+      return 'The house rules couldn\'t be updated for the state: ' + friendlyErrorMessage(err);
+    }
+  }
   function houseRulesOf(propertyId){ return houseRules.find(function(r){ return r.propertyId===propertyId; }) || null; }
 
   function ruleLevelPill(level){
@@ -14851,7 +14991,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         // The attached document is copied too when publishing to all (same file, same rules).
         var fp = pid===propertyId || toAll ? filePath : (prev ? prev.filePath : null);
         var fn = pid===propertyId || toAll ? fileName : (prev ? prev.fileName : null);
-        var saved = await houseRulesService.save({ propertyId: pid, content: content, filePath: fp, fileName: fn,
+        var saved = await houseRulesService.save({ propertyId: pid, content: localizeRulesForState(content, propertyState(propertyOf(pid))), filePath: fp, fileName: fn,
           updatedByProfileId: currentProfile ? currentProfile.id : null });
         houseRules = houseRules.filter(function(r){ return r.propertyId!==pid; }).concat([saved]);
         delete rulesDrafts[pid]; delete rulesDirty[pid];
@@ -14977,6 +15117,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     document.getElementById('property-modal-title').textContent = p ? 'Edit property' : 'Add property';
     document.getElementById('property-name').value = p ? p.name : '';
     document.getElementById('property-address').value = p ? p.address : '';
+    document.getElementById('property-state').value = p ? propertyState(p) : '';
     document.getElementById('property-bedrooms').value = p ? p.bedrooms : '';
     document.getElementById('property-bathrooms').value = p ? p.bathrooms : '';
     document.getElementById('property-notes').value = p ? (p.notes||'') : '';
@@ -15103,17 +15244,27 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
         bankAccountName: leasePaymentMethod==='bank_transfer' ? bankAccountName : '',
         bankBsb: leasePaymentMethod==='bank_transfer' ? bankBsb : '',
         bankAccountNumber: leasePaymentMethod==='bank_transfer' ? bankAccountNumber : '' };
+      var stateVal = document.getElementById('property-state').value || '';
+      var savedProp;
       if (propertyModalEditId){
         var existing = propertyOf(propertyModalEditId);
         var saved = await propertyService.update(propertyModalEditId, draft);
         Object.assign(existing, saved);
+        savedProp = existing;
       } else {
         var created = await propertyService.create(draft);
         properties.push(created);
+        savedProp = created;
+      }
+      var rulesNote = '';
+      if (savedProp && stateVal !== propertyState(savedProp)){
+        var info = Object.assign({}, savedProp.listingInfo || {}, { state: stateVal || null });
+        savedProp.listingInfo = await propertyService.updateListingInfo(savedProp.id, info);
+        rulesNote = await applyStateToHouseRules(savedProp.id);
       }
       refreshStaticSelects();
       closePropertyModal();
-      showToast('Property saved successfully.', 'success');
+      showToast('Property saved successfully.' + (rulesNote ? ' ' + rulesNote : ''), 'success');
       render();
     } catch(err){
       errorEl.textContent = 'Could not save this property. ' + friendlyErrorMessage(err);
