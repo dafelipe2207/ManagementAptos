@@ -8729,11 +8729,11 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       var tip = esc(b.provider) + ': ' + shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) +
         ' • Tenants: ' + ((BILL_STATUS_META[billEffectiveStatus(b)] || [])[1] || billEffectiveStatus(b)) +
         ' • ' + (b.adminPaid ? 'Paid to the provider' : 'NOT paid to the provider yet');
-      // Not paid to the provider yet → the bar is black (green only once YOU have paid it, so a
+      // Not paid to the provider yet → the bar is bright orange (green only once YOU have paid it, so a
       // bill the tenants paid but you haven't doesn't look settled). The tenants' status stays
-      // visible as a coloured line along the bottom of the black bar.
+      // visible as a coloured line along the bottom of the orange bar.
       var bg = b.adminPaid ? billTimelineColorVar(b)
-        : 'linear-gradient(to top, '+billTimelineColorVar(b)+' 0 4px, var(--tl-unpaid) 4px)';
+        : 'linear-gradient(to top, '+billTimelineColorVar(b)+' 0 5px, var(--bg-elevated) 5px 6.5px, var(--tl-unpaid) 6.5px)';
       return '<div class="tl-bar'+(b.adminPaid ? '' : ' tl-unpaid')+'" title="'+tip+'" onclick="event.stopPropagation();location.hash=\'#/bills/'+b.id+'\';" '+
         'style="position:absolute;top:1px;bottom:1px;left:calc('+left+'% + 1.5px);width:calc('+width+'% - 3px);min-width:2px;border-radius:3px;cursor:pointer;background:'+bg+';"></div>';
     }
@@ -8828,7 +8828,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     return '<details class="card collapsible-card"'+(openNow?' open':'')+' ontoggle="__setBillsTimelineOpen(this.open)">'+
       '<summary><span>Invoice timeline</span><span class="cc-hint">'+esc(rangeLabel)+' · tap a property or service to filter · tap a bar to open the bill</span></summary>'+
       rangeControls+
-      '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 10px;">Each bar is a bill across its billing period. Black = you haven\'t paid the provider yet (its bottom line shows what the tenants paid); green only once it\'s paid to the provider. Striped = no bill loaded. Gas gets a separate "rate change" line when its price changes.</p>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 10px;">Each bar is a bill across its billing period. Orange = you haven\'t paid the provider yet (its bottom line shows what the tenants paid); green only once it\'s paid to the provider. Striped = no bill loaded. Gas gets a separate "rate change" line when its price changes.</p>'+
       '<div style="display:flex;gap:8px;margin-bottom:6px;"><span style="width:72px;flex-shrink:0;"></span><div style="position:relative;flex:1;height:12px;">'+monthTicks+'</div></div>'+
       rows.join('')+
       '<div style="margin-top:8px;">'+
