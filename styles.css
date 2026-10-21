@@ -2686,3 +2686,41 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 :root{--tl-unpaid:#f26b1d;}
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){--tl-unpaid:#ff8a3d;} }
 :root[data-theme="dark"]{--tl-unpaid:#ff8a3d;}
+
+/* ---------- Correos: agency emails as cards that open ---------- */
+.mail-list{display:flex;flex-direction:column;gap:10px;}
+.mail-card{border-radius:18px;background:var(--glass, var(--bg-elevated));border:1px solid var(--glass-border, var(--border));box-shadow:var(--glass-shadow, none);overflow:hidden;
+  transition:transform .15s ease, box-shadow .2s ease;}
+.mail-card.action{border-left:4px solid var(--status-due);}
+.mail-card.urgent{border-left:4px solid var(--status-overdue);}
+.mail-card[open]{box-shadow:0 10px 30px rgba(30,45,90,.14);}
+.mail-card summary{list-style:none;display:flex;align-items:center;gap:12px;padding:14px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.mail-card summary::-webkit-details-marker{display:none;}
+.mail-card summary:active{transform:scale(.99);}
+.mail-card summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:18px;}
+.mail-ic{flex-shrink:0;width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:21px;
+  background:color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));}
+.mail-card.urgent .mail-ic{background:var(--status-overdue-bg);}
+.mail-card.action .mail-ic{background:var(--status-due-bg);}
+.mail-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.mail-title{font-size:15px;font-weight:650;line-height:1.3;color:var(--text);}
+.mail-card:not(.unread) .mail-title{font-weight:550;}
+.mail-meta{font-size:12.5px;color:var(--text-dim);}
+.mail-side{flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+.mail-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);display:block;}
+.mail-chev svg{width:16px;height:16px;color:var(--text-faint);transition:transform .2s ease;}
+.mail-card[open] .mail-chev svg{transform:rotate(90deg);}
+.mail-body{padding:0 14px 14px 68px;animation:mailIn .18s ease-out;}
+@keyframes mailIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion: reduce){ .mail-body{animation:none;} .mail-chev svg{transition:none;} }
+.mail-text{margin:0 0 12px;font-size:14.5px;line-height:1.55;color:var(--text);}
+.mail-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-start !important;}
+@media (max-width:520px){
+  .mail-body{padding:0 14px 14px 14px;}
+  .mail-side .badge{font-size:11px !important;padding:2px 8px !important;}
+  .mail-actions .mini-btn{flex:1 1 auto;}
+}
+.mail-text a{color:var(--accent);font-weight:600;overflow-wrap:anywhere;}
+.mail-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.mail-meta .badge{font-size:11px !important;padding:2px 8px !important;}
+.mail-side{flex-direction:row;align-items:center;gap:8px;}

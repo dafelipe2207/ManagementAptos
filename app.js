@@ -1260,6 +1260,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9c.2.6.8 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
     more:'<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
     chevron:'<path d="M9 5l7 7-7 7"/>',
+    mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>',
     sun:'<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>',
     moon:'<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
     camera:'<path d="M4 8h3l1.6-2.4A1 1 0 0 1 9.4 5h5.2a1 1 0 0 1 .8.6L16.8 8H20a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.4"/>',
@@ -1291,6 +1292,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     { hash:'#/properties', label:'Properties', icon:'building', primary:true },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
+    { hash:'#/emails', label:'Correos', icon:'mail', primary:false },
     { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:false },
     { hash:'#/view-as', label:'Tenant view', icon:'eye', primary:false, superAdminOnly:true },
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
@@ -1387,6 +1389,15 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       } else if (existing){
         existing.remove();
       }
+    });
+    // "Correos": unread agency-email alerts
+    var mailCount = myAgencyEmails().filter(function(n){ return !n.isRead; }).length;
+    document.querySelectorAll('a[data-hash="#/emails"]').forEach(function(a){
+      var b = a.querySelector('.nav-badge');
+      if (mailCount > 0){
+        if (!b){ b = document.createElement('span'); b.className = 'nav-badge'; a.appendChild(b); }
+        b.textContent = mailCount > 99 ? '99+' : String(mailCount);
+      } else if (b) b.remove();
     });
   }
 
@@ -10941,6 +10952,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       openCall = isTenantRole() ? 'location.hash=\'#/\'' : 'location.hash=\'#/inspection\'';
     } else if (n.relatedTable === 'house_rules'){
       openCall = 'location.hash=\'#/rules\'';
+    } else if (n.relatedTable === 'agency_email' && !isTenantRole()){
+      openCall = 'openEmailsAt(\''+n.id+'\')';
     } else if (n.relatedTable === 'bill_extractions' && !isTenantRole()){
       openCall = 'openEmailedBills()';
     } else if (n.relatedTable === 'properties' && n.relatedId && !isTenantRole()){
@@ -11122,6 +11135,97 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     }).join('');
     return pageHeader('More', 'Everything else, in one place.') + '<div class="more-list">'+rows+'</div>';
   }
+
+  /* ============ Correos: emails from the real-estate agencies ============
+   * A scheduled check reads the agencies' emails (Gmail) twice a day and saves each one that
+   * matters as a notification for the admins (related_table 'agency_email', body = Spanish
+   * summary + deadline + action, ending with the Gmail link). This page lists them as cards
+   * that open to show everything, with "Abrir correo" straight to the email. */
+  var emailsFilter = 'all', emailsPropertyFilter = 'all', emailsOpenId = null;
+  function myAgencyEmails(){
+    var me = currentProfile ? currentProfile.authUserId : null;
+    return notificationsList.filter(function(n){ return n.relatedTable === 'agency_email' && n.authUserId === me && !n.archivedAt; })
+      .sort(function(a, b){ return String(b.createdAt).localeCompare(String(a.createdAt)); });
+  }
+  function agencyEmailParts(n){
+    var body = n.body || '';
+    var m = body.match(/https?:\/\/mail\.google\.com\/[^\s)]+/) || body.match(/https?:\/\/[^\s)]+/g);
+    var url = m ? (Array.isArray(m) ? m[m.length - 1] : m[0]) : '';
+    var text = url ? body.replace(url, '') : body;
+    text = text.replace(/\s*(?:🔗|Gmail|Link|Enlace|Ver correo|Correo)\s*:?\s*$/i, '').replace(/[\s\-–—·:]+$/, '').trim();
+    var title = n.title || '';
+    var emoji = (title.match(/^(\p{Extended_Pictographic}\uFE0F?)\s*/u) || [])[1] || '✉️';
+    title = title.replace(/^(\p{Extended_Pictographic}\uFE0F?)\s*/u, '');
+    var action = n.category === 'important_notice';
+    var info = /\(informativo\)/i.test(title);
+    if (info) title = title.replace(/\s*\(informativo\)\s*/i, ' ').trim();
+    var urgent = /VENCID|urgente|overdue|atrasad/i.test(n.title || '');
+    return { url: url, text: text, title: title, emoji: emoji, action: action && !info, urgent: urgent };
+  }
+  function renderAgencyEmails(){
+    var all = myAgencyEmails();
+    var counts = { all: all.length, action: 0, info: 0, unread: 0 };
+    all.forEach(function(n){ var pp = agencyEmailParts(n); if (pp.action) counts.action++; else counts.info++; if (!n.isRead) counts.unread++; });
+    var list = all.filter(function(n){
+      var pp = agencyEmailParts(n);
+      if (emailsFilter === 'action' && !pp.action) return false;
+      if (emailsFilter === 'info' && pp.action) return false;
+      if (emailsFilter === 'unread' && n.isRead) return false;
+      if (emailsPropertyFilter !== 'all' && n.propertyId !== emailsPropertyFilter) return false;
+      return true;
+    });
+    function chip(key, label, n){ return '<button type="button" class="chip'+(emailsFilter===key?' active':'')+'" onclick="setEmailsFilter(\''+key+'\')">'+label+(n ? ' <span class="chip-count">'+n+'</span>' : '')+'</button>'; }
+    var propIds = []; all.forEach(function(n){ if (n.propertyId && propIds.indexOf(n.propertyId) < 0) propIds.push(n.propertyId); });
+    var propChips = propIds.length > 1 ? '<div class="filter-chips" style="margin-top:8px;"><button type="button" class="chip'+(emailsPropertyFilter==='all'?' active':'')+'" onclick="setEmailsProperty(\'all\')">Todas</button>'+
+      propIds.map(function(pid){ var p = propertyOf(pid); return '<button type="button" class="chip'+(emailsPropertyFilter===pid?' active':'')+'" onclick="setEmailsProperty(\''+pid+'\')">'+esc(p ? p.name : 'Propiedad')+'</button>'; }).join('')+'</div>' : '';
+    var cards = list.map(function(n){
+      var pp = agencyEmailParts(n), p = n.propertyId ? propertyOf(n.propertyId) : null;
+      var open = emailsOpenId === n.id;
+      var tag = pp.urgent ? badge('overdue', 'Urgente') : pp.action ? badge('due', 'Requiere acción') : badge('neutral', 'Informativo');
+      return '<details class="mail-card'+(n.isRead ? '' : ' unread')+(pp.urgent ? ' urgent' : pp.action ? ' action' : '')+'" id="mail-'+n.id+'"'+(open ? ' open' : '')+' ontoggle="onMailToggle(this, \''+n.id+'\')">'+
+        '<summary><span class="mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
+          '<span class="mail-main"><span class="mail-title">'+esc(pp.title)+'</span>'+
+          '<span class="mail-meta">'+tag+'<span>'+(p ? esc(p.name)+' · ' : '')+esc(actorWhen(n.createdAt))+'</span></span></span>'+
+          '<span class="mail-side">'+(n.isRead ? '' : '<i class="mail-dot" aria-label="Sin leer"></i>')+'<span class="mail-chev">'+svg('chevron')+'</span></span>'+
+        '</summary>'+
+        '<div class="mail-body">'+
+          '<p class="mail-text">'+esc(pp.text).replace(/https?:\/\/[^\s<)]+[^\s<).,;]/g, function(u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+u.replace(/^https?:\/\//, '').slice(0, 42)+(u.length > 50 ? '…' : '')+'</a>'; }).replace(/\n/g, '<br>')+'</p>'+
+          '<div class="mail-actions">'+
+            (pp.url ? '<button type="button" class="mini-btn primary" onclick="openAgencyEmail(\''+n.id+'\')">Abrir correo</button>' : '')+
+            (p ? '<button type="button" class="mini-btn" onclick="location.hash=\'#/properties/'+p.id+'\'">View property</button>' : '')+
+            '<button type="button" class="mini-btn" onclick="archiveNotification(\''+n.id+'\')">Archive</button>'+
+          '</div>'+
+        '</div></details>';
+    }).join('');
+    var empty = '<div class="card" style="text-align:center;padding:28px 18px;"><div style="font-size:34px;">📭</div>'+
+      '<p style="margin:8px 0 0;font-size:14px;color:var(--text-dim);">'+(all.length ? 'Nada con este filtro.' : 'Todavía no hay correos de las agencias. Se revisan todos los días a las 9 am y 2 pm.')+'</p></div>';
+    return pageHeaderIcon('Correos', 'Lo que mandan las agencias, revisado todos los días a las 9 am y 2 pm. Toca uno para verlo completo y abrir el correo.', 'mail', 'documents') +
+      '<div><div class="filter-chips">'+chip('all', 'Todos', counts.all)+chip('action', 'Requieren acción', counts.action)+chip('unread', 'Sin leer', counts.unread)+chip('info', 'Informativos', counts.info)+'</div>'+propChips+'</div>'+
+      (list.length ? '<div class="mail-list">'+cards+'</div>' : empty);
+  }
+  window.openEmailsAt = function(id){
+    emailsOpenId = id; emailsFilter = 'all'; emailsPropertyFilter = 'all';
+    if (location.hash === '#/emails') render(); else location.hash = '#/emails';
+    setTimeout(function(){ var el = document.getElementById('mail-' + id); if (el) el.scrollIntoView({ behavior:'smooth', block:'center' }); }, 120);
+  };
+  window.setEmailsFilter = function(k){ emailsFilter = k; renderPreservingScroll(); };
+  window.setEmailsProperty = function(k){ emailsPropertyFilter = k; renderPreservingScroll(); };
+  window.onMailToggle = function(el, id){
+    if (!el.open){ if (emailsOpenId === id) emailsOpenId = null; return; }
+    emailsOpenId = id;
+    var n = notificationsList.find(function(x){ return x.id === id; });
+    if (n && !n.isRead){
+      n.isRead = true; el.classList.remove('unread');
+      var dot = el.querySelector('.mail-dot'); if (dot) dot.remove();
+      updateNotifNavBadge();
+      notificationService.markRead(id).catch(function(){ n.isRead = false; });
+    }
+  };
+  window.openAgencyEmail = function(id){
+    var n = notificationsList.find(function(x){ return x.id === id; }); if (!n) return;
+    var url = agencyEmailParts(n).url; if (!url) return;
+    var w = window.open(url, '_blank', 'noopener'); if (!w) location.href = url;
+  };
 
   function accessDeniedPage(){
     return pageHeader('Access denied', "You don't have permission to view this page.") +
@@ -16252,6 +16356,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     '#/rules': routeToOperationsTab('#/rules', 'rules'),
     '#/notifications': function(){ return isTenantRole() ? renderNotifications() : renderNotificationsStaff(); },
     '#/view-as': renderViewAsPicker,
+    '#/emails': renderAgencyEmails,
     '#/users': renderUsers,
     '#/audit-log': renderAuditLog,
     '#/settings': renderSettings,
@@ -18530,7 +18635,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     [/history/, 'clock'], [/active tenants/, 'list'],
     [/calculate/, 'calc'], [/^start move-out/, 'door'],
     [/^email/, 'mail'], [/^regenerate/, 'refresh'],
-    [/^publish/, 'megaphone'], [/add to queue/, 'queue'],
+    [/^publish/, 'megaphone'], [/add to queue/, 'queue'], [/^abrir correo|^open email/, 'mail'],
     [/maintenance/, 'wrench'], [/cleaning/, 'broom'], [/bin out/, 'bin'],
     [/^add comment/, 'comment'], [/discount|deduction/, 'tag'],
     [/starter set|start blank/, 'sparkle'],
