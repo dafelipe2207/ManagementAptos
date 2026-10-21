@@ -22,6 +22,9 @@ function fromRow(r) {
     linkedId: r.linked_id || null,
     linkedAuto: !!r.linked_auto,
     invoiceDoc: r.invoice_doc || null,
+    status: r.status || null,
+    statusChangedAt: r.status_changed_at || null,
+    statusByProfileId: r.status_by_profile_id || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at
   };
@@ -76,6 +79,22 @@ export async function link(dedupKey, target, byProfileId, propertyId) {
   } else {
     row.linked_table = null; row.linked_id = null; row.bill_id = null;
   }
+  const { data, error } = await supabase.from('agency_email_cases')
+    .upsert(row, { onConflict: 'dedup_key' }).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
+/** Sets the follow-up status of this email (pendiente_revisar, revisado, ot_creada, enviado_rs,
+ *  esperando_respuesta, visita_programada, pendiente_pago, resuelto, sin_accion). */
+export async function setStatus(dedupKey, status, byProfileId, propertyId) {
+  const row = {
+    dedup_key: dedupKey,
+    status,
+    status_changed_at: new Date().toISOString(),
+    status_by_profile_id: byProfileId || null
+  };
+  if (propertyId) row.property_id = propertyId;
   const { data, error } = await supabase.from('agency_email_cases')
     .upsert(row, { onConflict: 'dedup_key' }).select().single();
   if (error) throw error;

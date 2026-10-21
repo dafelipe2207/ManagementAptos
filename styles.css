@@ -2753,3 +2753,37 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .ar-actions{justify-content:flex-start !important;}
 .ar-edit{margin-top:14px;border-top:1px solid var(--glass-edge, var(--border));padding-top:10px;}
 .ar-edit summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text-dim);}
+
+/* Correos — follow-up status chip / select */
+.mail-st{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;
+  white-space:nowrap;background:var(--st-bg, rgba(120,120,128,.14));color:var(--st-fg, var(--text-dim));}
+.st-pendiente_revisar{--st-bg:rgba(255,59,48,.13);--st-fg:#d70015;}
+.st-revisado{--st-bg:rgba(88,86,214,.13);--st-fg:#4b49c4;}
+.st-ot_creada{--st-bg:rgba(255,149,0,.15);--st-fg:#b25f00;}
+.st-enviado_rs{--st-bg:rgba(0,122,255,.13);--st-fg:#0062cc;}
+.st-esperando_respuesta{--st-bg:rgba(255,204,0,.2);--st-fg:#8a6d00;}
+.st-visita_programada{--st-bg:rgba(48,176,199,.15);--st-fg:#167f92;}
+.st-pendiente_pago{--st-bg:rgba(175,82,222,.14);--st-fg:#8e3bb8;}
+.st-resuelto{--st-bg:rgba(52,199,89,.15);--st-fg:#1d8a3c;}
+.st-sin_accion{--st-bg:rgba(120,120,128,.14);--st-fg:var(--text-dim);}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .st-pendiente_revisar{--st-fg:#ff6961;}
+  :root:not([data-theme="light"]) .st-revisado{--st-fg:#a5a3ff;}
+  :root:not([data-theme="light"]) .st-ot_creada{--st-fg:#ffb340;}
+  :root:not([data-theme="light"]) .st-enviado_rs{--st-fg:#64aaff;}
+  :root:not([data-theme="light"]) .st-esperando_respuesta{--st-fg:#ffd60a;}
+  :root:not([data-theme="light"]) .st-visita_programada{--st-fg:#70d7e8;}
+  :root:not([data-theme="light"]) .st-pendiente_pago{--st-fg:#da8fff;}
+  :root:not([data-theme="light"]) .st-resuelto{--st-fg:#30d158;}
+}
+:root[data-theme="dark"] .st-pendiente_revisar{--st-fg:#ff6961;}
+:root[data-theme="dark"] .st-revisado{--st-fg:#a5a3ff;}
+:root[data-theme="dark"] .st-ot_creada{--st-fg:#ffb340;}
+:root[data-theme="dark"] .st-enviado_rs{--st-fg:#64aaff;}
+:root[data-theme="dark"] .st-esperando_respuesta{--st-fg:#ffd60a;}
+:root[data-theme="dark"] .st-visita_programada{--st-fg:#70d7e8;}
+:root[data-theme="dark"] .st-pendiente_pago{--st-fg:#da8fff;}
+:root[data-theme="dark"] .st-resuelto{--st-fg:#30d158;}
+.mail-st-select{font-weight:650;background-color:var(--st-bg);color:var(--st-fg);border-color:transparent;}
+.mail-st-select option{color:var(--text);background:var(--bg-elevated);font-weight:500;}
+.mail-chips-k{font-size:12px;font-weight:600;color:var(--text-dim);align-self:center;margin-right:2px;}

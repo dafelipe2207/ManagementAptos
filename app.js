@@ -41,7 +41,7 @@ import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
-import * as agencyEmailService from './services/agencyEmailService.js?v=3';
+import * as agencyEmailService from './services/agencyEmailService.js?v=4';
 import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
 
 (function(){
@@ -11222,7 +11222,32 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
    * matters as a notification for the admins (related_table 'agency_email', body = Spanish
    * summary + deadline + action, ending with the Gmail link). This page lists them as cards
    * that open to show everything, with "Abrir correo" straight to the email. */
-  var emailsFilter = 'all', emailsPropertyFilter = 'all', emailsOpenId = null;
+  var emailsFilter = 'all', emailsPropertyFilter = 'all', emailsOpenId = null, emailsStatusFilter = 'all';
+  /** Follow-up statuses of an agency email, in workflow order. `closed` ones drop out of "Abiertos". */
+  var AGENCY_STATUSES = [
+    { key:'pendiente_revisar',   label:'Pendiente por revisar',  short:'Por revisar',   ic:'🔴' },
+    { key:'revisado',            label:'Revisado',               short:'Revisado',      ic:'👀' },
+    { key:'ot_creada',           label:'OT creada',              short:'OT creada',     ic:'🛠️' },
+    { key:'enviado_rs',          label:'Solicitud enviada al RS', short:'Enviado al RS', ic:'📤' },
+    { key:'esperando_respuesta', label:'Esperando correo / respuesta', short:'Esperando respuesta', ic:'⏳' },
+    { key:'visita_programada',   label:'Visita programada',      short:'Visita programada', ic:'📅' },
+    { key:'pendiente_pago',      label:'Pendiente de pago',      short:'Pendiente de pago', ic:'💳' },
+    { key:'resuelto',            label:'Resuelto',               short:'Resuelto',      ic:'✅', closed:true },
+    { key:'sin_accion',          label:'Sin acción (informativo)', short:'Sin acción',  ic:'➖', closed:true }
+  ];
+  function agencyStatusInfo(key){ return AGENCY_STATUSES.find(function(x){ return x.key === key; }) || AGENCY_STATUSES[0]; }
+  /** The email's status: the case's, else "por revisar" for ones needing action and "sin acción"
+   *  for informative ones (new case rows default to por revisar, so that default is ignored for them). */
+  function agencyEmailStatus(n){
+    var c = agencyCaseOf(n), info = !agencyEmailParts(n).action;
+    var st = c && c.status ? c.status : null;
+    if (!st || (info && st === 'pendiente_revisar' && !c.statusChangedAt)) st = info ? 'sin_accion' : 'pendiente_revisar';
+    return st;
+  }
+  function agencyStatusTag(key){
+    var s = agencyStatusInfo(key);
+    return '<span class="mail-st st-'+s.key+'" title="Estado">'+s.ic+' '+esc(s.short)+'</span>';
+  }
   var agencyCases = [], agencyLastCheck = null, staffDirectory = [];
   function myAgencyEmails(){
     var me = currentProfile ? currentProfile.authUserId : null;
@@ -11247,6 +11272,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   function agencyEmailUpdatedAt(n){
     var c = agencyCaseOf(n), u = n.createdAt;
     if (c && c.updatedAt && String(c.updatedAt) > String(u)) u = c.updatedAt;
+    if (c && c.statusChangedAt && String(c.statusChangedAt) > String(u)) u = c.statusChangedAt;
     return u;
   }
   function staffName(id){
@@ -11338,13 +11364,15 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   function renderAgencyEmails(){
     var all = myAgencyEmails();
     var myProfileId = currentProfile ? currentProfile.id : null;
-    var counts = { all: all.length, action: 0, info: 0, unread: 0, mine: 0, unassigned: 0 };
+    var counts = { all: all.length, action: 0, info: 0, unread: 0, mine: 0, unassigned: 0 }, stCounts = {};
     all.forEach(function(n){
       var pp = agencyEmailParts(n), c = agencyCaseOf(n), who = c ? c.assignedProfileId : null;
       if (pp.action) counts.action++; else counts.info++;
       if (!n.isRead) counts.unread++;
       if (who && who === myProfileId && pp.action) counts.mine++;
       if (!who && pp.action) counts.unassigned++;
+      var st = agencyEmailStatus(n); stCounts[st] = (stCounts[st] || 0) + 1;
+      if (!agencyStatusInfo(st).closed) stCounts.open = (stCounts.open || 0) + 1;
     });
     var list = all.filter(function(n){
       var pp = agencyEmailParts(n), c = agencyCaseOf(n), who = c ? c.assignedProfileId : null;
@@ -11354,12 +11382,19 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       if (emailsFilter === 'mine' && (!pp.action || !who || who !== myProfileId)) return false;
       if (emailsFilter === 'unassigned' && (who || !pp.action)) return false;
       if (emailsPropertyFilter !== 'all' && n.propertyId !== emailsPropertyFilter) return false;
+      if (emailsStatusFilter !== 'all'){
+        var est = agencyEmailStatus(n);
+        if (emailsStatusFilter === 'open' ? agencyStatusInfo(est).closed : est !== emailsStatusFilter) return false;
+      }
       return true;
     });
     function chip(key, label, n){ return '<button type="button" class="chip'+(emailsFilter===key?' active':'')+'" onclick="setEmailsFilter(\''+key+'\')">'+label+(n ? ' <span class="chip-count">'+n+'</span>' : '')+'</button>'; }
     var propIds = []; all.forEach(function(n){ if (n.propertyId && propIds.indexOf(n.propertyId) < 0) propIds.push(n.propertyId); });
     var propChips = propIds.length > 1 ? '<div class="filter-chips" style="margin-top:8px;"><button type="button" class="chip'+(emailsPropertyFilter==='all'?' active':'')+'" onclick="setEmailsProperty(\'all\')">Todas</button>'+
       propIds.map(function(pid){ var p = propertyOf(pid); return '<button type="button" class="chip'+(emailsPropertyFilter===pid?' active':'')+'" onclick="setEmailsProperty(\''+pid+'\')">'+esc(p ? p.name : 'Propiedad')+'</button>'; }).join('')+'</div>' : '';
+    function stChip(key, label, n){ return '<button type="button" class="chip'+(emailsStatusFilter===key?' active':'')+'" onclick="setEmailsStatus(\''+key+'\')">'+label+(n ? ' <span class="chip-count">'+n+'</span>' : '')+'</button>'; }
+    var statusChips = all.length ? '<div class="filter-chips mail-st-chips" style="margin-top:8px;"><span class="mail-chips-k">Estado</span>'+stChip('all', 'Todos', 0)+stChip('open', 'Abiertos', stCounts.open || 0)+
+      AGENCY_STATUSES.filter(function(s){ return stCounts[s.key] || emailsStatusFilter === s.key; }).map(function(s){ return stChip(s.key, s.ic+' '+esc(s.short), stCounts[s.key] || 0); }).join('')+'</div>' : '';
     var canAssign = canAssignAgencyEmails();
     var cards = list.map(function(n){
       var pp = agencyEmailParts(n), p = n.propertyId ? propertyOf(n.propertyId) : null;
@@ -11419,16 +11454,26 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       } else if (link){
         linkRow = '<div class="mail-fact"><span class="mail-fact-k">Asociado a</span><span>'+esc(link.label)+'</span><button type="button" class="mini-btn" onclick="'+link.open+'">Abrir</button></div>';
       }
+      var st = agencyEmailStatus(n), stRow;
+      var stSince = c && c.statusChangedAt ? '<span class="mail-fact-sub">desde '+esc(whenEs(c.statusChangedAt))+(c.statusByProfileId && staffName(c.statusByProfileId) ? ' · '+esc(staffName(c.statusByProfileId)) : '')+'</span>' : '';
+      if (canAssign){
+        stRow = '<div class="mail-fact"><span class="mail-fact-k">Estado</span>'+
+          '<select class="mail-assign mail-st-select st-'+st+'" aria-label="Estado del seguimiento" onchange="setAgencyEmailStatus(\''+n.id+'\', this.value)">'+
+            AGENCY_STATUSES.map(function(s){ return '<option value="'+s.key+'"'+(s.key === st ? ' selected' : '')+'>'+s.ic+' '+esc(s.label)+'</option>'; }).join('')+
+          '</select>'+stSince+'</div>';
+      } else {
+        stRow = '<div class="mail-fact"><span class="mail-fact-k">Estado</span><span>'+agencyStatusTag(st)+'</span>'+stSince+'</div>';
+      }
       var upd = agencyEmailUpdatedAt(n);
       return '<details class="mail-card'+(n.isRead ? '' : ' unread')+(pp.urgent ? ' urgent' : pp.action ? ' action' : '')+'" id="mail-'+n.id+'"'+(open ? ' open' : '')+' ontoggle="onMailToggle(this, \''+n.id+'\')">'+
         '<summary><span class="mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
           '<span class="mail-main"><span class="mail-title">'+esc(pp.title)+'</span>'+
-          '<span class="mail-meta">'+tag+billTag+linkTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
+          '<span class="mail-meta">'+agencyStatusTag(st)+tag+billTag+linkTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
           '<span class="mail-side">'+(n.isRead ? '' : '<i class="mail-dot" aria-label="Sin leer"></i>')+'<span class="mail-chev">'+svg('chevron')+'</span></span>'+
         '</summary>'+
         '<div class="mail-body">'+
           '<p class="mail-text">'+esc(pp.text).replace(/https?:\/\/[^\s<)]+[^\s<).,;]/g, function(u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+u.replace(/^https?:\/\//, '').slice(0, 42)+(u.length > 50 ? '…' : '')+'</a>'; }).replace(/\n/g, '<br>')+'</p>'+
-          '<div class="mail-facts">'+billRow+linkRow+assignRow+
+          '<div class="mail-facts">'+stRow+billRow+linkRow+assignRow+
             '<div class="mail-fact"><span class="mail-fact-k">Actualizado</span><span>'+esc(whenEs(upd))+' <span class="mail-fact-sub">('+esc(agoEs(upd))+')</span>'+
               (upd !== n.createdAt ? ' <span class="mail-fact-sub">· llegó '+esc(whenEs(n.createdAt))+'</span>' : '')+'</span></div>'+
           '</div>'+
@@ -11447,7 +11492,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       '<p style="margin:8px 0 0;font-size:14px;color:var(--text-dim);">'+(all.length ? 'Nada con este filtro.' : 'Todavía no hay correos de las agencias. Se revisan todos los días a las 9 am y 2 pm.')+'</p></div>';
     return pageHeaderIcon('Correos', 'Lo que mandan las agencias, revisado todos los días a las 9 am y 2 pm. Toca uno para verlo completo, asignar un responsable y abrir el correo.', 'mail', 'documents') +
       lastLine +
-      '<div><div class="filter-chips">'+chip('all', 'Todos', counts.all)+chip('action', 'Requieren acción', counts.action)+chip('unassigned', 'Sin responsable', counts.unassigned)+chip('mine', 'Míos', counts.mine)+chip('unread', 'Sin leer', counts.unread)+chip('info', 'Informativos', counts.info)+'</div>'+propChips+'</div>'+
+      '<div><div class="filter-chips">'+chip('all', 'Todos', counts.all)+chip('action', 'Requieren acción', counts.action)+chip('unassigned', 'Sin responsable', counts.unassigned)+chip('mine', 'Míos', counts.mine)+chip('unread', 'Sin leer', counts.unread)+chip('info', 'Informativos', counts.info)+'</div>'+statusChips+propChips+'</div>'+
       (list.length ? '<div class="mail-list">'+cards+'</div>' : empty);
   }
   window.linkAgencyEmail = async function(id, value){
@@ -11492,12 +11537,29 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     }
   };
   window.openEmailsAt = function(id){
-    emailsOpenId = id; emailsFilter = 'all'; emailsPropertyFilter = 'all';
+    emailsOpenId = id; emailsFilter = 'all'; emailsPropertyFilter = 'all'; emailsStatusFilter = 'all';
     if (location.hash === '#/emails') render(); else location.hash = '#/emails';
     setTimeout(function(){ var el = document.getElementById('mail-' + id); if (el) el.scrollIntoView({ behavior:'smooth', block:'center' }); }, 120);
   };
   window.setEmailsFilter = function(k){ emailsFilter = k; renderPreservingScroll(); };
   window.setEmailsProperty = function(k){ emailsPropertyFilter = k; renderPreservingScroll(); };
+  window.setEmailsStatus = function(k){ emailsStatusFilter = k; renderPreservingScroll(); };
+  window.setAgencyEmailStatus = async function(id, status){
+    var n = notificationsList.find(function(x){ return x.id === id; });
+    if (!n || !n.dedupKey) { showToast('Este correo no se puede actualizar.', 'error'); return; }
+    try {
+      var saved = await agencyEmailService.setStatus(n.dedupKey, status, currentProfile ? currentProfile.id : null, n.propertyId);
+      var i = agencyCases.findIndex(function(c){ return c.dedupKey === saved.dedupKey; });
+      if (i > -1) agencyCases[i] = saved; else agencyCases.push(saved);
+      emailsOpenId = id;
+      showToast('Estado: ' + agencyStatusInfo(status).label + '.', 'success');
+      renderPreservingScroll();
+    } catch (e) {
+      console.error('agency email status', e);
+      showToast('No se pudo guardar el estado: ' + (e.message || e), 'error');
+      renderPreservingScroll();
+    }
+  };
   window.onMailToggle = function(el, id){
     if (!el.open){ if (emailsOpenId === id) emailsOpenId = null; return; }
     emailsOpenId = id;
@@ -12068,6 +12130,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     try {
       var saved = await maintenanceService.update(m.id, draft);
       Object.assign(m, saved);
+      // Agency emails linked to this request move to "Solicitud enviada al RS" (if still earlier).
+      var early = ['pendiente_revisar', 'revisado', 'ot_creada'];
+      agencyCases.filter(function(c){ return c.linkedTable === 'maintenance_requests' && c.linkedId === m.id && early.indexOf(c.status || 'pendiente_revisar') > -1; })
+        .forEach(function(c){
+          agencyEmailService.setStatus(c.dedupKey, 'enviado_rs', currentProfile ? currentProfile.id : null, m.propertyId)
+            .then(function(s2){ var k = agencyCases.indexOf(c); if (k > -1) agencyCases[k] = s2; })
+            .catch(function(e){ console.warn('agency case status', e); });
+        });
       document.getElementById('agency-report-modal').hidden = true;
       closeMaintenanceModal();
       showToast(note, 'success');
