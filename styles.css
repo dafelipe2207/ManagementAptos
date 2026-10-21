@@ -2743,3 +2743,6 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
   background:var(--bg-elevated);color:var(--text);min-height:36px;max-width:100%;}
 .mail-assign:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
 @media (max-width:520px){ .mail-fact-k{flex-basis:100%;} }
+.mail-link-tag{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;
+  background:color-mix(in srgb, var(--text) 7%, transparent);color:var(--text);}
+.mail-link-select{max-width:min(100%, 320px);}

@@ -63,3 +63,12 @@ revoke all on function public.agency_email_staff() from public, anon;
 grant execute on function public.agency_email_staff() to authenticated;
 grant select, insert, update on public.agency_email_cases to authenticated;
 grant select on public.agency_email_checks to authenticated;
+
+-- What each agency email is about: a maintenance request or a real-estate inspection in the app
+-- (bills use bill_id above). linked_auto = set by the scheduled check (or backfill) rather than
+-- chosen by an admin, so the app can say "asociado automáticamente".
+alter table public.agency_email_cases
+  add column if not exists linked_table text check (linked_table in ('maintenance_requests','real_estate_inspections')),
+  add column if not exists linked_id uuid,
+  add column if not exists linked_auto boolean not null default false,
+  add column if not exists linked_by_profile_id uuid references public.profiles(id) on delete set null;

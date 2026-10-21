@@ -41,7 +41,7 @@ import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
-import * as agencyEmailService from './services/agencyEmailService.js?v=1';
+import * as agencyEmailService from './services/agencyEmailService.js?v=2';
 
 (function(){
   "use strict";
@@ -11221,6 +11221,40 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=1';
     var urgent = /VENCID|urgente|overdue|atrasad/i.test(n.title || '');
     return { url: url, text: text, title: title, emoji: emoji, action: action && !info, urgent: urgent };
   }
+  /** What this email is about in the app (maintenance request / real-estate inspection), or null. */
+  function agencyEmailLink(n){
+    var c = agencyCaseOf(n);
+    if (!c || !c.linkedTable || !c.linkedId) return null;
+    if (c.linkedTable === 'maintenance_requests'){
+      var m = maintenanceRequests.find(function(x){ return x.id === c.linkedId; });
+      return m ? { table: c.linkedTable, id: m.id, label: '🔧 ' + m.title + ' · ' + agencyMaintStatus(m.status), open: 'openMaintenanceModal(\''+m.id+'\')', auto: c.linkedAuto } : null;
+    }
+    if (c.linkedTable === 'real_estate_inspections'){
+      var i = realEstateInspections.find(function(x){ return x.id === c.linkedId; });
+      return i ? { table: c.linkedTable, id: i.id, label: '🏢 Inspección ' + shortDate(i.date), open: 'location.hash=\'#/inspection\'', auto: c.linkedAuto } : null;
+    }
+    return null;
+  }
+  function agencyMaintStatus(st){
+    return ({ reported:'reportado', assigned:'asignado', in_progress:'en curso', waiting:'en espera', completed:'completado', verified:'verificado', closed:'cerrado', cancelled:'cancelado', rejected:'rechazado' })[st] || String(st || '').replace(/_/g, ' ');
+  }
+  /** Options for "Asociado a": this property's maintenance requests (newest first), real-estate
+   *  inspections and bills (last 6 months). Value is "table:id". */
+  function agencyLinkOptions(n){
+    var pid = n.propertyId, opts = [];
+    if (!pid) return opts;
+    maintenanceRequests.filter(function(m){ return m.propertyId === pid; })
+      .sort(function(a, b){ return String(b.createdAt).localeCompare(String(a.createdAt)); })
+      .forEach(function(m){ opts.push(['maintenance_requests:' + m.id, '🔧 ' + m.title + ' (' + shortDate(String(m.createdAt).slice(0, 10)) + ', ' + agencyMaintStatus(m.status) + ')', 'Mantenimiento']); });
+    realEstateInspections.filter(function(i){ return i.propertyId === pid; })
+      .sort(function(a, b){ return String(b.date).localeCompare(String(a.date)); })
+      .forEach(function(i){ opts.push(['real_estate_inspections:' + i.id, '🏢 Inspección ' + shortDate(i.date), 'Inspecciones']); });
+    var since = new Date(); since.setMonth(since.getMonth() - 6); since = toIsoLocal(since);
+    bills.filter(function(b){ return b.propertyId === pid && String(b.issueDate || b.dueDate || '') >= since; })
+      .sort(function(a, b){ return String(b.issueDate || b.dueDate).localeCompare(String(a.issueDate || a.dueDate)); })
+      .forEach(function(b){ opts.push(['bills:' + b.id, '🧾 ' + (b.provider || 'Factura') + (b.invoiceNumber ? ' #' + b.invoiceNumber : '') + ' · ' + money(b.amount), 'Facturas']); });
+    return opts;
+  }
   function renderAgencyEmails(){
     var all = myAgencyEmails();
     var myProfileId = currentProfile ? currentProfile.id : null;
@@ -11287,16 +11321,34 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=1';
       } else if (who){
         assignRow = '<div class="mail-fact"><span class="mail-fact-k">Responsable</span><span><b>'+esc(whoName)+'</b></span></div>';
       }
+      // "Asociado a": the maintenance request / inspection / bill this email is about.
+      var link = agencyEmailLink(n), linkTag = '', linkRow = '';
+      var linkedBill = !link && c && c.billId ? bills.find(function(b){ return b.id === c.billId; }) : null;
+      var curVal = link ? link.table + ':' + link.id : linkedBill ? 'bills:' + linkedBill.id : '';
+      if (link) linkTag = '<span class="mail-link-tag" title="Asociado a">🔗 ' + esc(link.table === 'maintenance_requests' ? 'Mantenimiento' : 'Inspección') + '</span>';
+      if (canAssign && n.propertyId){
+        var groups = {}, order = [];
+        agencyLinkOptions(n).forEach(function(o){ if (!groups[o[2]]){ groups[o[2]] = []; order.push(o[2]); } groups[o[2]].push(o); });
+        linkRow = '<div class="mail-fact"><span class="mail-fact-k">Asociado a</span>'+
+          '<select class="mail-assign mail-link-select" aria-label="Asociar este correo" onchange="linkAgencyEmail(\''+n.id+'\', this.value)">'+
+            '<option value=""'+(curVal ? '' : ' selected')+'>Sin asociar</option>'+
+            order.map(function(g){ return '<optgroup label="'+esc(g)+'">'+groups[g].map(function(o){ return '<option value="'+o[0]+'"'+(o[0] === curVal ? ' selected' : '')+'>'+esc(o[1])+'</option>'; }).join('')+'</optgroup>'; }).join('')+
+          '</select>'+
+          (link ? '<button type="button" class="mini-btn" onclick="'+link.open+'">Abrir</button>'+(link.auto ? '<span class="mail-fact-sub">asociado automáticamente — cámbialo si no es</span>' : '') : '')+
+        '</div>';
+      } else if (link){
+        linkRow = '<div class="mail-fact"><span class="mail-fact-k">Asociado a</span><span>'+esc(link.label)+'</span><button type="button" class="mini-btn" onclick="'+link.open+'">Abrir</button></div>';
+      }
       var upd = agencyEmailUpdatedAt(n);
       return '<details class="mail-card'+(n.isRead ? '' : ' unread')+(pp.urgent ? ' urgent' : pp.action ? ' action' : '')+'" id="mail-'+n.id+'"'+(open ? ' open' : '')+' ontoggle="onMailToggle(this, \''+n.id+'\')">'+
         '<summary><span class="mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
           '<span class="mail-main"><span class="mail-title">'+esc(pp.title)+'</span>'+
-          '<span class="mail-meta">'+tag+billTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
+          '<span class="mail-meta">'+tag+billTag+linkTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
           '<span class="mail-side">'+(n.isRead ? '' : '<i class="mail-dot" aria-label="Sin leer"></i>')+'<span class="mail-chev">'+svg('chevron')+'</span></span>'+
         '</summary>'+
         '<div class="mail-body">'+
           '<p class="mail-text">'+esc(pp.text).replace(/https?:\/\/[^\s<)]+[^\s<).,;]/g, function(u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+u.replace(/^https?:\/\//, '').slice(0, 42)+(u.length > 50 ? '…' : '')+'</a>'; }).replace(/\n/g, '<br>')+'</p>'+
-          '<div class="mail-facts">'+billRow+assignRow+
+          '<div class="mail-facts">'+billRow+linkRow+assignRow+
             '<div class="mail-fact"><span class="mail-fact-k">Actualizado</span><span>'+esc(whenEs(upd))+' <span class="mail-fact-sub">('+esc(agoEs(upd))+')</span>'+
               (upd !== n.createdAt ? ' <span class="mail-fact-sub">· llegó '+esc(whenEs(n.createdAt))+'</span>' : '')+'</span></div>'+
           '</div>'+
@@ -11318,6 +11370,24 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=1';
       '<div><div class="filter-chips">'+chip('all', 'Todos', counts.all)+chip('action', 'Requieren acción', counts.action)+chip('unassigned', 'Sin responsable', counts.unassigned)+chip('mine', 'Míos', counts.mine)+chip('unread', 'Sin leer', counts.unread)+chip('info', 'Informativos', counts.info)+'</div>'+propChips+'</div>'+
       (list.length ? '<div class="mail-list">'+cards+'</div>' : empty);
   }
+  window.linkAgencyEmail = async function(id, value){
+    var n = notificationsList.find(function(x){ return x.id === id; });
+    if (!n || !n.dedupKey) { showToast('Este correo no se puede asociar.', 'error'); return; }
+    var target = null;
+    if (value){ var parts = value.split(':'); target = { table: parts[0], id: parts[1] }; }
+    try {
+      var saved = await agencyEmailService.link(n.dedupKey, target, currentProfile ? currentProfile.id : null, n.propertyId);
+      var i = agencyCases.findIndex(function(c){ return c.dedupKey === saved.dedupKey; });
+      if (i > -1) agencyCases[i] = saved; else agencyCases.push(saved);
+      emailsOpenId = id;
+      showToast(target ? 'Correo asociado.' : 'Quedó sin asociar.', 'success');
+      renderPreservingScroll();
+    } catch (e) {
+      console.error('link agency email', e);
+      showToast('No se pudo asociar: ' + (e.message || e), 'error');
+      renderPreservingScroll();
+    }
+  };
   window.assignAgencyEmail = async function(id, profileId){
     var n = notificationsList.find(function(x){ return x.id === id; });
     if (!n || !n.dedupKey) { showToast('Este correo no se puede asignar.', 'error'); return; }

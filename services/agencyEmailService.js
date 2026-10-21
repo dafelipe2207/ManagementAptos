@@ -18,6 +18,9 @@ function fromRow(r) {
     assignedProfileId: r.assigned_profile_id || null,
     assignedAt: r.assigned_at || null,
     assignedByProfileId: r.assigned_by_profile_id || null,
+    linkedTable: r.linked_table || null,
+    linkedId: r.linked_id || null,
+    linkedAuto: !!r.linked_auto,
     createdAt: r.created_at,
     updatedAt: r.updated_at
   };
@@ -53,6 +56,25 @@ export async function assign(dedupKey, profileId, byProfileId, propertyId) {
     assigned_by_profile_id: byProfileId || null
   };
   if (propertyId) row.property_id = propertyId;
+  const { data, error } = await supabase.from('agency_email_cases')
+    .upsert(row, { onConflict: 'dedup_key' }).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
+/** Ties the email to what it is about in the app. `target` is { table, id } with table one of
+ *  'maintenance_requests' | 'real_estate_inspections' | 'bills', or null to clear. Bills go in
+ *  bill_id (so the invoice status keeps working); the others in linked_table/linked_id. */
+export async function link(dedupKey, target, byProfileId, propertyId) {
+  const row = { dedup_key: dedupKey, linked_auto: false, linked_by_profile_id: byProfileId || null };
+  if (propertyId) row.property_id = propertyId;
+  if (target && target.table === 'bills') {
+    row.bill_id = target.id; row.linked_table = null; row.linked_id = null;
+  } else if (target) {
+    row.linked_table = target.table; row.linked_id = target.id;
+  } else {
+    row.linked_table = null; row.linked_id = null; row.bill_id = null;
+  }
   const { data, error } = await supabase.from('agency_email_cases')
     .upsert(row, { onConflict: 'dedup_key' }).select().single();
   if (error) throw error;
