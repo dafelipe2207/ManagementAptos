@@ -41,6 +41,7 @@ import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
+import * as agencyEmailService from './services/agencyEmailService.js?v=1';
 
 (function(){
   "use strict";
@@ -11142,10 +11143,68 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
    * summary + deadline + action, ending with the Gmail link). This page lists them as cards
    * that open to show everything, with "Abrir correo" straight to the email. */
   var emailsFilter = 'all', emailsPropertyFilter = 'all', emailsOpenId = null;
+  var agencyCases = [], agencyLastCheck = null, staffDirectory = [];
   function myAgencyEmails(){
     var me = currentProfile ? currentProfile.authUserId : null;
     return notificationsList.filter(function(n){ return n.relatedTable === 'agency_email' && n.authUserId === me && !n.archivedAt; })
       .sort(function(a, b){ return String(b.createdAt).localeCompare(String(a.createdAt)); });
+  }
+  function agencyCaseOf(n){ return n.dedupKey ? agencyCases.find(function(c){ return c.dedupKey === n.dedupKey; }) || null : null; }
+  /** "hace 5 min" / "hace 3 h" / "ayer" / "hace 4 días" — for the last-check and last-update lines. */
+  function agoEs(iso){
+    var t = new Date(iso).getTime(); if (isNaN(t)) return '';
+    var min = Math.round((Date.now() - t) / 60000);
+    if (min < 1) return 'justo ahora';
+    if (min < 60) return 'hace ' + min + ' min';
+    var h = Math.round(min / 60); if (h < 24) return 'hace ' + h + ' h';
+    var d = Math.round(h / 24); return d === 1 ? 'ayer' : 'hace ' + d + ' días';
+  }
+  function whenEs(iso){
+    var d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleString('es-AU', { day:'numeric', month:'short', hour:'numeric', minute:'2-digit' });
+  }
+  /** When this email's card last changed: the email itself arriving, or its case being updated (assigned…). */
+  function agencyEmailUpdatedAt(n){
+    var c = agencyCaseOf(n), u = n.createdAt;
+    if (c && c.updatedAt && String(c.updatedAt) > String(u)) u = c.updatedAt;
+    return u;
+  }
+  function staffName(id){
+    var s = staffDirectory.find(function(x){ return x.id === id; });
+    if (!s) return '';
+    var first = (s.name || '').split(' ')[0];
+    // The Super Admin account is Daniel's, still called "Admin" on its profile.
+    return (!first || first === 'Admin') && s.role === 'super_admin' ? 'Daniel' : first;
+  }
+  function canAssignAgencyEmails(){ return !!currentProfile && (currentProfile.role === 'super_admin' || currentProfile.role === 'administrator'); }
+  /** Is this email about a bill owed (invoice / arrears)? Uses the case's kind when the check saved
+   *  one, else the title (older emails). Receipts / informative ones are never bills. */
+  function agencyEmailIsBill(n){
+    var c = agencyCaseOf(n);
+    if (c && c.kind) return c.kind === 'invoice' || c.kind === 'arrears';
+    var t = n.title || '';
+    return !/\(informativo\)|recibo|receipt/i.test(t) && /factura|invoice|\bbill\b|cuenta de|deuda|arrears/i.test(t);
+  }
+  /** The bill in the app that this agency email is about, or null if it isn't loaded. Linked bill
+   *  first; then same property + same invoice number; then same property + same amount (+ due date
+   *  when known), only if exactly one bill matches. */
+  function agencyEmailBill(n){
+    var c = agencyCaseOf(n);
+    if (c && c.billId){ var linked = bills.find(function(b){ return b.id === c.billId; }); if (linked) return linked; }
+    var pid = n.propertyId || (c && c.propertyId);
+    if (!pid) return null;
+    var text = (n.title || '') + ' ' + (n.body || '');
+    var inv = c && c.invoiceNumber ? c.invoiceNumber : ((text.match(/(?:factura|invoice)\s*(?:n[ºo°.]*\s*)?#\s*([A-Za-z0-9-]{3,})/i) || [])[1] || '');
+    var amt = c && c.amount != null ? c.amount : null;
+    if (amt == null){ var m = (n.title || '').match(/\$\s?([\d,]+(?:\.\d{1,2})?)/); if (m) amt = Number(m[1].replace(/,/g, '')); }
+    var norm = function(x){ return String(x || '').replace(/[^a-z0-9]/gi, '').replace(/^0+/, '').toLowerCase(); };
+    var mine = bills.filter(function(b){ return b.propertyId === pid; });
+    if (inv){ var byInv = mine.filter(function(b){ return b.invoiceNumber && norm(b.invoiceNumber) === norm(inv); }); if (byInv.length) return byInv[0]; }
+    if (amt != null && !isNaN(amt)){
+      var byAmt = mine.filter(function(b){ return Math.abs((Number(b.amount) || 0) - amt) < 0.005 && (!c || !c.dueDate || !b.dueDate || b.dueDate === c.dueDate); });
+      if (byAmt.length === 1) return byAmt[0];
+    }
+    return null;
   }
   function agencyEmailParts(n){
     var body = n.body || '';
@@ -11154,8 +11213,8 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var text = url ? body.replace(url, '') : body;
     text = text.replace(/\s*(?:🔗|Gmail|Link|Enlace|Ver correo|Correo)\s*:?\s*$/i, '').replace(/[\s\-–—·:]+$/, '').trim();
     var title = n.title || '';
-    var emoji = (title.match(/^(\p{Extended_Pictographic}\uFE0F?)\s*/u) || [])[1] || '✉️';
-    title = title.replace(/^(\p{Extended_Pictographic}\uFE0F?)\s*/u, '');
+    var emoji = (title.match(/^(\p{Extended_Pictographic}️?)\s*/u) || [])[1] || '✉️';
+    title = title.replace(/^(\p{Extended_Pictographic}️?)\s*/u, '');
     var action = n.category === 'important_notice';
     var info = /\(informativo\)/i.test(title);
     if (info) title = title.replace(/\s*\(informativo\)\s*/i, ' ').trim();
@@ -11164,13 +11223,22 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
   }
   function renderAgencyEmails(){
     var all = myAgencyEmails();
-    var counts = { all: all.length, action: 0, info: 0, unread: 0 };
-    all.forEach(function(n){ var pp = agencyEmailParts(n); if (pp.action) counts.action++; else counts.info++; if (!n.isRead) counts.unread++; });
+    var myProfileId = currentProfile ? currentProfile.id : null;
+    var counts = { all: all.length, action: 0, info: 0, unread: 0, mine: 0, unassigned: 0 };
+    all.forEach(function(n){
+      var pp = agencyEmailParts(n), c = agencyCaseOf(n), who = c ? c.assignedProfileId : null;
+      if (pp.action) counts.action++; else counts.info++;
+      if (!n.isRead) counts.unread++;
+      if (who && who === myProfileId) counts.mine++;
+      if (!who && pp.action) counts.unassigned++;
+    });
     var list = all.filter(function(n){
-      var pp = agencyEmailParts(n);
+      var pp = agencyEmailParts(n), c = agencyCaseOf(n), who = c ? c.assignedProfileId : null;
       if (emailsFilter === 'action' && !pp.action) return false;
       if (emailsFilter === 'info' && pp.action) return false;
       if (emailsFilter === 'unread' && n.isRead) return false;
+      if (emailsFilter === 'mine' && (!who || who !== myProfileId)) return false;
+      if (emailsFilter === 'unassigned' && (who || !pp.action)) return false;
       if (emailsPropertyFilter !== 'all' && n.propertyId !== emailsPropertyFilter) return false;
       return true;
     });
@@ -11178,18 +11246,57 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     var propIds = []; all.forEach(function(n){ if (n.propertyId && propIds.indexOf(n.propertyId) < 0) propIds.push(n.propertyId); });
     var propChips = propIds.length > 1 ? '<div class="filter-chips" style="margin-top:8px;"><button type="button" class="chip'+(emailsPropertyFilter==='all'?' active':'')+'" onclick="setEmailsProperty(\'all\')">Todas</button>'+
       propIds.map(function(pid){ var p = propertyOf(pid); return '<button type="button" class="chip'+(emailsPropertyFilter===pid?' active':'')+'" onclick="setEmailsProperty(\''+pid+'\')">'+esc(p ? p.name : 'Propiedad')+'</button>'; }).join('')+'</div>' : '';
+    var canAssign = canAssignAgencyEmails();
     var cards = list.map(function(n){
       var pp = agencyEmailParts(n), p = n.propertyId ? propertyOf(n.propertyId) : null;
+      var c = agencyCaseOf(n), who = c ? c.assignedProfileId : null;
       var open = emailsOpenId === n.id;
       var tag = pp.urgent ? badge('overdue', 'Urgente') : pp.action ? badge('due', 'Requiere acción') : badge('neutral', 'Informativo');
+      // Bill owed: is it loaded in the app, and paid to the provider?
+      var isBill = agencyEmailIsBill(n), bill = isBill ? agencyEmailBill(n) : null;
+      var billTag = '', billRow = '';
+      if (isBill){
+        if (bill && bill.adminPaid){
+          billTag = badge('paid', 'Cargada · pagada');
+          billRow = '<div class="mail-fact"><span class="mail-fact-k">Factura</span><span>Cargada en la app y <b>pagada al proveedor</b>'+(bill.adminPaidDate ? ' el '+esc(shortDate(bill.adminPaidDate)) : '')+'.</span>'+
+            '<button type="button" class="mini-btn" onclick="location.hash=\'#/bills/'+bill.id+'\'">Ver factura</button></div>';
+        } else if (bill){
+          billTag = badge('due', 'Cargada · sin pagar');
+          billRow = '<div class="mail-fact"><span class="mail-fact-k">Factura</span><span>Ya está cargada en la app ('+esc(bill.provider || 'factura')+(bill.invoiceNumber ? ' #'+esc(bill.invoiceNumber) : '')+', '+esc(money(bill.amount))+'), <b>sin pagar al proveedor</b>.</span>'+
+            '<button type="button" class="mini-btn" onclick="location.hash=\'#/bills/'+bill.id+'\'">Ver factura</button></div>';
+        } else {
+          billTag = badge('overdue', 'No cargada');
+          billRow = '<div class="mail-fact"><span class="mail-fact-k">Factura</span><span><b>No está cargada en la app</b> todavía.</span>'+
+            '<button type="button" class="mini-btn primary" onclick="openImportModal()">+ Cargar factura</button></div>';
+        }
+      }
+      var whoName = who ? staffName(who) || 'Asignado' : '';
+      var whoTag = who ? '<span class="mail-who" title="Responsable">👤 '+esc(whoName)+'</span>' : (pp.action ? '<span class="mail-who none">Sin responsable</span>' : '');
+      var assignRow = '';
+      if (canAssign && staffDirectory.length){
+        assignRow = '<div class="mail-fact"><span class="mail-fact-k">Responsable</span>'+
+          '<select class="mail-assign" aria-label="Responsable del seguimiento" onchange="assignAgencyEmail(\''+n.id+'\', this.value)">'+
+            '<option value=""'+(who ? '' : ' selected')+'>Sin asignar</option>'+
+            staffDirectory.map(function(s){ return '<option value="'+s.id+'"'+(who === s.id ? ' selected' : '')+'>'+esc(staffName(s.id))+'</option>'; }).join('')+
+          '</select>'+
+          (who && c && c.assignedAt ? '<span class="mail-fact-sub">desde '+esc(whenEs(c.assignedAt))+(c.assignedByProfileId && c.assignedByProfileId !== who && staffName(c.assignedByProfileId) ? ' · lo asignó '+esc(staffName(c.assignedByProfileId)) : '')+'</span>' : '')+
+        '</div>';
+      } else if (who){
+        assignRow = '<div class="mail-fact"><span class="mail-fact-k">Responsable</span><span><b>'+esc(whoName)+'</b></span></div>';
+      }
+      var upd = agencyEmailUpdatedAt(n);
       return '<details class="mail-card'+(n.isRead ? '' : ' unread')+(pp.urgent ? ' urgent' : pp.action ? ' action' : '')+'" id="mail-'+n.id+'"'+(open ? ' open' : '')+' ontoggle="onMailToggle(this, \''+n.id+'\')">'+
         '<summary><span class="mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
           '<span class="mail-main"><span class="mail-title">'+esc(pp.title)+'</span>'+
-          '<span class="mail-meta">'+tag+'<span>'+(p ? esc(p.name)+' · ' : '')+esc(actorWhen(n.createdAt))+'</span></span></span>'+
+          '<span class="mail-meta">'+tag+billTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
           '<span class="mail-side">'+(n.isRead ? '' : '<i class="mail-dot" aria-label="Sin leer"></i>')+'<span class="mail-chev">'+svg('chevron')+'</span></span>'+
         '</summary>'+
         '<div class="mail-body">'+
           '<p class="mail-text">'+esc(pp.text).replace(/https?:\/\/[^\s<)]+[^\s<).,;]/g, function(u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+u.replace(/^https?:\/\//, '').slice(0, 42)+(u.length > 50 ? '…' : '')+'</a>'; }).replace(/\n/g, '<br>')+'</p>'+
+          '<div class="mail-facts">'+billRow+assignRow+
+            '<div class="mail-fact"><span class="mail-fact-k">Actualizado</span><span>'+esc(whenEs(upd))+' <span class="mail-fact-sub">('+esc(agoEs(upd))+')</span>'+
+              (upd !== n.createdAt ? ' <span class="mail-fact-sub">· llegó '+esc(whenEs(n.createdAt))+'</span>' : '')+'</span></div>'+
+          '</div>'+
           '<div class="mail-actions">'+
             (pp.url ? '<button type="button" class="mini-btn primary" onclick="openAgencyEmail(\''+n.id+'\')">Abrir correo</button>' : '')+
             (p ? '<button type="button" class="mini-btn" onclick="location.hash=\'#/properties/'+p.id+'\'">View property</button>' : '')+
@@ -11197,12 +11304,40 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
           '</div>'+
         '</div></details>';
     }).join('');
+    // When the agencies' emails were last checked (even if nothing new came in), else the newest email.
+    var lastAt = agencyLastCheck ? agencyLastCheck.checkedAt : (all[0] ? all[0].createdAt : null);
+    var lastLine = lastAt ? '<p class="mail-lastcheck">'+svg('refresh')+'<span>Última revisión: <b>'+esc(whenEs(lastAt))+'</b> ('+esc(agoEs(lastAt))+')'+
+      (agencyLastCheck ? ' · '+(agencyLastCheck.notified ? agencyLastCheck.notified+' correo'+(agencyLastCheck.notified === 1 ? '' : 's')+' nuevo'+(agencyLastCheck.notified === 1 ? '' : 's') : 'sin correos nuevos') : '')+'</span></p>' : '';
     var empty = '<div class="card" style="text-align:center;padding:28px 18px;"><div style="font-size:34px;">📭</div>'+
       '<p style="margin:8px 0 0;font-size:14px;color:var(--text-dim);">'+(all.length ? 'Nada con este filtro.' : 'Todavía no hay correos de las agencias. Se revisan todos los días a las 9 am y 2 pm.')+'</p></div>';
-    return pageHeaderIcon('Correos', 'Lo que mandan las agencias, revisado todos los días a las 9 am y 2 pm. Toca uno para verlo completo y abrir el correo.', 'mail', 'documents') +
-      '<div><div class="filter-chips">'+chip('all', 'Todos', counts.all)+chip('action', 'Requieren acción', counts.action)+chip('unread', 'Sin leer', counts.unread)+chip('info', 'Informativos', counts.info)+'</div>'+propChips+'</div>'+
+    return pageHeaderIcon('Correos', 'Lo que mandan las agencias, revisado todos los días a las 9 am y 2 pm. Toca uno para verlo completo, asignar un responsable y abrir el correo.', 'mail', 'documents') +
+      lastLine +
+      '<div><div class="filter-chips">'+chip('all', 'Todos', counts.all)+chip('action', 'Requieren acción', counts.action)+chip('unassigned', 'Sin responsable', counts.unassigned)+chip('mine', 'Míos', counts.mine)+chip('unread', 'Sin leer', counts.unread)+chip('info', 'Informativos', counts.info)+'</div>'+propChips+'</div>'+
       (list.length ? '<div class="mail-list">'+cards+'</div>' : empty);
   }
+  window.assignAgencyEmail = async function(id, profileId){
+    var n = notificationsList.find(function(x){ return x.id === id; });
+    if (!n || !n.dedupKey) { showToast('Este correo no se puede asignar.', 'error'); return; }
+    try {
+      var saved = await agencyEmailService.assign(n.dedupKey, profileId || null, currentProfile ? currentProfile.id : null, n.propertyId);
+      var i = agencyCases.findIndex(function(c){ return c.dedupKey === saved.dedupKey; });
+      if (i > -1) agencyCases[i] = saved; else agencyCases.push(saved);
+      emailsOpenId = id;
+      showToast(profileId ? 'Responsable: ' + (staffName(profileId) || 'asignado') + '.' : 'Quedó sin responsable.', 'success');
+      // Let the assignee know it's theirs (in-app notification), unless they assigned it to themselves.
+      var s = profileId && staffDirectory.find(function(x){ return x.id === profileId; });
+      if (s && profileId !== (currentProfile && currentProfile.id)){
+        if (s.authUserId) notificationService.notify(s.authUserId, '👤 Te asignaron: ' + agencyEmailParts(n).title,
+          (staffName(currentProfile.id) || 'Un admin') + ' te asignó el seguimiento de este correo de la agencia. Míralo en Correos.',
+          'agency_email', null, { category: 'important_notice', propertyId: n.propertyId, createdByProfileId: currentProfile.id });
+      }
+      renderPreservingScroll();
+    } catch (e) {
+      console.error('assign agency email', e);
+      showToast('No se pudo guardar el responsable: ' + (e.message || e), 'error');
+      renderPreservingScroll();
+    }
+  };
   window.openEmailsAt = function(id){
     emailsOpenId = id; emailsFilter = 'all'; emailsPropertyFilter = 'all';
     if (location.hash === '#/emails') render(); else location.hash = '#/emails';
@@ -16229,6 +16364,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     taskIndexRows = s.taskIndexRows.filter(ownOrSharedDuty);
     activityLogRows = s.activityLogRows.filter(ownOrSharedDuty);
     entityLinks = []; roomIncludedBills = []; leasePayments = []; allProfiles = []; propertyAssignments = [];
+    agencyCases = []; agencyLastCheck = null; staffDirectory = [];
     return fakeAuthId;
   }
 
@@ -17599,7 +17735,12 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       // Super Admin only: everyone's accounts and property assignments — fetched in the same batch
       // instead of a second round trip after it.
       (isSuperAdmin() ? profileService.getAll().catch(function(){ return []; }) : Promise.resolve(null)),
-      (isSuperAdmin() ? profileService.getPropertyAssignments().catch(function(){ return []; }) : Promise.resolve(null))
+      (isSuperAdmin() ? profileService.getPropertyAssignments().catch(function(){ return []; }) : Promise.resolve(null)),
+      // Correos follow-up: who is responsible for each agency email, when the Gmail check last
+      // ran, and the admins that can be assigned (staff only).
+      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getCases().catch(function(e){ console.error('agency email cases', e); return []; })),
+      (isTenantRole() ? Promise.resolve(null) : agencyEmailService.getLastCheck().catch(function(){ return null; })),
+      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getStaff().catch(function(){ return []; }))
     ]);
     // Fingerprint of everything just loaded — a background refresh that brings back exactly the
     // same data doesn't redraw the page (no flicker, no lost scroll, no swallowed taps).
@@ -17641,6 +17782,7 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
     realEstateInspections = results[30];
     leasePayments = results[31];
     if (isSuperAdmin()){ allProfiles = results[32]; propertyAssignments = results[33]; }
+    agencyCases = results[34] || []; agencyLastCheck = results[35] || null; staffDirectory = results[36] || [];
     recomputeRentCharges();
     refreshStaticSelects();
     if (opts && opts.skipMaintenance) return;
