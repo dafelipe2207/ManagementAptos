@@ -1495,29 +1495,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   var dashNeedsShowAll = false;
   window.__dashNeedsAll = function(){ dashNeedsShowAll = !dashNeedsShowAll; renderPreservingScroll(); };
   function renderDashboard(){
-    var s = getDashboardSummary();
-    var monthLabelShort = CALENDAR_MONTH_NAMES[parseInt(TODAY.slice(5,7),10)-1].slice(0,3);
     var needs = getNeedsAttention();
     var upcoming = getUpcomingEvents();
-
-    function tile(st){
-      return '<div class="stat stat-clickable" role="button" tabindex="0" onclick="'+st[3]+'" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();'+st[3]+';}" style="cursor:pointer;">'+
-        '<div class="label">'+st[0]+'</div><div class="value'+(st[2]?' warn':'')+'">'+st[1]+'</div></div>';
-    }
-    var countStats = [
-      ['Properties', String(s.totalProperties), false, 'goToDashboardStat(\'properties\')'],
-      ['Occupied', String(s.occupiedRooms), false, 'goToDashboardStat(\'properties\')'],
-      ['Vacant', String(s.vacantRooms), false, 'goToDashboardStat(\'vacant\')'],
-      ['Overdue', String(s.overduePaymentsCount), s.overduePaymentsCount>0, 'goToDashboardStat(\'overdue\')']
-    ];
-    var moneyStats = [
-      ['Expected', moneyStat(s.totalRentExpected), false, 'goToDashboardStat(\'rent-all\')'],
-      ['Received', moneyStat(s.totalRentReceived), false, 'goToDashboardStat(\'rent-paid\')'],
-      ['Outstanding', moneyStat(s.totalOutstanding), s.totalOutstanding>0, 'goToDashboardStat(\'rent-due\')']
-    ];
-    var statHtml = '<div class="stat-grid cols-4 bills-stats dash-counts">' + countStats.map(tile).join('') + '</div>'+
-      '<h3 class="section-label">Rent · '+monthLabelShort+'<button type="button" class="section-link" onclick="goToDashboardStat(\'bills-pending\')">'+s.billsPendingCount+' bills pending ›</button></h3>'+
-      '<div class="stat-grid cols-3 bills-stats">' + moneyStats.map(tile).join('') + '</div>';
 
     var NEEDS_LIMIT = 5;
     var needsShown = dashNeedsShowAll ? needs : needs.slice(0, NEEDS_LIMIT);
@@ -1574,9 +1553,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
           }).join('')
       ) + '</div>';
 
-    var reiHtml = realEstateInspectionBannerHtml(false) ||
-      '<div class="rei-empty">🏢 No real estate inspection scheduled <button type="button" class="text-link" onclick="openReiModal(null)">+ Schedule one</button></div>';
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + statHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
+    // Only inspections still to come; once one is over it drops off, unless the agency asked for
+    // something after it (a linked Correos email still open) — then it stays as a follow-up.
+    var reiHtml = realEstateInspectionBannerHtml(false) + dashboardInspectionFollowupsHtml();
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
   }
 
   /** Dashboard "Payments reported" card: every payment a tenant has reported and is waiting for
@@ -13688,9 +13668,54 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       .replace(/real estate agents?|real estate agency|real estate/gi, 'property')
       .replace(/\bproperty inspection\b/gi, 'property inspection');
   }
+  /** Has this inspection already happened? Past days always; today, once its end time has passed. */
+  function reiIsOver(i){
+    if (i.date < TODAY) return true;
+    if (i.date > TODAY || !i.endTime) return false;
+    var now = new Date(), hm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    return hm >= i.endTime;
+  }
+  /** Dashboard: inspections that already happened but where the agency asked for something
+   *  (e.g. extra cleaning) — an agency email linked to the inspection whose status is still open.
+   *  Stays with its status ("Por revisar", "En revisión"…) until that email is set to Resuelto. */
+  function dashboardInspectionFollowupsHtml(){
+    if (isTenantRole()) return '';
+    var emails = myAgencyEmails(), items = [];
+    agencyCases.forEach(function(c){
+      if (c.linkedTable !== 'real_estate_inspections' || !c.linkedId) return;
+      var insp = realEstateInspections.find(function(x){ return x.id === c.linkedId; });
+      if (!insp || !reiIsOver(insp)) return;
+      var n = emails.find(function(x){ return x.dedupKey === c.dedupKey; });
+      if (!n) return;
+      var st = agencyEmailStatus(n);
+      if (agencyStatusInfo(st).closed) return;
+      items.push({ insp: insp, n: n, c: c, st: st });
+    });
+    if (!items.length) return '';
+    items.sort(function(a, b){ return String(a.c.dueDate || '9999').localeCompare(String(b.c.dueDate || '9999')); });
+    return items.map(function(it){
+      var p = propertyOf(it.insp.propertyId), pp = agencyEmailParts(it.n);
+      var due = it.c.dueDate, left = due ? daysBetween(TODAY, due) : null;
+      var dueTxt = due ? 'Plazo: <b>'+esc(shortDate(due))+'</b> ('+(left < 0 ? 'vencido hace '+(-left)+' día'+(left === -1 ? '' : 's') : left === 0 ? 'hoy' : 'en '+left+' día'+(left === 1 ? '' : 's'))+')' : '';
+      var text = pp.text.length > 260 ? pp.text.slice(0, 257).replace(/\s+\S*$/, '') + '…' : pp.text;
+      return '<div class="rei-banner rei-follow'+(left != null && left <= 3 ? ' urgent' : '')+'">'+
+        '<div class="rei-count"><b>'+(left == null ? '!' : left < 0 ? '⚠️' : left)+'</b><span>'+(left == null ? 'pendiente' : left < 0 ? 'vencido' : 'días de plazo')+'</span></div>'+
+        '<div class="rei-main">'+
+          '<div class="rei-kicker">🏢 Después de la inspección · '+esc(p ? p.name : '')+' · '+esc(shortDate(it.insp.date))+'</div>'+
+          '<div class="rei-when">'+esc(pp.title)+'</div>'+
+          '<div class="rei-follow-st">'+agencyStatusTag(it.st)+(dueTxt ? '<span>'+dueTxt+'</span>' : '')+'</div>'+
+          '<p class="rei-follow-text">'+esc(text)+'</p>'+
+          '<div class="rei-actions">'+
+            (canAssignAgencyEmails() ? '<select class="mail-assign mail-st-select st-'+it.st+'" aria-label="Estado" onchange="setAgencyEmailStatus(\''+it.n.id+'\', this.value)">'+
+              AGENCY_STATUSES.map(function(s2){ return '<option value="'+s2.key+'"'+(s2.key === it.st ? ' selected' : '')+'>'+s2.ic+' '+esc(s2.short)+'</option>'; }).join('')+'</select>' : '')+
+            '<button type="button" class="mini-btn" onclick="openEmailsAt(\''+it.n.id+'\')">Ver en Correos</button>'+
+          '</div>'+
+        '</div></div>';
+    }).join('');
+  }
   function upcomingRealEstateInspections(propertyId){
     return realEstateInspections.filter(function(i){
-      return i.status==='scheduled' && i.date >= TODAY && (!propertyId || i.propertyId===propertyId);
+      return i.status==='scheduled' && !reiIsOver(i) && (!propertyId || i.propertyId===propertyId);
     }).sort(function(a,b){ return (a.date+(a.startTime||'')).localeCompare(b.date+(b.startTime||'')); });
   }
   function reiTimeText(i){

@@ -2810,3 +2810,11 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .dash-mail-chev{flex:0 0 auto;color:var(--text-faint);}
 .dash-mail-chev svg{width:16px;height:16px;}
 .dash-mail:active{opacity:.7;}
+
+/* Dashboard — inspection follow-up (agency asked for something after the inspection) */
+.rei-follow-st{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:6px;font-size:13px;color:var(--text-dim);}
+.rei-follow-st b{color:var(--text);}
+.rei-follow-text{margin:8px 0 0;font-size:13.5px;line-height:1.45;color:var(--text);}
+.rei-follow .rei-actions{align-items:center;}
+.rei-follow .mail-st-select{min-height:34px;font-size:13px;}
+.rei-banner.rei-follow .rei-actions select.mail-st-select{font-size:14px;font-weight:650;min-height:36px;height:auto;width:auto;max-width:100%;padding:6px 30px 6px 10px;}
