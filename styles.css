@@ -2795,3 +2795,18 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .tqr-img svg{display:block;width:100%;height:auto;}
 .tqr-note{text-align:center;font-size:12.5px;color:var(--text-dim);margin:6px 0 0;}
 .tqr-warn{font-size:13px;color:var(--status-due);margin:10px 0 0;}
+
+/* Dashboard — new agency emails */
+.dash-mail{display:flex;align-items:center;gap:12px;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;
+  padding:10px 4px;background:none;border:0;border-top:1px solid var(--border);}
+.dash-mail:first-of-type{border-top:0;}
+.dash-mail-ic{flex:0 0 38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:19px;
+  background:color-mix(in srgb, var(--text) 6%, transparent);}
+.dash-mail.urgent .dash-mail-ic{background:rgba(255,59,48,.12);}
+.dash-mail.action .dash-mail-ic{background:rgba(255,149,0,.13);}
+.dash-mail-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+.dash-mail-title{font-size:14.5px;font-weight:650;line-height:1.3;}
+.dash-mail-meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px 8px;font-size:12.5px;color:var(--text-dim);}
+.dash-mail-chev{flex:0 0 auto;color:var(--text-faint);}
+.dash-mail-chev svg{width:16px;height:16px;}
+.dash-mail:active{opacity:.7;}

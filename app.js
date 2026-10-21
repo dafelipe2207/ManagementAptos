@@ -1576,13 +1576,32 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
 
     var reiHtml = realEstateInspectionBannerHtml(false) ||
       '<div class="rei-empty">🏢 No real estate inspection scheduled <button type="button" class="text-link" onclick="openReiModal(null)">+ Schedule one</button></div>';
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + reiHtml + statHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + statHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
   }
 
   /** Dashboard "Payments reported" card: every payment a tenant has reported and is waiting for
    *  you — rent, or one or more bill shares paid with a single transfer (grouped: same tenant,
    *  same payment date and receipt). Shows who, how much, what it covers, when, and the receipt,
    *  with Confirm right there; Review opens the bill (or Payments, for rent). */
+  /** Dashboard: agency emails that arrived and nobody has opened yet (Correos). Tap one to open it there. */
+  function dashboardNewEmailsHtml(){
+    if (isTenantRole()) return '';
+    var fresh = myAgencyEmails().filter(function(n){ return !n.isRead; });
+    if (!fresh.length) return '';
+    var rows = fresh.slice(0, 4).map(function(n){
+      var pp = agencyEmailParts(n), p = n.propertyId ? propertyOf(n.propertyId) : null;
+      return '<button type="button" class="dash-mail'+(pp.urgent ? ' urgent' : pp.action ? ' action' : '')+'" onclick="openEmailsAt(\''+n.id+'\')">'+
+        '<span class="dash-mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
+        '<span class="dash-mail-main"><span class="dash-mail-title">'+esc(pp.title)+'</span>'+
+          '<span class="dash-mail-meta">'+agencyStatusTag(agencyEmailStatus(n))+(pp.urgent ? badge('overdue', 'Urgente') : '')+
+          '<span>'+(p ? esc(p.name)+' · ' : '')+esc(agoEs(n.createdAt))+'</span></span></span>'+
+        '<span class="dash-mail-chev">'+svg('chevron')+'</span></button>';
+    }).join('');
+    return '<div class="card needs-card dash-mail-card"><h2>✉️ Correos nuevos <span class="count-pill">'+fresh.length+'</span></h2>'+
+      '<p class="modal-hint" style="margin:-4px 0 8px;">Llegaron de las agencias y todavía no los has abierto.</p>'+rows+
+      (fresh.length > 4 ? '<button type="button" class="mini-btn" style="margin-top:8px;" onclick="location.hash=\'#/emails\'">Ver los '+fresh.length+' en Correos</button>'
+        : '<button type="button" class="text-link" style="margin-top:6px;" onclick="location.hash=\'#/emails\'">Ir a Correos</button>')+'</div>';
+  }
   function dashboardReportedPaymentsHtml(){
     // One row per TRANSFER: everything a tenant reported with the same payment date (rent and
     // bill shares together), so a single transfer that paid rent + bills is one row with the sum.
