@@ -11760,6 +11760,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     var saveBtn = document.querySelector('#maintenance-modal .mini-btn.primary');
     if (saveBtn) saveBtn.hidden = lockForTenant;
     document.getElementById('maintenance-delete-btn').hidden = !(m && (staff || tenantCanEdit));
+    document.getElementById('maintenance-agency-btn').hidden = !(m && staff && !isViewer());
     var editNote = document.getElementById('maintenance-edit-note');
     editNote.hidden = !(m && !staff);
     editNote.textContent = tenantCanEdit ? 'You can edit or delete this request until your administrator starts working on it.'
@@ -11936,6 +11937,142 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     else if (kind === 'priority'){ document.getElementById('maintenance-priority').value = v; mtRenderChips(); }
     else if (kind === 'status'){ document.getElementById('maintenance-status').value = v; mtRenderStepper(); }
     else if (kind === 'stage'){ mtStage = v; mtRenderPhotos(); }
+  };
+
+  /* ---------- Report a maintenance problem to the real estate (through the agency's own portal) ----------
+   * Each property's agency lives in its staff-only details (listing_info.agency): name, the portal
+   * it uses for maintenance (Bricks + Agent, PropertyMe…), the portal link, email and phone. The
+   * window gives the steps for THAT portal, a ready-to-paste description of the problem, a button
+   * to open the portal (or email the agency), and "Mark as reported" to record it on the request. */
+  var AGENCY_PORTALS = {
+    bricksandagent: { label:'Bricks + Agent', url:'https://portal.bricksandagent.com/tenant/my-jobs', steps:[
+      'Tap <b>Open Bricks + Agent</b> and sign in with your email (the one the agency has for you).',
+      'Choose the option to report a new issue / job and pick the property.',
+      'Paste the description (it\'s already copied) and choose the area and type of problem.',
+      'Add the photos of the problem (save them first from this request — tap each photo → save).',
+      'Say when they can come in / how to get access, then send it.',
+      'You\'ll get an email with the job number — come back here and tap <b>Mark as reported</b>.' ] },
+    propertyme: { label:'PropertyMe', url:'https://my.propertyme.com/', steps:[
+      'Open the <b>PropertyMe Tenant</b> app (or tap <b>Open PropertyMe</b>) and sign in.',
+      'Go to <b>Maintenance</b> and start a new maintenance request.',
+      'Paste the description (it\'s already copied) and add the photos of the problem.',
+      'Add how they can get access, then submit. You can follow its progress in the app.',
+      'Come back here and tap <b>Mark as reported</b>.' ] },
+    email: { label:'Email', url:'', steps:[
+      'Tap <b>Email the agency</b> — the email opens with the description already written.',
+      'Attach the photos of the problem and send it.',
+      'Come back here and tap <b>Mark as reported</b>.' ] }
+  };
+  function propertyAgency(p){ return (p && p.listingInfo && p.listingInfo.agency) || {}; }
+  var agencyReportId = null;
+  function agencyReportText(m, p, room){
+    var lines = [];
+    lines.push('Maintenance request — ' + (p ? (p.address || p.name) : ''));
+    lines.push('');
+    lines.push('Problem: ' + (m.title || ''));
+    if (room) lines.push('Where: ' + room.name);
+    if (m.description) lines.push('Details: ' + m.description);
+    lines.push('Noticed: ' + fullDate((m.createdAt || '').slice(0, 10) || TODAY));
+    if (m.priority === 'urgent' || m.priority === 'high') lines.push('Priority: ' + (MAINTENANCE_PRIORITY_LABEL[m.priority] || m.priority));
+    var nPh = (m.photosBefore || []).length + (m.photosDuring || []).length + (m.photoPaths || []).length;
+    if (nPh) lines.push('Photos: attached (' + nPh + ').');
+    var me = currentProfile ? ((currentProfile.firstName || '') + ' ' + (currentProfile.lastName || '')).trim() : '';
+    lines.push('');
+    lines.push('Access: please contact ' + (me || 'me') + (currentProfile && currentProfile.phone ? ' on ' + currentProfile.phone : '') + ' to arrange a time.');
+    lines.push('Thank you!');
+    return lines.join('\n');
+  }
+  function openAgencyReportModal(){
+    var m = maintenanceRequests.find(function(x){ return x.id === maintenanceModalEditId; }); if (!m) return;
+    agencyReportId = m.id;
+    var p = propertyOf(m.propertyId), room = m.roomId ? roomOf(m.roomId) : null;
+    var ag = propertyAgency(p);
+    var kind = AGENCY_PORTALS[ag.portal] ? ag.portal : (ag.email ? 'email' : '');
+    var portal = AGENCY_PORTALS[kind];
+    var text = agencyReportText(m, p, room);
+    var portalUrl = ag.portalUrl || (portal && portal.url) || '';
+    var mailHref = ag.email ? 'mailto:' + encodeURIComponent(ag.email) + '?subject=' + encodeURIComponent('Maintenance request — ' + (p ? (p.address || p.name) : '') + ' — ' + (m.title || '')) + '&body=' + encodeURIComponent(text) : '';
+    var mm = document.getElementById('agency-report-modal');
+    if (!mm){
+      mm = document.createElement('div'); mm.className = 'modal-overlay'; mm.id = 'agency-report-modal';
+      mm.addEventListener('click', function(e){ if (e.target === mm) mm.hidden = true; });
+      document.body.appendChild(mm);
+    }
+    var already = /Reported to /.test(m.resolutionNotes || '');
+    var stepsHtml = portal ? '<ol class="ar-steps">' + portal.steps.map(function(st){ return '<li>' + st + '</li>'; }).join('') + '</ol>'
+      : '<p class="modal-hint">This property doesn\'t have its real estate set up yet — add it below (name, which app they use for maintenance, email).</p>';
+    var f = function(id, label, val, ph, type){ return '<div class="form-row"><label for="'+id+'">'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'" /></div>'; };
+    mm.innerHTML = '<div class="card modal-card" style="max-width:480px;">'+
+      '<h2 class="modal-title">Report to '+esc(ag.name || 'the real estate')+'</h2>'+
+      '<p class="modal-sub">'+esc(p ? p.name : '')+' · '+esc(m.title || '')+(portal ? ' · through <b>'+esc(portal.label)+'</b>' : '')+'</p>'+
+      stepsHtml+
+      '<label class="modal-hint" for="ar-text" style="display:block;margin-top:10px;">Description to paste</label>'+
+      '<textarea id="ar-text" rows="8" class="ar-text">'+esc(text)+'</textarea>'+
+      '<div class="actions-row ar-actions" style="margin-top:10px;">'+
+        '<button type="button" class="mini-btn" onclick="agencyReportCopy(this)">Copy description</button>'+
+        (kind && kind !== 'email' && portalUrl ? '<button type="button" class="mini-btn primary" onclick="agencyReportOpen(\''+esc(portalUrl)+'\')">Open '+esc(portal.label)+'</button>' : '')+
+        (mailHref ? '<button type="button" class="mini-btn'+(kind === 'email' ? ' primary' : '')+'" onclick="location.href=document.getElementById(\'ar-mail\').value">Email the agency</button><input type="hidden" id="ar-mail" value="'+esc(mailHref)+'">' : '')+
+      '</div>'+
+      (ag.phone ? '<p class="modal-hint" style="margin-top:8px;">Urgent? Call '+esc(ag.name || 'the agency')+': <a href="tel:'+esc(ag.phone.replace(/\s/g, ''))+'">'+esc(ag.phone)+'</a></p>' : '')+
+      '<div class="actions-row" style="margin-top:12px;"><button type="button" class="mini-btn primary" onclick="agencyReportMarkDone(this)">'+(already ? 'Reported ✓ — mark again' : 'Mark as reported')+'</button>'+
+      '<button type="button" class="mini-btn" onclick="document.getElementById(\'agency-report-modal\').hidden=true">Close</button></div>'+
+      '<details class="ar-edit"'+(portal ? '' : ' open')+'><summary>Real estate details for '+esc(p ? p.name : 'this property')+'</summary>'+
+        f('ar-name', 'Agency name', ag.name, 'e.g. Yaran Realty')+
+        '<div class="form-row"><label for="ar-portal">App they use for maintenance</label><select id="ar-portal">'+
+          '<option value="">— Choose —</option>'+
+          ['bricksandagent','propertyme','email'].map(function(k){ return '<option value="'+k+'"'+(ag.portal===k?' selected':'')+'>'+AGENCY_PORTALS[k].label+(k==='email'?' (no app)':'')+'</option>'; }).join('')+
+        '</select></div>'+
+        f('ar-url', 'Portal link (optional)', ag.portalUrl, 'Leave empty to use the usual one', 'url')+
+        f('ar-email', 'Agency email', ag.email, 'e.g. rentals@agency.com.au', 'email')+
+        f('ar-phone', 'Agency phone', ag.phone, 'e.g. 08 9466 8888', 'tel')+
+        '<div class="actions-row"><button type="button" class="mini-btn" onclick="agencySaveDetails(this)">Save details</button></div>'+
+      '</details>'+
+      '</div>';
+    mm.hidden = false;
+    copyTextReliably(text); // ready to paste as soon as the portal opens
+  }
+  window.openAgencyReportModal = openAgencyReportModal;
+  window.agencyReportCopy = function(btn){
+    var t = document.getElementById('ar-text'); if (!t) return;
+    copyTextReliably(t.value).then(function(ok){ showToast(ok ? 'Description copied — paste it in the portal.' : 'Couldn\'t copy — select the text and copy it.', ok ? 'success' : 'error'); });
+  };
+  window.agencyReportOpen = function(url){
+    var t = document.getElementById('ar-text'); if (t) copyTextReliably(t.value);
+    var w = window.open(url, '_blank', 'noopener'); if (!w) location.href = url;
+  };
+  window.agencySaveDetails = async function(btn){
+    var m = maintenanceRequests.find(function(x){ return x.id === agencyReportId; }); if (!m) return;
+    var p = propertyOf(m.propertyId); if (!p) return;
+    var ag = { name: document.getElementById('ar-name').value.trim(), portal: document.getElementById('ar-portal').value,
+      portalUrl: document.getElementById('ar-url').value.trim(), email: document.getElementById('ar-email').value.trim(), phone: document.getElementById('ar-phone').value.trim() };
+    if (ag.portalUrl && !/^https?:\/\//i.test(ag.portalUrl)) ag.portalUrl = 'https://' + ag.portalUrl;
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      p.listingInfo = await propertyService.updateListingInfo(p.id, Object.assign({}, p.listingInfo || {}, { agency: ag }));
+      showToast('Real estate details saved for ' + p.name + '.', 'success');
+      openAgencyReportModal();
+    } catch(e){ showToast('Could not save. ' + friendlyErrorMessage(e), 'error'); if (btn){ btn.disabled = false; btn.textContent = 'Save details'; } }
+  };
+  window.agencyReportMarkDone = async function(btn){
+    var m = maintenanceRequests.find(function(x){ return x.id === agencyReportId; }); if (!m) return;
+    var p = propertyOf(m.propertyId), ag = propertyAgency(p);
+    var who = ag.name || 'the real estate';
+    var via = AGENCY_PORTALS[ag.portal] ? AGENCY_PORTALS[ag.portal].label : 'email';
+    var note = 'Reported to ' + who + ' via ' + via + ' on ' + shortDate(TODAY) + '.';
+    var draft = Object.assign({}, m, {
+      assignedTo: who,
+      status: (m.status === 'reported') ? 'assigned' : m.status,
+      resolutionNotes: (m.resolutionNotes ? m.resolutionNotes.replace(/\s+$/, '') + '\n' : '') + note
+    });
+    if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      var saved = await maintenanceService.update(m.id, draft);
+      Object.assign(m, saved);
+      document.getElementById('agency-report-modal').hidden = true;
+      closeMaintenanceModal();
+      showToast(note, 'success');
+      render();
+    } catch(e){ showToast('Could not save. ' + friendlyErrorMessage(e), 'error'); if (btn){ btn.disabled = false; btn.textContent = 'Mark as reported'; } }
   };
 
   function closeMaintenanceModal(){

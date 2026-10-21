@@ -2746,3 +2746,10 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .mail-link-tag{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;
   background:color-mix(in srgb, var(--text) 7%, transparent);color:var(--text);}
 .mail-link-select{max-width:min(100%, 320px);}
+/* Report to real estate */
+.ar-steps{margin:10px 0 0;padding-left:22px;font-size:14px;line-height:1.5;color:var(--text);}
+.ar-steps li{margin:4px 0;}
+.ar-text{width:100%;font-size:13px !important;line-height:1.45;resize:vertical;}
+.ar-actions{justify-content:flex-start !important;}
+.ar-edit{margin-top:14px;border-top:1px solid var(--glass-edge, var(--border));padding-top:10px;}
+.ar-edit summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text-dim);}
