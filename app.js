@@ -11221,9 +11221,31 @@ import * as roomIncludedBillService from './services/roomIncludedBillService.js'
       notificationService.markRead(id).catch(function(){ n.isRead = false; });
     }
   };
+  /** "Abrir correo": on iPhone/iPad, opens the email in the Gmail APP (googlegmail:// scheme,
+   *  thread id in hex — Gmail web links carry it in decimal as thread-f:<n>). Google doesn't
+   *  document this link, so if the app doesn't take over within ~1.5 s the web link opens
+   *  instead (same safety net as the WhatsApp Business links). Elsewhere: the web link. */
+  function gmailAppUrl(webUrl){
+    var m = /thread-f:(\d+)/.exec(webUrl || ''); if (!m || typeof BigInt !== 'function') return null;
+    try {
+      return 'googlegmail:///cv=' + BigInt(m[1]).toString(16) + '/accountId=1&create-new-tab';
+    } catch(_e){ return null; }
+  }
   window.openAgencyEmail = function(id){
     var n = notificationsList.find(function(x){ return x.id === id; }); if (!n) return;
     var url = agencyEmailParts(n).url; if (!url) return;
+    var app = isAppleMobile() ? gmailAppUrl(url) : null;
+    if (app){
+      var left = false;
+      var onHide = function(){ if (document.visibilityState === 'hidden') left = true; };
+      document.addEventListener('visibilitychange', onHide);
+      setTimeout(function(){
+        document.removeEventListener('visibilitychange', onHide);
+        if (!left && document.visibilityState === 'visible'){ var w0 = window.open(url, '_blank', 'noopener'); if (!w0) location.href = url; }
+      }, 1500);
+      location.href = app;
+      return;
+    }
     var w = window.open(url, '_blank', 'noopener'); if (!w) location.href = url;
   };
 
