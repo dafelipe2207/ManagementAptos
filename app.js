@@ -3575,6 +3575,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;">'+
         (digits ? waButton('sendTenantAccess(\''+t.id+'\')', 'Send access details to '+esc(t.fullName)+' by WhatsApp') : '')+
         '<button type="button" class="mini-btn" onclick="copyTenantAccess(\''+t.id+'\', this)">Copy access details</button>'+
+        '<button type="button" class="mini-btn primary" onclick="openTenantLoginQr(\''+t.id+'\', this)">▦ Login QR code</button>'+
       '</div></div>';
   }
   function sendTenantAccess(tenantId){
@@ -3592,6 +3593,107 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   }
   window.sendTenantAccess = sendTenantAccess;
   window.copyTenantAccess = copyTenantAccess;
+
+  /* ---------- One-tap login QR (tenant-qr-login Edge Function) ----------
+   * Staff make a QR for a tenant; scanning it (or tapping the link) opens <app>#/qr/<token>, which
+   * signs the tenant in with no typing. The session then stays on that phone like any normal
+   * sign-in (until they sign out). Each QR works for 30 days on up to 3 devices; making a new one
+   * cancels the previous one. Only a hash of the token is stored on the server. */
+  async function qrFunctionCall(body, fallback){
+    var res = await realtimeClient.functions.invoke('tenant-qr-login', { body: body });
+    if (res.error){
+      var msg = fallback;
+      try { var b = await res.error.context.json(); if (b && b.error) msg = b.error; } catch(_e){}
+      throw new Error(msg);
+    }
+    return res.data || {};
+  }
+  function tenantQrUrl(token){ return appPublicUrl() + '#/qr/' + token; }
+  function tenantQrMessage(t, url){
+    var first = (t.fullName || '').split(' ')[0] || 'there';
+    var ref = tenantPaymentRef(t);
+    return 'Hi ' + first + ' 👋 here is your access to the house app.\n\n' +
+      '👉 Tap this link (or scan the QR) and you\'re in, no password needed:\n' + url + '\n\n' +
+      'You\'ll stay signed in on your phone. Tip: once it opens, use "Add to Home Screen" so the app is always one tap away.' +
+      (ref ? '\n\n💳 Your ID ' + ref + ' is also your payment reference: put it in the description of every rent and bill transfer.' : '') +
+      '\n\nThe link works for 30 days — please don\'t forward it.';
+  }
+  var tenantQrState = null; // { tenantId, url, expiresAt }
+  window.openTenantLoginQr = async function(tenantId, btn){
+    var t = tenantOf(tenantId); if (!t) return;
+    if (!t.authUserId){ showToast('This tenant has no login yet — create it in Users first.', 'error'); return; }
+    var prof = tenantLoginProfile(t);
+    var label = btn ? btn.innerHTML : '';
+    if (btn){ btn.disabled = true; btn.textContent = 'Making QR…'; }
+    try {
+      var data = await qrFunctionCall({ action: 'create', tenantId: tenantId }, 'Could not make the QR code.');
+      tenantQrState = { tenantId: tenantId, url: tenantQrUrl(data.token), expiresAt: data.expiresAt, maxUses: data.maxUses || 3 };
+    } catch(e){
+      showToast(e.message || 'Could not make the QR code.', 'error');
+      return;
+    } finally {
+      if (btn){ btn.disabled = false; btn.innerHTML = label; }
+    }
+    var mm = document.getElementById('tenant-qr-modal');
+    if (!mm){
+      mm = document.createElement('div'); mm.className = 'modal-overlay'; mm.id = 'tenant-qr-modal';
+      mm.addEventListener('click', function(e){ if (e.target === mm) mm.hidden = true; });
+      document.body.appendChild(mm);
+    }
+    var qr = '';
+    try { qr = window.makeQrSvg(tenantQrState.url); } catch(_e){ qr = '<span style="font-size:12px;color:var(--text-faint);">Couldn\'t draw the QR — use the link instead.</span>'; }
+    var hasPhone = !!waChatUrl(t.phone, 'x');
+    mm.innerHTML = '<div class="card modal-card tqr-card" style="max-width:420px;">'+
+      '<h2 class="modal-title">Login QR for '+esc((t.fullName || '').split(' ')[0] || 'tenant')+'</h2>'+
+      '<p class="modal-sub">They scan it with the phone camera and they\'re in — no user or password to type. They stay signed in on that phone.</p>'+
+      '<div class="tqr-img">'+qr+'</div>'+
+      '<p class="tqr-note">Works for 30 days (until '+esc(shortDate(String(tenantQrState.expiresAt).slice(0, 10)))+') on up to '+tenantQrState.maxUses+' devices. Making a new QR cancels this one.</p>'+
+      (prof && prof.isActive === false ? '<p class="tqr-warn">⚠️ Their login is deactivated — activate it in Users before they scan, or it won\'t let them in.</p>' : '')+
+      '<div class="actions-row" style="margin-top:12px;flex-wrap:wrap;">'+
+        (hasPhone ? waButton('sendTenantLoginQr()', 'Send the link to '+esc(t.fullName)+' by WhatsApp') : '')+
+        '<button type="button" class="mini-btn" onclick="shareTenantLoginQrImage(this)">Share QR image</button>'+
+        '<button type="button" class="mini-btn" onclick="copyTenantLoginQr(this)">Copy link</button>'+
+        '<button type="button" class="mini-btn" onclick="document.getElementById(\'tenant-qr-modal\').hidden=true">Close</button>'+
+      '</div></div>';
+    mm.hidden = false;
+  };
+  window.sendTenantLoginQr = function(){
+    var st = tenantQrState, t = st && tenantOf(st.tenantId); if (!t) return;
+    var url = waChatUrl(t.phone, tenantQrMessage(t, st.url));
+    if (!url){ showToast('No phone number on file for this tenant.', 'error'); return; }
+    openWhatsApp(url);
+  };
+  window.copyTenantLoginQr = function(btn){
+    var st = tenantQrState, t = st && tenantOf(st.tenantId); if (!t) return;
+    copyTextReliably(tenantQrMessage(t, st.url)).then(function(ok){
+      if (ok && btn){ btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = 'Copy link'; }, 1800); }
+      else if (!ok) showToast(st.url, 'info');
+    });
+  };
+  /** The QR as a PNG (white background, name underneath) — through the share sheet when the
+   *  device can share files, else downloaded. */
+  window.shareTenantLoginQrImage = async function(btn){
+    var st = tenantQrState, t = st && tenantOf(st.tenantId); if (!t) return;
+    try {
+      var svgText = window.makeQrSvg(st.url);
+      var img = new Image();
+      await new Promise(function(res, rej){ img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText); });
+      var W = 720, pad = 60, c = document.createElement('canvas'); c.width = W; c.height = W + 120;
+      var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      g.imageSmoothingEnabled = false; g.drawImage(img, pad, pad, W - pad * 2, W - pad * 2);
+      g.fillStyle = '#111'; g.textAlign = 'center'; g.font = '600 34px -apple-system, system-ui, sans-serif';
+      g.fillText('House app login · ' + ((t.fullName || '').split(' ')[0] || ''), W / 2, W + 20);
+      g.fillStyle = '#666'; g.font = '26px -apple-system, system-ui, sans-serif';
+      g.fillText('Scan with your phone camera', W / 2, W + 64);
+      var blob = await new Promise(function(res){ c.toBlob(res, 'image/png'); });
+      var file = new File([blob], 'login-qr-' + ((t.fullName || 'tenant').split(' ')[0].toLowerCase()) + '.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })){
+        try { await navigator.share({ files: [file], text: tenantQrMessage(t, st.url) }); return; } catch(_e){ return; }
+      }
+      var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+    } catch(e){ showToast('Could not make the QR image.', 'error'); }
+  };
 
   /** When a tenant leaves (or is about to leave), computes an ESTIMATE of how much bond should
    *  be refunded: it takes their average daily rate from bills already invoiced (allocated amount
@@ -13970,6 +14072,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
         '<button class="mini-btn" onclick="resetUserPassword(\''+p.id+'\')">Reset password</button>'+
+        (function(){ var lt = p.role === 'tenant' && tenants.find(function(t){ return t.authUserId && t.authUserId === p.authUserId; });
+          return lt ? '<button class="mini-btn" onclick="openTenantLoginQr(\''+lt.id+'\', this)">▦ Login QR</button>' : ''; })()+
         (phoneLogin ? '' : '<button class="mini-btn" onclick="sendUserPasswordResetEmail(\''+p.id+'\')">Email reset link</button>')+
         '<button class="mini-btn" onclick="openEditUserModal(\''+p.id+'\')">Edit</button>'+
         '<button class="mini-btn" style="color:var(--status-overdue);" onclick="confirmDeleteUser(\''+p.id+'\')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t delete your own account"':'')+'>Delete</button>'+
@@ -14321,7 +14425,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
           '\n\nKeep this somewhere safe.';
         waLoginUrl = waChatUrl(phone, loginMsg);
         showToast('Tenant login created' + (ref ? ' — ID ' + ref : '') + '. Activate it in Users when ready.', 'success',
-          waLoginUrl ? { label: 'Send by WhatsApp', onClick: function(){ openWhatsApp(waLoginUrl); } } : null);
+          linked ? { label: 'Login QR', onClick: function(){ openTenantLoginQr(linked.id); } }
+            : waLoginUrl ? { label: 'Send by WhatsApp', onClick: function(){ openWhatsApp(waLoginUrl); } } : null);
       } else {
         showToast('User created. Share the login and password with them directly.', 'success');
       }
@@ -18655,6 +18760,27 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   });
 
   async function initAuthGate(){
+    // Opened from a tenant's login QR / link (#/qr/<token>): sign in with it, then drop the token
+    // from the address bar so it isn't kept in history or reused by a refresh.
+    var qrm = /^#\/qr\/([A-Za-z0-9_-]{30,64})/.exec(location.hash || '');
+    if (qrm){
+      try { history.replaceState(null, '', location.pathname + location.search + '#/'); } catch(_e){ location.hash = '#/'; }
+      try {
+        try { await auth.signOut(); } catch(_e){ /* nobody signed in */ }
+        await qrFunctionCall({ action: 'redeem', token: qrm[1] }, 'This login QR code is no longer valid. Ask your house admin for a new one.')
+          .then(function(d){
+            if (!d.access_token) throw new Error('This login QR code is no longer valid.');
+            return realtimeClient.auth.setSession({ access_token: d.access_token, refresh_token: d.refresh_token });
+          })
+          .then(function(r){ if (r && r.error) throw r.error; });
+      } catch(e){
+        document.getElementById('app-loading-screen').hidden = true;
+        document.getElementById('auth-screen').hidden = false;
+        var ae = document.getElementById('auth-error');
+        ae.textContent = (e && e.message) || 'This login QR code is no longer valid.'; ae.hidden = false;
+        return;
+      }
+    }
     var session;
     try { session = await auth.getSession(); } catch(e){ session = null; }
     if (session){
