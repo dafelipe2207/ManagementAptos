@@ -11229,7 +11229,7 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=1';
       var pp = agencyEmailParts(n), c = agencyCaseOf(n), who = c ? c.assignedProfileId : null;
       if (pp.action) counts.action++; else counts.info++;
       if (!n.isRead) counts.unread++;
-      if (who && who === myProfileId) counts.mine++;
+      if (who && who === myProfileId && pp.action) counts.mine++;
       if (!who && pp.action) counts.unassigned++;
     });
     var list = all.filter(function(n){
@@ -11237,7 +11237,7 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=1';
       if (emailsFilter === 'action' && !pp.action) return false;
       if (emailsFilter === 'info' && pp.action) return false;
       if (emailsFilter === 'unread' && n.isRead) return false;
-      if (emailsFilter === 'mine' && (!who || who !== myProfileId)) return false;
+      if (emailsFilter === 'mine' && (!pp.action || !who || who !== myProfileId)) return false;
       if (emailsFilter === 'unassigned' && (who || !pp.action)) return false;
       if (emailsPropertyFilter !== 'all' && n.propertyId !== emailsPropertyFilter) return false;
       return true;
@@ -11271,9 +11271,12 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=1';
         }
       }
       var whoName = who ? staffName(who) || 'Asignado' : '';
-      var whoTag = who ? '<span class="mail-who" title="Responsable">👤 '+esc(whoName)+'</span>' : (pp.action ? '<span class="mail-who none">Sin responsable</span>' : '');
+      var whoTag = !pp.action ? '' : who ? '<span class="mail-who" title="Responsable">👤 '+esc(whoName)+'</span>' : '<span class="mail-who none">Sin responsable</span>';
       var assignRow = '';
-      if (canAssign && staffDirectory.length){
+      // Informative emails (receipts, rent-payment confirmations…) are never assigned to anyone.
+      if (!pp.action){
+        assignRow = '';
+      } else if (canAssign && staffDirectory.length){
         assignRow = '<div class="mail-fact"><span class="mail-fact-k">Responsable</span>'+
           '<select class="mail-assign" aria-label="Responsable del seguimiento" onchange="assignAgencyEmail(\''+n.id+'\', this.value)">'+
             '<option value=""'+(who ? '' : ' selected')+'>Sin asignar</option>'+
