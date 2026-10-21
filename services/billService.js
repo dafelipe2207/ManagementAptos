@@ -37,6 +37,10 @@ function fromRow(row) {
   if (row.allocation_method) b.allocationMethod = row.allocation_method;
   if (row.receipt_path) b.receiptPath = row.receipt_path;
   if (row.admin_receipt_path) b.adminReceiptPath = row.admin_receipt_path;
+  // The clean invoice made for tenants (no agency/owner details) — shown to tenants instead of
+  // the original document once attached. tenantInvoiceData = the fields it's drawn from.
+  b.tenantInvoicePath = row.tenant_invoice_path || null;
+  b.tenantInvoiceData = row.tenant_invoice_data || null;
   b.whatsappGroupSharedAt = row.whatsapp_group_shared_at || null;
   b.whatsappGroupShareCount = Number(row.whatsapp_group_share_count) || 0;
   return b;
@@ -110,4 +114,14 @@ export async function setWhatsAppGroupShared(id, shared, newCount) {
   const { data, error } = await supabase.from('bills').update(patch).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
+}
+
+/** Attaches (path) or detaches (null) the tenant invoice PDF. Kept out of toRow() so ordinary
+ *  bill edits never overwrite it. */
+export async function setTenantInvoice(id, path, data) {
+  const patch = { tenant_invoice_path: path || null };
+  if (data !== undefined) patch.tenant_invoice_data = data;
+  const { data: row, error } = await supabase.from('bills').update(patch).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(row);
 }

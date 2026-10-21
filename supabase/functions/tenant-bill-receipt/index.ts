@@ -68,13 +68,16 @@ Deno.serve(async (req: Request) => {
   }
 
   const { data: bill, error: billErr } = await admin
-    .from("bills").select("receipt_path, provider").eq("id", billId).maybeSingle();
+    .from("bills").select("receipt_path, tenant_invoice_path, provider").eq("id", billId).maybeSingle();
   if (billErr || !bill) return json({ error: "That bill was not found." }, 400);
   // "RS" (agency) bills: the owner chose (2026-10-14) to let tenants open the original document
   // from their Bills screen too — the app still never names the provider anywhere else.
-  if (!bill.receipt_path) return json({ error: "No document is attached to this bill." }, 404);
+  // A clean tenant invoice (made in the app from the agency's invoice, without the agency's or
+  // the owner's details — 2026-10-21) replaces the original document for tenants once attached.
+  const docPath = (!isStaff && bill.tenant_invoice_path) ? bill.tenant_invoice_path : (bill.receipt_path || bill.tenant_invoice_path);
+  if (!docPath) return json({ error: "No document is attached to this bill." }, 404);
 
-  const { data: signed, error: signErr } = await admin.storage.from("receipts").createSignedUrl(bill.receipt_path, 300);
+  const { data: signed, error: signErr } = await admin.storage.from("receipts").createSignedUrl(docPath, 300);
   if (signErr || !signed) {
     console.error("tenant-bill-receipt: could not sign URL:", signErr);
     return json({ error: "Could not open the document right now." }, 500);

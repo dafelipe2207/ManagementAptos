@@ -14,7 +14,7 @@ import * as tenantService from './services/tenantService.js?v=10';
 import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
-import * as billService from './services/billService.js?v=6';
+import * as billService from './services/billService.js?v=7';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=3';
@@ -41,7 +41,8 @@ import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
-import * as agencyEmailService from './services/agencyEmailService.js?v=2';
+import * as agencyEmailService from './services/agencyEmailService.js?v=3';
+import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
 
 (function(){
   "use strict";
@@ -9164,8 +9165,87 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=2';
       (canDeleteRecords() ? '<button class="mini-btn danger" onclick="deleteBillConfirm(\''+b.id+'\')">Delete bill</button>' : '')+
       '</div>'+
       providerAccountCardHtml(b) +
+      tenantInvoiceCardHtml(b) +
       billAllocationCard(b);
   }
+
+  /* ---------- Tenant invoice: a clean copy of the agency's invoice ----------
+   * For bills that came from the real estate ("RS"): the same values as their invoice but none of
+   * the agency's or the owner's details, made as a PDF here and attached to the bill — tenants then
+   * open this one instead of the original (see the tenant-bill-receipt function). Water bills with
+   * meter/usage details use the Water-Corporation-style layout. See lib/tenantInvoice.js. */
+  function tenantInvoiceApplies(b){ return !!b && (isTenantHiddenProvider(b.provider) || !!b.tenantInvoiceData || !!b.tenantInvoicePath); }
+  function tenantInvoiceDataFor(b){
+    var c = agencyCases.find(function(x){ return x.billId === b.id && x.invoiceDoc; });
+    var base = Object.assign({}, c ? c.invoiceDoc : {}, b.tenantInvoiceData || {});
+    return tenantInvoice.dataFromBill(b, propertyOf(b.propertyId), base);
+  }
+  function tenantInvoiceCardHtml(b){
+    if (isTenantRole() || isViewer() || !tenantInvoiceApplies(b)) return '';
+    var d = tenantInvoiceDataFor(b);
+    var kind = d.template === 'water' ? 'Water Corporation style, with meter and usage details' : 'agency invoice layout';
+    var busy = tenantInvoiceBusy === b.id;
+    if (b.tenantInvoicePath){
+      return '<div class="card"><h2>Tenant invoice</h2>'+
+        '<p style="font-size:13.5px;margin:0 0 10px;">✅ Attached. Tenants see this invoice (Invoice # '+esc(d.invoiceNumber || '—')+', '+esc(money(d.amount))+') instead of the agency\'s original.</p>'+
+        '<div class="actions-row">'+
+          '<button type="button" class="mini-btn primary" onclick="viewReceipt(\'receipts\',\''+b.tenantInvoicePath+'\')">View tenant invoice</button>'+
+          '<button type="button" class="mini-btn" '+(busy ? 'disabled' : '')+' onclick="attachTenantInvoice(\''+b.id+'\')">'+(busy ? 'Working…' : 'Make it again')+'</button>'+
+          '<button type="button" class="mini-btn danger" onclick="removeTenantInvoice(\''+b.id+'\')">Remove</button>'+
+        '</div></div>';
+    }
+    return '<div class="card"><h2>Tenant invoice</h2>'+
+      '<p style="font-size:13.5px;color:var(--text-dim);margin:0 0 10px;">A clean copy of the agency\'s invoice for tenants: same invoice #, dates and amounts, without the agency\'s or the owner\'s details ('+esc(kind)+'). Not attached yet — tenants still see the original.</p>'+
+      '<div class="actions-row">'+
+        '<button type="button" class="mini-btn" '+(busy ? 'disabled' : '')+' onclick="previewTenantInvoice(\''+b.id+'\')">'+(busy ? 'Working…' : 'Preview PDF')+'</button>'+
+        '<button type="button" class="mini-btn primary" '+(busy ? 'disabled' : '')+' onclick="attachTenantInvoice(\''+b.id+'\')">Attach for tenants</button>'+
+      '</div></div>';
+  }
+  var tenantInvoiceBusy = null;
+  async function makeTenantInvoiceBlob(b){
+    return tenantInvoice.makePdf(tenantInvoiceDataFor(b));
+  }
+  window.previewTenantInvoice = async function(billId){
+    var b = billOf(billId); if (!b) return;
+    // Open the tab now (inside the tap) so iPhone Safari doesn't block it as a pop-up.
+    var w = window.open('', '_blank');
+    tenantInvoiceBusy = billId; renderPreservingScroll();
+    try {
+      var blob = await makeTenantInvoiceBlob(b);
+      var url = URL.createObjectURL(blob);
+      if (w) w.location.href = url; else window.open(url, '_blank');
+    } catch(e){
+      if (w) w.close();
+      console.error('tenant invoice preview', e);
+      showToast('Could not make the invoice PDF. ' + friendlyErrorMessage(e), 'error');
+    } finally { tenantInvoiceBusy = null; renderPreservingScroll(); }
+  };
+  window.attachTenantInvoice = async function(billId){
+    var b = billOf(billId); if (!b) return;
+    tenantInvoiceBusy = billId; renderPreservingScroll();
+    try {
+      var d = tenantInvoiceDataFor(b);
+      var blob = await tenantInvoice.makePdf(d);
+      var file = new File([blob], tenantInvoice.fileName(d), { type: 'application/pdf' });
+      var path = await storageService.uploadReceipt(b.id + '-tenant-invoice', file);
+      var saved = await billService.setTenantInvoice(b.id, path);
+      b.tenantInvoicePath = saved.tenantInvoicePath;
+      showToast('Tenant invoice attached — tenants now see this one.', 'success');
+    } catch(e){
+      console.error('tenant invoice attach', e);
+      showToast('Could not attach the invoice. ' + friendlyErrorMessage(e), 'error');
+    } finally { tenantInvoiceBusy = null; renderPreservingScroll(); }
+  };
+  window.removeTenantInvoice = async function(billId){
+    var b = billOf(billId); if (!b) return;
+    if (!confirm('Remove the tenant invoice? Tenants will see the agency\'s original document again.')) return;
+    try {
+      var saved = await billService.setTenantInvoice(b.id, null);
+      b.tenantInvoicePath = saved.tenantInvoicePath;
+      showToast('Tenant invoice removed.', 'success');
+      renderPreservingScroll();
+    } catch(e){ showToast('Could not remove it. ' + friendlyErrorMessage(e), 'error'); }
+  };
 
   /* ---------- The admin's account with each provider (per property) ----------
    * Kept in the property's listing_info.providerAccounts (staff-only: never sent to tenants),
@@ -14779,7 +14859,7 @@ import * as agencyEmailService from './services/agencyEmailService.js?v=2';
               ' · Your occupancy factor: '+a.occupancyFactor.toFixed(1)+'<br>'+
               money(b.amount)+' ÷ '+a.totalOccupancyFactor.toFixed(1)+' × '+a.occupancyFactor.toFixed(1)+' = '+money(a.amount)+
               '</p>' : '')+
-            (b.receiptPath ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>'
+            ((b.receiptPath || b.tenantInvoicePath) ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillReceipt(\''+b.id+'\', this)">View invoice</button>'
               : (b.hasHiddenDoc ? '<button class="mini-btn" style="margin-top:10px;" onclick="viewTenantBillSummary(\''+b.id+'\')">View bill</button>' : ''))+
             (function(){ // their own transfer receipt for this share, if one is on file
               var proof = a.receiptPath || ((paymentReportsForAllocation(a.id).find(function(r){ return r.proofPath && r.status !== 'rejected'; }) || {}).proofPath);

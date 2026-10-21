@@ -21,6 +21,7 @@ function fromRow(r) {
     linkedTable: r.linked_table || null,
     linkedId: r.linked_id || null,
     linkedAuto: !!r.linked_auto,
+    invoiceDoc: r.invoice_doc || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at
   };
