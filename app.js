@@ -6107,8 +6107,27 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    *  Paid, and the list is grouped by those anyway): what's still open, what's finished, and the
    *  same bills per tenant. Old values ('all', 'pending', 'overdue', 'paid'…) still map here. */
   var BILLS_FILTERS = [['collect','To collect'], ['history','History'], ['tenants','By tenant']];
-  function normBillsFilter(f){ return (f === 'history' || f === 'paid') ? 'history' : f === 'tenants' ? 'tenants' : 'collect'; }
+  function normBillsFilter(f){
+    if (typeof f === 'string' && f.indexOf('tenant:') === 0) return f;
+    return (f === 'history' || f === 'paid') ? 'history' : f === 'tenants' ? 'tenants' : 'collect';
+  }
   function setBillsFilter(f){ billsFilter = normBillsFilter(f); renderPreservingScroll(); }
+  /** Tenants opened from "By tenant" get their own closable tab next to the three fixed ones. */
+  var billsTenantTabs = [];
+  function openBillsTenantTab(tenantId){
+    if (billsTenantTabs.indexOf(tenantId) === -1) billsTenantTabs.push(tenantId);
+    billsFilter = 'tenant:' + tenantId;
+    renderPreservingScroll();
+    var anchor = document.getElementById('bills-list-anchor');
+    if (anchor) anchor.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+  function closeBillsTenantTab(tenantId){
+    billsTenantTabs = billsTenantTabs.filter(function(id){ return id !== tenantId; });
+    if (billsFilter === 'tenant:' + tenantId) billsFilter = 'tenants';
+    renderPreservingScroll();
+  }
+  window.openBillsTenantTab = openBillsTenantTab;
+  window.closeBillsTenantTab = closeBillsTenantTab;
   function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; billsTypeFilter = 'all'; renderPreservingScroll(); }
   /** Service type picked from the Invoice timeline (together with its property). 'all' = every type. */
   var billsTypeFilter = 'all';
@@ -8667,7 +8686,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   /** "By tenant" tab: every tenant with bill shares in the selected property/type — what they still
    *  owe (top, with Mark paid and the WhatsApp reminder) and their history (paid shares with the date
    *  and how). Tenants who owe come first, biggest amount first; then everyone else by name. */
-  function billsByTenantHtml(scopedBills){
+  /** One bill share of a tenant: bill (link), period, amount, and Paid date / Unpaid·Overdue + Mark paid. */
+  function billTenantShareRowHtml(it, canMark){
+    var b = it.bill, a = it.alloc;
+    var when = b.billingPeriodStart ? shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) : (b.dueDate ? 'Due ' + shortDate(b.dueDate) : '');
+    var state = a.paid
+      ? badge('paid', 'Paid' + (a.paidDate ? ' ' + shortDate(a.paidDate) : '')) + (a.paidVia && a.paidVia !== 'cash' ? ' <span class="bt-faint">' + esc(String(a.paidVia).replace(/_/g, ' ')) + '</span>' : '')
+      : (b.dueDate && b.dueDate < TODAY ? badge('overdue', 'Overdue') : badge('due', 'Unpaid')) +
+        (canMark ? ' <button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openAllocPaidModal(\'' + b.id + '\',\'' + a.tenantId + '\')">Mark paid</button>' : '');
+    return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;padding-left:10px;">' +
+      '<div class="who"><a href="#/bills/' + b.id + '" style="font-weight:500;color:inherit;">' + esc(billTypeLabel(b.billType)) + ' — ' + esc(b.provider || '') + '</a>' +
+      '<div class="meta">' + esc(when) + '</div></div>' +
+      '<div style="display:flex;align-items:center;gap:8px;"><b>' + money(a.amount) + '</b>' + state + '</div></div>';
+  }
+  /** Every bill share of each tenant within `scopedBills`, newest first, with owed / paid totals. */
+  function billSharesByTenant(scopedBills){
     var byTenant = {};
     scopedBills.forEach(function(b){
       (b.allocations || []).forEach(function(a){
@@ -8675,48 +8708,56 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         (byTenant[a.tenantId] = byTenant[a.tenantId] || []).push({ bill:b, alloc:a });
       });
     });
-    var canMark = !isViewer() && !isTenantRole();
-    var rows = Object.keys(byTenant).map(function(id){
+    return Object.keys(byTenant).map(function(id){
       var items = byTenant[id].slice().sort(function(x, y){ return (y.bill.dueDate || '').localeCompare(x.bill.dueDate || ''); });
       var owed = round2(items.filter(function(it){ return !it.alloc.paid; }).reduce(function(s, it){ return s + (it.alloc.amount || 0); }, 0));
       var paid = round2(items.filter(function(it){ return it.alloc.paid; }).reduce(function(s, it){ return s + (it.alloc.amount || 0); }, 0));
       return { tenant: tenantOf(id), id: id, items: items, owed: owed, paid: paid };
-    }).sort(function(a, b){
+    });
+  }
+  function owedPaidHtml(r){
+    return (r.owed > 0.004 ? '<span style="color:var(--status-overdue);">owes ' + money(r.owed) + '</span>' : '<span style="color:var(--status-paid);">all paid</span>') +
+      ' <span style="color:var(--text-faint);font-weight:400;">· paid ' + money(r.paid) + '</span>';
+  }
+  /** "By tenant" tab: one row per tenant (who owes first, biggest first; then by name). Tapping a
+   *  row opens that tenant in their own tab (billsTenantDetailHtml). */
+  function billsByTenantHtml(scopedBills){
+    var rows = billSharesByTenant(scopedBills).sort(function(a, b){
       if ((a.owed > 0.004) !== (b.owed > 0.004)) return a.owed > 0.004 ? -1 : 1;
       if (a.owed !== b.owed) return b.owed - a.owed;
       return (a.tenant ? a.tenant.fullName : '').localeCompare(b.tenant ? b.tenant.fullName : '');
     });
     if (!rows.length) return emptyState('receipt', 'No tenant shares yet', 'Split a bill among the tenants and it shows up here, per tenant.', '');
-    function itemHtml(it){
-      var b = it.bill, a = it.alloc;
-      var when = b.billingPeriodStart ? shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) : (b.dueDate ? 'Due ' + shortDate(b.dueDate) : '');
-      var state = a.paid
-        ? badge('paid', 'Paid' + (a.paidDate ? ' ' + shortDate(a.paidDate) : '')) + (a.paidVia && a.paidVia !== 'cash' ? ' <span class="bt-faint">' + esc(String(a.paidVia).replace(/_/g, ' ')) + '</span>' : '')
-        : (b.dueDate && b.dueDate < TODAY ? badge('overdue', 'Overdue') : badge('due', 'Unpaid')) +
-          (canMark ? ' <button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openAllocPaidModal(\'' + b.id + '\',\'' + a.tenantId + '\')">Mark paid</button>' : '');
-      return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;padding-left:10px;">' +
-        '<div class="who"><a href="#/bills/' + b.id + '" style="font-weight:500;color:inherit;">' + esc(billTypeLabel(b.billType)) + ' — ' + esc(b.provider || '') + '</a>' +
-        '<div class="meta">' + esc(when) + '</div></div>' +
-        '<div style="display:flex;align-items:center;gap:8px;"><b>' + money(a.amount) + '</b>' + state + '</div></div>';
-    }
     var body = rows.map(function(r){
       var prop = r.tenant ? properties.find(function(p){ return p.id === r.tenant.propertyId; }) : null;
-      var unpaid = r.items.filter(function(it){ return !it.alloc.paid; });
-      var paidItems = r.items.filter(function(it){ return it.alloc.paid; });
-      var wa = r.tenant && unpaid.length ? pendingBillsWhatsAppRowHtml(r.tenant, unpaid, prop) : '';
-      return lazyDetails('<details class="pending-bills-tenant">' +
-        '<summary class="field-row" style="cursor:pointer;list-style:none;"><span class="k">' + esc(r.tenant ? r.tenant.fullName : 'Unknown tenant') +
+      return '<button type="button" class="field-row bt-tenant-row" onclick="openBillsTenantTab(\'' + r.id + '\')">' +
+        '<span class="k">' + esc(r.tenant ? r.tenant.fullName : 'Unknown tenant') +
         (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· ' + esc(prop.name) + '</span>' : '') + '</span>' +
-        '<span class="v">' + (r.owed > 0.004 ? '<span style="color:var(--status-overdue);">owes ' + money(r.owed) + '</span>' : '<span style="color:var(--status-paid);">all paid</span>') +
-        ' <span style="color:var(--text-faint);font-weight:400;">· paid ' + money(r.paid) + '</span></span></summary>' +
-        (unpaid.length ? '<div class="bt-hist-h">Still owes</div>' + wa + unpaid.map(itemHtml).join('') : '') +
-        (paidItems.length ? '<div class="bt-hist-h">History</div>' + paidItems.map(itemHtml).join('') : '') +
-        '</details>', false);
+        '<span class="v">' + owedPaidHtml(r) + ' <span aria-hidden="true" class="bt-go">›</span></span></button>';
     }).join('');
     var owedTotal = rows.reduce(function(s, r){ return s + r.owed; }, 0);
     return '<div class="card"><div class="field-list">' + body + '</div>' +
       '<div class="field-row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">' +
       '<span class="k" style="font-weight:600;">Still owed by tenants</span><span class="v" style="font-weight:600;">' + money(owedTotal) + '</span></div></div>';
+  }
+  /** A tenant's own tab: totals, what they still owe (Mark paid, WhatsApp) and their history —
+   *  across ALL bills, whatever property/type is selected above. */
+  function billsTenantDetailHtml(tenantId){
+    var t = tenantOf(tenantId);
+    var r = billSharesByTenant(bills).filter(function(x){ return x.id === tenantId; })[0] || { tenant:t, id:tenantId, items:[], owed:0, paid:0 };
+    var prop = t ? properties.find(function(p){ return p.id === t.propertyId; }) : null;
+    var canMark = !isViewer() && !isTenantRole();
+    var unpaid = r.items.filter(function(it){ return !it.alloc.paid; });
+    var paidItems = r.items.filter(function(it){ return it.alloc.paid; });
+    var wa = t && unpaid.length ? pendingBillsWhatsAppRowHtml(t, unpaid, prop) : '';
+    return '<div class="card">' +
+      '<div class="detail-head" style="margin-top:0;align-items:flex-start;"><div><h2 style="margin:0;font-size:16px;">' + esc(t ? t.fullName : 'Unknown tenant') + '</h2>' +
+      '<div class="bt-faint">' + (prop ? esc(prop.name) + ' · ' : '') + r.items.length + ' bill share' + (r.items.length === 1 ? '' : 's') + '</div></div>' +
+      '<div style="text-align:right;font-weight:600;">' + owedPaidHtml(r) + '</div></div>' +
+      (unpaid.length ? '<div class="bt-hist-h">Still owes</div>' + wa + unpaid.map(function(it){ return billTenantShareRowHtml(it, canMark); }).join('') : '') +
+      (paidItems.length ? '<div class="bt-hist-h">History</div>' + paidItems.map(function(it){ return billTenantShareRowHtml(it, canMark); }).join('') : '') +
+      (!r.items.length ? '<p class="bt-faint" style="margin:8px 0 0;">No bill shares for this tenant.</p>' : '') +
+      '</div>';
   }
 
   function renderBillsListTab(tabs){
@@ -8741,12 +8782,20 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '</div>';
 
     var tab = normBillsFilter(billsFilter);
+    billsTenantTabs = billsTenantTabs.filter(function(id){ return !!tenantOf(id); });
+    if (tab.indexOf('tenant:') === 0 && billsTenantTabs.indexOf(tab.slice(7)) === -1) tab = billsFilter = 'tenants';
     var chipsHtml = '<div class="filter-chips">' + BILLS_FILTERS.map(function(f){
       return '<button class="chip'+(tab===f[0]?' active':'')+'" onclick="setBillsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
+    }).join('') + billsTenantTabs.map(function(id){
+      var t = tenantOf(id);
+      return '<span class="chip tenant-tab'+(tab==='tenant:'+id?' active':'')+'">'+
+        '<button type="button" onclick="setBillsFilter(\'tenant:'+id+'\')">👤 '+esc(tenantFirstName(t.fullName))+'</button>'+
+        '<button type="button" class="tt-x" aria-label="Close '+esc(t.fullName)+'" title="Close" onclick="closeBillsTenantTab(\''+id+'\')">✕</button></span>';
     }).join('') + '</div>';
 
     var filtered = sortBillsList(propertyScoped.filter(function(b){ return billMatchesFilter(b, tab); }));
-    var rows = tab === 'tenants' ? billsByTenantHtml(propertyScoped) : filtered.length===0
+    var rows = tab.indexOf('tenant:') === 0 ? billsTenantDetailHtml(tab.slice(7))
+      : tab === 'tenants' ? billsByTenantHtml(propertyScoped) : filtered.length===0
       ? (propertyScoped.length===0
           ? emptyState('receipt', 'No bills yet',
               billsPropertyFilter==='all'
