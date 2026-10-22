@@ -168,9 +168,16 @@ async function sendWhatsApp(text: string): Promise<void> {
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
   const url = new URL(req.url);
-  if (!TOKEN || !safeEqual(url.searchParams.get("token") || req.headers.get("x-agency-token") || "", TOKEN)) {
-    return json({ error: "unauthorized" }, 401);
+  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  // Token: the AGENCY_EMAIL_TOKEN secret, or the 'webhook_token' row of the private
+  // agency_email_settings table (service role only) — either one is accepted.
+  const given = url.searchParams.get("token") || req.headers.get("x-agency-token") || "";
+  let authorized = !!TOKEN && safeEqual(given, TOKEN);
+  if (!authorized && given) {
+    const { data } = await db.from("agency_email_settings").select("value").eq("key", "webhook_token").maybeSingle();
+    authorized = !!data?.value && safeEqual(given, String(data.value));
   }
+  if (!authorized) return json({ error: "unauthorized" }, 401);
   let payload: { runId?: string; final?: boolean; messages?: InMsg[] };
   try { payload = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const messages = Array.isArray(payload.messages) ? payload.messages : null;
@@ -178,7 +185,6 @@ Deno.serve(async (req) => {
 
   const started = Date.now();
   const deadline = started + BUDGET_MS;
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   const today = perthToday(new Date());
   const counts = { found: 0, notified: 0, updates: 0, errors: 0 };
   const results: Record<string, unknown>[] = [];

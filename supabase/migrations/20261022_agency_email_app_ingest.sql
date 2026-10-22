@@ -33,3 +33,9 @@ language sql security definer set search_path = public as $$
   returning r.*;
 $$;
 revoke all on function public.agency_email_run_add(text, int, int, int, int) from public, anon, authenticated;
+
+-- Webhook token kept in the database too (service role only), so the function works even if the
+-- AGENCY_EMAIL_TOKEN secret isn't set. The value itself is inserted outside the repo.
+create table if not exists public.agency_email_settings (key text primary key, value text not null, updated_at timestamptz not null default now());
+alter table public.agency_email_settings enable row level security;
+revoke all on public.agency_email_settings from anon, authenticated;
