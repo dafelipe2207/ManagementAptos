@@ -42,7 +42,7 @@ import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
 import * as agencyEmailService from './services/agencyEmailService.js?v=5';
-import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
+import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
 
 (function(){
   "use strict";
