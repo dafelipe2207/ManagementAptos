@@ -8720,13 +8720,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     Object.keys(groups).forEach(function(key){
       var list = groups[key].slice().sort(function(a,b){ return dateOf(a).localeCompare(dateOf(b)); });
       if (list.length < 2) return; // need at least 2 to know the usual pace
+      // Typical gap = MEDIAN of the gaps between invoices (same-day pairs left out), not the
+      // average: one bill saved with the wrong date (two Kewdale internet bills both dated 5 Sep)
+      // turned a monthly bill into "every 15 days" and flagged it overdue two weeks early.
       var intervals = [];
-      for (var i=1;i<list.length;i++) intervals.push(daysBetween(dateOf(list[i-1]), dateOf(list[i])));
-      var avgInterval = Math.round(intervals.reduce(function(s,n){ return s+n; }, 0) / intervals.length);
+      for (var i=1;i<list.length;i++){ var gap = daysBetween(dateOf(list[i-1]), dateOf(list[i])); if (gap > 0) intervals.push(gap); }
+      if (!intervals.length) return;
+      var sortedGaps = intervals.slice().sort(function(a,b){ return a-b; });
+      var mid = Math.floor(sortedGaps.length/2);
+      var avgInterval = Math.round(sortedGaps.length % 2 ? sortedGaps[mid] : (sortedGaps[mid-1] + sortedGaps[mid]) / 2);
       if (avgInterval <= 0) return;
+      var monthly = avgInterval >= 26 && avgInterval <= 33;
       var last = list[list.length-1];
       var lastDate = dateOf(last);
-      var predictedNextDate = stepDateIso(lastDate, avgInterval);
+      // Monthly bills come on the same day each month (5 Oct → 5 Nov), not every N days.
+      var predictedNextDate = monthly ? addMonthsIso(lastDate, 1) : stepDateIso(lastDate, avgInterval);
       var daysOverdue = daysBetween(predictedNextDate, TODAY);
       if (daysOverdue <= 0) return; // not due yet, based on its own historical pace
       var estimatedAmount = round2(list.reduce(function(s,b){ return s + (b.amount||0); }, 0) / list.length);
@@ -8746,7 +8754,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         propertyId: last.propertyId, propertyName: p ? p.name : '—',
         billType: last.billType, provider: last.provider,
         lastBillDate: lastDate, predictedNextDate: predictedNextDate, daysOverdue: daysOverdue,
-        estimatedAmount: estimatedAmount, sampleCount: list.length, avgInterval: avgInterval,
+        estimatedAmount: estimatedAmount, sampleCount: list.length, avgInterval: avgInterval, monthly: monthly,
         accountNumber: withAccount ? withAccount.accountNumber.trim() : '',
         otherAccounts: accounts.filter(function(a){ return !withAccount || a !== withAccount.accountNumber.trim(); }),
         lastBillId: last.id, lastInvoiceNumber: last.invoiceNumber || '',
@@ -8805,7 +8813,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           '<div class="field-row"><span class="k">Amount</span><span class="v">'+money(pred.lastAmount)+'</span></div>'+
         '</div><a class="text-link mi-open" href="#/bills/'+pred.lastBillId+'">Open last bill</a></div>'+
       '</div>'+
-      '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">Based on '+pred.sampleCount+' past bills for this provider, about every '+pred.avgInterval+' days on average.</p>'+
+      '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">Based on '+pred.sampleCount+' past bills for this provider, '+(pred.monthly ? 'about once a month' : 'usually every '+pred.avgInterval+' days')+'.</p>'+
       '<button class="mini-btn primary" style="margin-top:10px;" onclick="setBillsViewTab(\'list\');openImportModal();">+ Add this bill</button>'+
       '</div>';
   }
@@ -9227,7 +9235,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         return n.relatedTable==='bills' && n.relatedId===g.propertyId && n.title===title && n.createdAt && n.createdAt.slice(0,10) >= cutoff;
       });
       if (alreadyNotified) continue;
-      var body = 'No ' + billTypeLabel(g.billType).toLowerCase() + ' bill has been loaded for ' + g.propertyName + ' since ' + shortDate(g.lastBillDate) + ' — it usually arrives every ' + g.avgInterval + ' days, so it was expected by ' + shortDate(g.predictedNextDate) + '. Add it once it arrives.';
+      var body = 'No ' + billTypeLabel(g.billType).toLowerCase() + ' bill has been loaded for ' + g.propertyName + ' since ' + shortDate(g.lastBillDate) + ' — it usually arrives ' + (g.monthly ? 'once a month' : 'every ' + g.avgInterval + ' days') + ', so it was expected by ' + shortDate(g.predictedNextDate) + '. Add it once it arrives.';
       await notificationService.notify(currentProfile.authUserId, title, body, 'bills', g.propertyId);
       notificationsList.unshift({ id:'local-'+Date.now()+'-'+i, authUserId:currentProfile.authUserId, title:title, body:body, relatedTable:'bills', relatedId:g.propertyId, isRead:false, createdAt:new Date().toISOString() });
     }
