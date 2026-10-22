@@ -74,17 +74,37 @@ export async function getAll() {
   return data.map(fromRow);
 }
 
+/** An account number belongs to one property: refuse to save it on a bill of another property
+ *  (a Footscray invoice number once ended up as the "account" of a Kewdale bill). The same number
+ *  on several bills of the SAME property is normal. */
+async function assertAccountBelongsToProperty(row, ownId) {
+  const acct = (row.account_number || '').trim();
+  if (!acct || !row.property_id) return;
+  let q = supabase.from('bills').select('id, property_id, properties(name)')
+    .ilike('account_number', acct.replace(/[%_\\]/g, (c) => '\\' + c))
+    .neq('property_id', row.property_id).limit(1);
+  if (ownId) q = q.neq('id', ownId);
+  const { data, error } = await q;
+  if (error || !data || !data.length) return; // never block a save because the check itself failed
+  const other = (data[0].properties && data[0].properties.name) || 'another property';
+  throw new Error('Account number ' + acct + ' is already used by a bill of ' + other +
+    '. Each property has its own account number — check it against the bill (or leave it empty).');
+}
+
 export async function create(b) {
   const userId = await getCurrentUserId();
   const row = toRow(b);
   row.user_id = userId;
+  await assertAccountBelongsToProperty(row, null);
   const { data, error } = await supabase.from('bills').insert(row).select().single();
   if (error) throw error;
   return fromRow(data);
 }
 
 export async function update(id, b) {
-  const { data, error } = await supabase.from('bills').update(toRow(b)).eq('id', id).select().single();
+  const row = toRow(b);
+  await assertAccountBelongsToProperty(row, id);
+  const { data, error } = await supabase.from('bills').update(row).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }

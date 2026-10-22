@@ -14,7 +14,7 @@ import * as tenantService from './services/tenantService.js?v=10';
 import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
-import * as billService from './services/billService.js?v=7';
+import * as billService from './services/billService.js?v=8';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=3';
