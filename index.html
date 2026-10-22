@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=327">
+<link rel="modulepreload" href="app.js?v=328">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -37,7 +37,7 @@
 <link rel="modulepreload" href="services/billExtractionService.js?v=1">
 <link rel="modulepreload" href="services/profileService.js?v=7">
 <link rel="modulepreload" href="services/maintenanceService.js">
-<link rel="modulepreload" href="services/notificationService.js?v=2">
+<link rel="modulepreload" href="services/notificationService.js?v=3">
 <link rel="modulepreload" href="services/paymentReportService.js?v=3">
 <link rel="modulepreload" href="services/rentPaymentReportService.js?v=5">
 <link rel="modulepreload" href="services/houseRulesService.js">
@@ -1351,6 +1351,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=327"></script>
+<script type="module" src="app.js?v=328"></script>
 </body>
 </html>

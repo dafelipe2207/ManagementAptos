@@ -166,6 +166,11 @@ export async function cancelScheduled(id) {
   if (error) throw error;
 }
 
+export async function unarchive(id) {
+  const { error } = await supabase.from('notifications').update({ archived_at: null }).eq('id', id);
+  if (error) throw error;
+}
+
 export async function archive(id) {
   const { error } = await supabase.from('notifications').update({ archived_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
