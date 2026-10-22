@@ -115,6 +115,23 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   function isPhoneLoginProfile(p){ return p.role === 'tenant' && p.email && p.email.indexOf(PHONE_LOGIN_SUFFIX) > -1; }
   function phoneDigitsOnly(raw){ return (raw || '').replace(/[^0-9]/g, ''); }
   function isSuperAdmin(){ return !!currentProfile && currentProfile.role === 'super_admin'; }
+  function isAdministrator(){ return !!currentProfile && currentProfile.role === 'administrator'; }
+  /** Super Admin or Administrator: the same app, pages and tools. An Administrator just works on
+   *  the properties assigned to them, and only the Super Admin manages staff accounts, roles and
+   *  property assignments. (The database enforces both.) */
+  function isAdminLike(){ return isSuperAdmin() || isAdministrator(); }
+  /** An Administrator can't read the other staff accounts (their saved passwords stay private), so
+   *  the staff list from agency_email_staff() fills in names/roles — for "who did this" in the
+   *  Audit log, notification recipients, etc. Never shown as editable rows (Users shows tenants). */
+  function withStaffStubs(list){
+    var out = (list || []).slice();
+    (staffDirectory || []).forEach(function(s){
+      if (out.some(function(p){ return p.id === s.id; })) return;
+      var parts = (s.name || '').split(' ');
+      out.push({ id: s.id, authUserId: s.authUserId, firstName: parts[0] || '', lastName: parts.slice(1).join(' '), role: s.role, isActive: true, email: '', phone: '', stub: true });
+    });
+    return out;
+  }
   /** Administrators can do everything the Super Admin can on their assigned properties —
    *  deleting included. Only managing users / assigning properties and the Audit log stay
    *  Super Admin-only. (The database enforces the property scope.) */
@@ -1322,7 +1339,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   var MORE = { hash:'#/more', label:'More', icon:'more' };
 
   function buildNavDom(navList){
-    NAV = navList.filter(function(i){ return !i.superAdminOnly || (currentProfile && currentProfile.role === 'super_admin'); });
+    NAV = navList.filter(function(i){ return !i.superAdminOnly || isAdminLike(); });
     var sidebarNavEl = document.getElementById('sidebar-nav');
     sidebarNavEl.innerHTML = NAV.map(function(item){
       if (item.header) return '<div class="nav-section-header">'+esc(item.label)+'</div>';
@@ -1845,7 +1862,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   function tenantLifecycleBadge(t){
     if (tenantHasMovedOut(t)) return badge('neutral', 'Moved out' + (t.actualMoveOutDate ? ' '+shortDate(t.actualMoveOutDate) : ''));
     if (t.moveInDate && t.moveInDate > TODAY) return badge('upcoming', 'Moves in '+shortDate(t.moveInDate));
-    if (t.expectedMoveOutDate && t.expectedMoveOutDate >= TODAY) return badge('due', 'Leaving '+shortDate(t.expectedMoveOutDate));
+    // A move-out still to come — the confirmed date (often set by the tenant's own notice) or the expected one.
+    var leaving = t.actualMoveOutDate || t.expectedMoveOutDate;
+    if (leaving && leaving >= TODAY) return badge('due', 'Leaving '+shortDate(leaving));
     return badge('paid', 'Active');
   }
 
@@ -3502,7 +3521,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     var datesRows = '' +
       '<div class="field-row"><span class="k">Move-in</span><span class="v">'+fullDate(t.moveInDate)+'</span></div>'+
       (t.expectedMoveOutDate ? '<div class="field-row"><span class="k">Expected move-out</span><span class="v">'+fullDate(t.expectedMoveOutDate)+'</span></div>' : '') +
-      (t.actualMoveOutDate ? '<div class="field-row"><span class="k">Actual move-out</span><span class="v">'+fullDate(t.actualMoveOutDate)+'</span></div>' : '');
+      (t.actualMoveOutDate ? '<div class="field-row"><span class="k">'+(t.actualMoveOutDate > TODAY ? 'Leaving on' : 'Moved out')+'</span><span class="v">'+fullDate(t.actualMoveOutDate)+
+        (t.actualMoveOutDate > TODAY ? ' <span style="font-weight:400;color:var(--text-faint);">(in '+daysBetween(TODAY, t.actualMoveOutDate)+' days)</span>' : '')+'</span></div>' : '');
 
     var rentRows = t.rentAmount > 0 ? (
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+t.rentFrequency+'</span></div>'+
@@ -3518,7 +3538,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       '<p class="page-sub">'+esc(p?p.name:'')+(room?' • '+esc(room.name):'')+'</p></div>'+
       (tenancyBadge?'<div>'+tenancyBadge+'</div>':'')+'</div>'+
       '<div class="actions-row">'+
-      (isSuperAdmin() ? '<button class="mini-btn" onclick="startViewAs(\''+t.id+'\')">👁 View as tenant</button>' : '')+
+      (isAdminLike() ? '<button class="mini-btn" onclick="startViewAs(\''+t.id+'\')">👁 View as tenant</button>' : '')+
       '<button class="mini-btn" onclick="openTenantModal(\''+t.id+'\')">Edit tenant</button>'+
       '<button class="mini-btn" onclick="openBondModal(\''+t.id+'\')">'+(bond?'Edit bond':'Add bond')+'</button>'+
       (isViewer() ? '' : '<button class="mini-btn" onclick="openBondDepositModal(\''+t.id+'\')">Bond payment</button>')+
@@ -9106,7 +9126,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     var leaseRecipients = function(propertyId){
       var ids = {};
       if (currentProfile.authUserId) ids[currentProfile.authUserId] = true;
-      if (isSuperAdmin()){
+      if (isAdminLike()){
         allProfiles.forEach(function(pr){
           if (!pr.authUserId || pr.isActive === false) return;
           if (pr.role === 'super_admin') ids[pr.authUserId] = true;
@@ -14081,8 +14101,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   function setUsersPropertyFilter(v){ usersPropertyFilter = v; renderPreservingScroll(); }
   window.setUsersPropertyFilter = setUsersPropertyFilter;
   function renderUsers(){
-    if (!isSuperAdmin()) return accessDeniedPage();
-    var USERS_TABS = [['administrator','Admins'],['viewer','Viewers'],['super_admin','Super Admins'],['tenant','Tenants']];
+    if (!isAdminLike()) return accessDeniedPage();
+    // An Administrator manages the tenant logins of their properties; staff accounts are the Super Admin's.
+    var USERS_TABS = isSuperAdmin() ? [['administrator','Admins'],['viewer','Viewers'],['super_admin','Super Admins'],['tenant','Tenants']] : [['tenant','Tenants']];
+    if (!isSuperAdmin()) usersViewTab = 'tenant';
     var tabsHtml = segHtml(USERS_TABS.map(function(tb){
       var count = allProfiles.filter(function(p){ return p.role===tb[0]; }).length;
       return [tb[0], tb[1].replace('Super Admins','Super')+' <span class="seg-count">'+count+'</span>'];
@@ -14142,7 +14164,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
             '</div>'
           : '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0;">No saved password yet — use Reset password to set one.</p>')+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;">'+
-        '<select onchange="changeUserRole(\''+p.id+'\',this.value)" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t change your own role"':'')+'>'+
+        '<select onchange="changeUserRole(\''+p.id+'\',this.value)" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t change your own role"':(!isSuperAdmin()?'disabled title="Only the Super Admin changes roles"':''))+'>'+
         ['super_admin','administrator','viewer','tenant'].map(function(r){ return '<option value="'+r+'"'+(r===p.role?' selected':'')+'>'+ROLE_LABEL[r]+'</option>'; }).join('')+
         '</select>'+
         '<button class="mini-btn" onclick="toggleUserActive(\''+p.id+'\','+(!p.isActive)+')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t deactivate yourself"':'')+'>'+(p.isActive?'Deactivate':'Activate')+'</button>'+
@@ -14154,7 +14176,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
         '<button class="mini-btn" style="color:var(--status-overdue);" onclick="confirmDeleteUser(\''+p.id+'\')" '+(p.authUserId===currentProfile.authUserId?'disabled title="You can\'t delete your own account"':'')+'>Delete</button>'+
         '</div>'+assignHtml+'</div>';
     }).join('');
-    return pageHeadAdd('Users', 'Every account and its role. Only a Super Admin sees this page.', 'Create user', 'openUserModal()') +
+    return pageHeadAdd('Users', isSuperAdmin() ? 'Every account and its role.' : 'The app logins of the tenants in your properties.', 'Create user', 'openUserModal()') +
       filterBarHtml(tabsHtml, usersPropertyFilterHtml) +
       (rows || '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">No '+ (USERS_TABS.find(function(tb){return tb[0]===usersViewTab;})||['','users'])[1].toLowerCase() +' yet.</p></div>');
   }
@@ -14444,7 +14466,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     document.getElementById('user-email').value = '';
     document.getElementById('user-phone').value = '';
     document.getElementById('user-password').value = generatePassword(8);
-    document.getElementById('user-role').value = 'administrator';
+    var roleSel = document.getElementById('user-role');
+    Array.prototype.forEach.call(roleSel.options, function(o){ o.hidden = o.disabled = !isSuperAdmin() && o.value !== 'tenant'; });
+    roleSel.value = isSuperAdmin() ? 'administrator' : 'tenant';
     onUserRoleChange();
     document.getElementById('user-modal-error').hidden = true;
     document.getElementById('user-modal').hidden = false;
@@ -14479,7 +14503,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     errorEl.hidden = true;
     try {
       var result = await profileService.createUser({ email: isTenant ? undefined : email, password:password, firstName:firstName, lastName:lastName, phone:phone, role:role, tenantId:tenantId });
-      allProfiles = await profileService.getAll();
+      allProfiles = withStaffStubs(await profileService.getAll());
       if (tenantId){
         var t = tenantOf(tenantId);
         if (t) t.authUserId = (result && result.userId) || t.authUserId;
@@ -14621,7 +14645,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     return 'Updated ' + label + forWho + (changed.length ? ' (' + changed.slice(0,4).join(', ').replace(/_/g,' ') + (changed.length>4?'…':'') + ')' : '');
   }
   function renderAuditLog(){
-    if (!isSuperAdmin()) return accessDeniedPage();
+    if (!isAdminLike()) return accessDeniedPage();
     var header = pageHeader('Audit log', 'Who signed in — tenant or admin — and what each person did in the app.');
     if (auditLogRows === null){
       loadAuditLog();
@@ -16906,7 +16930,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
 
   async function startViewAs(tenantId){
     // Tenant view is a Super Admin tool (while viewing, the real profile is kept in viewAs).
-    var realIsSuper = viewAs ? !!(viewAs.realProfile && viewAs.realProfile.role === 'super_admin') : isSuperAdmin();
+    var realIsSuper = viewAs ? !!(viewAs.realProfile && (viewAs.realProfile.role === 'super_admin' || viewAs.realProfile.role === 'administrator')) : isAdminLike();
     if (!realIsSuper) return;
     if (anyModalOpen()){ showToast('Close the open form first.', 'info'); return; }
     var base = viewAs ? viewAs.snapshot : viewAsSnapshot();
@@ -16985,7 +17009,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   var viewAsLastTenantId = null;
   var viewAsSearch = '';
   function renderViewAsPicker(){
-    if (!isSuperAdmin()) return accessDeniedPage();
+    if (!isAdminLike()) return accessDeniedPage();
     var header = pageHeader('Tenant view', 'Open the app exactly as a tenant sees it — their real balance, bills, rules and tasks. Read-only: nothing can be changed while you look.');
     var list = tenants.filter(function(t){ return t.rentAmount > 0 || t.authUserId; });
     if (list.length === 0) return header + emptyState('tenants', 'No tenants yet', 'Add a tenant first, then you can preview their app here.', '');
@@ -18270,8 +18294,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       (isTenantRole() ? Promise.resolve([]) : leasePaymentService.getAll().catch(function(e){ console.error('lease payments', e); return []; })),
       // Super Admin only: everyone's accounts and property assignments — fetched in the same batch
       // instead of a second round trip after it.
-      (isSuperAdmin() ? profileService.getAll().catch(function(){ return []; }) : Promise.resolve(null)),
-      (isSuperAdmin() ? profileService.getPropertyAssignments().catch(function(){ return []; }) : Promise.resolve(null)),
+      // (an Administrator gets their own tenants' logins and their own assignments — RLS).
+      (isAdminLike() ? profileService.getAll().catch(function(){ return []; }) : Promise.resolve(null)),
+      (isAdminLike() ? profileService.getPropertyAssignments().catch(function(){ return []; }) : Promise.resolve(null)),
       // Correos follow-up: who is responsible for each agency email, when the Gmail check last
       // ran, and the admins that can be assigned (staff only).
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getCases().catch(function(e){ console.error('agency email cases', e); return []; })),
@@ -18318,9 +18343,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     maintenanceLog = results[29];
     realEstateInspections = results[30];
     leasePayments = results[31];
-    if (isSuperAdmin()){ allProfiles = results[32]; propertyAssignments = results[33]; }
     agencyCases = results[34] || []; agencyLastCheck = results[35] || null; staffDirectory = results[36] || [];
     agencyUpdates = results[37] || [];
+    if (isAdminLike()){ allProfiles = withStaffStubs(results[32] || []); propertyAssignments = results[33] || []; }
     recomputeRentCharges();
     refreshStaticSelects();
     if (opts && opts.skipMaintenance) return;
