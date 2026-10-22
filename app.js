@@ -1862,7 +1862,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   function tenantLifecycleBadge(t){
     if (tenantHasMovedOut(t)) return badge('neutral', 'Moved out' + (t.actualMoveOutDate ? ' '+shortDate(t.actualMoveOutDate) : ''));
     if (t.moveInDate && t.moveInDate > TODAY) return badge('upcoming', 'Moves in '+shortDate(t.moveInDate));
-    if (t.expectedMoveOutDate && t.expectedMoveOutDate >= TODAY) return badge('due', 'Leaving '+shortDate(t.expectedMoveOutDate));
+    // A move-out still to come — the confirmed date (often set by the tenant's own notice) or the expected one.
+    var leaving = t.actualMoveOutDate || t.expectedMoveOutDate;
+    if (leaving && leaving >= TODAY) return badge('due', 'Leaving '+shortDate(leaving));
     return badge('paid', 'Active');
   }
 
@@ -3519,7 +3521,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     var datesRows = '' +
       '<div class="field-row"><span class="k">Move-in</span><span class="v">'+fullDate(t.moveInDate)+'</span></div>'+
       (t.expectedMoveOutDate ? '<div class="field-row"><span class="k">Expected move-out</span><span class="v">'+fullDate(t.expectedMoveOutDate)+'</span></div>' : '') +
-      (t.actualMoveOutDate ? '<div class="field-row"><span class="k">Actual move-out</span><span class="v">'+fullDate(t.actualMoveOutDate)+'</span></div>' : '');
+      (t.actualMoveOutDate ? '<div class="field-row"><span class="k">'+(t.actualMoveOutDate > TODAY ? 'Leaving on' : 'Moved out')+'</span><span class="v">'+fullDate(t.actualMoveOutDate)+
+        (t.actualMoveOutDate > TODAY ? ' <span style="font-weight:400;color:var(--text-faint);">(in '+daysBetween(TODAY, t.actualMoveOutDate)+' days)</span>' : '')+'</span></div>' : '');
 
     var rentRows = t.rentAmount > 0 ? (
       '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(t.rentAmount)+' / '+t.rentFrequency+'</span></div>'+
