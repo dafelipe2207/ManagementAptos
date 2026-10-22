@@ -2862,12 +2862,19 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .needs-card .na-actions .text-link{flex:1;text-align:left;white-space:nowrap;}
 .needs-card .na-sent{color:var(--text-faint);}
 .needs-card .na-sent.today{color:var(--status-paid);}
+/* Phones: amount and status on one line, then the two actions as equal full-width buttons —
+   nothing sticks out past the card (the fixed desktop columns were wider than the screen). */
 @media (max-width:640px){
-  .needs-card .row.collect-row{grid-template-columns:1fr;row-gap:8px;}
-  .needs-card .row.collect-row > .na-side{justify-content:space-between;}
-  .needs-card .na-amount{width:auto;text-align:left;}
-  .needs-card .row.collect-row > .na-side > .na-actions{width:auto;}
+  .needs-card .row.collect-row{grid-template-columns:minmax(0,1fr);row-gap:10px;}
+  .needs-card .row.collect-row > .na-side{display:flex;flex-direction:column;align-items:stretch;gap:10px;width:100%;min-width:0;}
+  .needs-card .na-amount{width:auto;text-align:left;display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:16px;}
+  .needs-card .na-amount br{display:none;}
+  .needs-card .row.collect-row > .na-side > .na-actions{display:grid !important;grid-template-columns:1fr 1fr;gap:8px;width:100%;}
+  .needs-card .na-actions .wa-btn{width:auto;flex:none;min-height:44px !important;margin:0;}
+  .needs-card .na-actions .text-link{display:flex;align-items:center;justify-content:center;min-height:44px;margin:0;
+    border:1px solid var(--border);border-radius:999px;background:var(--bg-elevated);font-weight:600;text-decoration:none;}
   .needs-card .na-actions .wa-btn-spacer{display:none;}
+  .needs-card .row.collect-row > .na-side > .na-actions:has(.wa-btn-spacer){grid-template-columns:1fr;}
 }
 /* WhatsApp send log: who sent it and when (shared by every admin) */
 .wa-log{font-size:11.5px;color:var(--text-dim);}
