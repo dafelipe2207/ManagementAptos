@@ -1,0 +1,5 @@
+# Repo-only folders: not part of the web app, so they are not published
+.claude
+docs
+supabase
+tools
