@@ -6101,10 +6101,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   window.bankImportSet = bankImportSet;
   window.applyBankImport = applyBankImport;
 
-  var billsFilter = 'all';
+  var billsFilter = 'collect';
   var billsPropertyFilter = 'all';
-  var BILLS_FILTERS = [['all','All'], ['pending','Pending'], ['overdue','Overdue'], ['partially_paid','Partially Paid'], ['paid','Paid']];
-  function setBillsFilter(f){ billsFilter = f; renderPreservingScroll(); }
+  /** Three tabs instead of five overlapping chips (Pending already contained Overdue and Partially
+   *  Paid, and the list is grouped by those anyway): what's still open, what's finished, and the
+   *  same bills per tenant. Old values ('all', 'pending', 'overdue', 'paid'…) still map here. */
+  var BILLS_FILTERS = [['collect','To collect'], ['history','History'], ['tenants','By tenant']];
+  function normBillsFilter(f){ return (f === 'history' || f === 'paid') ? 'history' : f === 'tenants' ? 'tenants' : 'collect'; }
+  function setBillsFilter(f){ billsFilter = normBillsFilter(f); renderPreservingScroll(); }
   function setBillsPropertyFilter(propertyId){ billsPropertyFilter = propertyId; billsTypeFilter = 'all'; renderPreservingScroll(); }
   /** Service type picked from the Invoice timeline (together with its property). 'all' = every type. */
   var billsTypeFilter = 'all';
@@ -6149,13 +6153,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    *  has). Now: Pending = anything not fully paid (matches the Pending total above and the Dashboard tile); Overdue = unpaid and past due; Partially Paid =
    *  some tenants paid, others not (due or not); Paid = fully paid. */
   function billMatchesFilter(b, filter){
-    if (filter==='all') return true;
-    var st = billEffectiveStatus(b);
-    if (filter==='paid') return st === 'paid';
-    if (filter==='overdue') return st === 'overdue';
-    if (filter==='pending') return st !== 'paid'; // everything still owed (incl. overdue) — same as the Pending total and the Dashboard tile
-    if (filter==='partially_paid') return billIsPartiallyPaid(b);
-    return st === filter;
+    // History = finished (tenants paid AND provider paid); To collect = everything else.
+    return normBillsFilter(filter) === 'history' ? billPendingRank(b) === 3 : billPendingRank(b) < 3;
   }
 
   /* ---------- Import bill (PHASE 7: capture UI only; OCR comes later) ---------- */
@@ -8449,6 +8448,25 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   // layout that's built always matches the screen.
   if (PHONE_MQ){ var onPhoneMq = function(){ try { renderPreservingScroll(); } catch(_e){} };
     if (PHONE_MQ.addEventListener) PHONE_MQ.addEventListener('change', onPhoneMq); else if (PHONE_MQ.addListener) PHONE_MQ.addListener(onPhoneMq); }
+  function tenantFirstName(full){ return String(full || '').trim().split(/\s+/)[0] || 'Tenant'; }
+  /** Who paid and who still owes on one bill: unpaid first ("Luis · owes $26.39" + Mark paid),
+   *  then paid ("Ana ✓ 14 Oct"). `withButtons` = false on phones, where the whole card is a link. */
+  function billTenantLinesHtml(b, tAllocs, withButtons){
+    var canMark = withButtons && !isViewer() && !isTenantRole();
+    var list = tAllocs.slice().sort(function(x, y){ return (x.paid ? 1 : 0) - (y.paid ? 1 : 0); });
+    var lines = list.map(function(a){
+      var t = tenantOf(a.tenantId);
+      var name = esc(tenantFirstName(t ? t.fullName : ''));
+      if (a.paid){
+        return '<span class="bt-who ok"><i aria-hidden="true">✓</i>'+name+' <em>'+money(a.amount)+(a.paidDate ? ' · '+shortDate(a.paidDate) : '')+'</em></span>';
+      }
+      var overdue = b.dueDate && b.dueDate < TODAY;
+      return '<span class="bt-who '+(overdue ? 'bad' : 'due')+'"><i aria-hidden="true">●</i>'+name+' <em>owes '+money(a.amount)+'</em>'+
+        (canMark ? '<button type="button" class="bt-mark" onclick="event.stopPropagation();openAllocPaidModal(\''+b.id+'\',\''+a.tenantId+'\')">Mark paid</button>' : '')+
+        '</span>';
+    }).join('');
+    return '<span class="bt-whos">'+lines+'</span>';
+  }
   function billsTableHtml(list, showPropertyCol){
     var all = list;
     list = billsShowAll ? all : all.slice(0, BILLS_LIMIT);
@@ -8478,6 +8496,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var tenantsCell = !tA.length ? '<span class="bt-faint">Not allocated</span>'
         : '<div class="bt-prog"><i style="width:'+pct+'%"></i></div>'+
           '<div class="bt-sub"><b>'+paidN+'/'+tA.length+'</b> paid · '+money(billPaidAmount(b))+'</div>'+
+          billTenantLinesHtml(b, tA, true)+
           (billPendingRank(b) === 3 ? '' : '<div class="bt-sub '+(b.whatsappGroupSharedAt ? 'ok' : '')+'">'+(b.whatsappGroupSharedAt ? '✓ Sent to group' : 'Not sent to group')+'</div>');
       return groupRow + '<tr class="report-row-link" onclick="location.hash=\'#/bills/'+b.id+'\'">'+
         '<td><div class="bt-bill"><span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span><span>'+
@@ -8520,6 +8539,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           '<span class="bill-card-top"><span class="bill-owed-name">'+esc(b.provider)+'</span><b>'+money(b.amount)+'</b></span>'+
           '<span class="bill-card-mid"><span class="bill-owed-meta">'+esc(billTypeLabel(b.billType))+(p?' · '+esc(p.name):'')+(b.dueDate?' · due '+shortDate(b.dueDate):'')+'</span>'+
             billStatusBadge(b)+'</span>'+
+          (tAllocs.length ? billTenantLinesHtml(b, tAllocs, false) : '')+
           '<span class="bill-card-chips">'+tenantsChip+provChip+waChip+(billHasPendingPaymentReport(b) ? '<span class="bc-chip warn">Payment reported</span>' : '')+'</span>'+
         '</span></a>';
     }).join('');
@@ -8644,6 +8664,61 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '</div>';
   }
 
+  /** "By tenant" tab: every tenant with bill shares in the selected property/type — what they still
+   *  owe (top, with Mark paid and the WhatsApp reminder) and their history (paid shares with the date
+   *  and how). Tenants who owe come first, biggest amount first; then everyone else by name. */
+  function billsByTenantHtml(scopedBills){
+    var byTenant = {};
+    scopedBills.forEach(function(b){
+      (b.allocations || []).forEach(function(a){
+        if (a.isAdmin || !a.tenantId) return;
+        (byTenant[a.tenantId] = byTenant[a.tenantId] || []).push({ bill:b, alloc:a });
+      });
+    });
+    var canMark = !isViewer() && !isTenantRole();
+    var rows = Object.keys(byTenant).map(function(id){
+      var items = byTenant[id].slice().sort(function(x, y){ return (y.bill.dueDate || '').localeCompare(x.bill.dueDate || ''); });
+      var owed = round2(items.filter(function(it){ return !it.alloc.paid; }).reduce(function(s, it){ return s + (it.alloc.amount || 0); }, 0));
+      var paid = round2(items.filter(function(it){ return it.alloc.paid; }).reduce(function(s, it){ return s + (it.alloc.amount || 0); }, 0));
+      return { tenant: tenantOf(id), id: id, items: items, owed: owed, paid: paid };
+    }).sort(function(a, b){
+      if ((a.owed > 0.004) !== (b.owed > 0.004)) return a.owed > 0.004 ? -1 : 1;
+      if (a.owed !== b.owed) return b.owed - a.owed;
+      return (a.tenant ? a.tenant.fullName : '').localeCompare(b.tenant ? b.tenant.fullName : '');
+    });
+    if (!rows.length) return emptyState('receipt', 'No tenant shares yet', 'Split a bill among the tenants and it shows up here, per tenant.', '');
+    function itemHtml(it){
+      var b = it.bill, a = it.alloc;
+      var when = b.billingPeriodStart ? shortDate(b.billingPeriodStart) + ' – ' + shortDate(b.billingPeriodEnd) : (b.dueDate ? 'Due ' + shortDate(b.dueDate) : '');
+      var state = a.paid
+        ? badge('paid', 'Paid' + (a.paidDate ? ' ' + shortDate(a.paidDate) : '')) + (a.paidVia && a.paidVia !== 'cash' ? ' <span class="bt-faint">' + esc(String(a.paidVia).replace(/_/g, ' ')) + '</span>' : '')
+        : (b.dueDate && b.dueDate < TODAY ? badge('overdue', 'Overdue') : badge('due', 'Unpaid')) +
+          (canMark ? ' <button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openAllocPaidModal(\'' + b.id + '\',\'' + a.tenantId + '\')">Mark paid</button>' : '');
+      return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;padding-left:10px;">' +
+        '<div class="who"><a href="#/bills/' + b.id + '" style="font-weight:500;color:inherit;">' + esc(billTypeLabel(b.billType)) + ' — ' + esc(b.provider || '') + '</a>' +
+        '<div class="meta">' + esc(when) + '</div></div>' +
+        '<div style="display:flex;align-items:center;gap:8px;"><b>' + money(a.amount) + '</b>' + state + '</div></div>';
+    }
+    var body = rows.map(function(r){
+      var prop = r.tenant ? properties.find(function(p){ return p.id === r.tenant.propertyId; }) : null;
+      var unpaid = r.items.filter(function(it){ return !it.alloc.paid; });
+      var paidItems = r.items.filter(function(it){ return it.alloc.paid; });
+      var wa = r.tenant && unpaid.length ? pendingBillsWhatsAppRowHtml(r.tenant, unpaid, prop) : '';
+      return lazyDetails('<details class="pending-bills-tenant">' +
+        '<summary class="field-row" style="cursor:pointer;list-style:none;"><span class="k">' + esc(r.tenant ? r.tenant.fullName : 'Unknown tenant') +
+        (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· ' + esc(prop.name) + '</span>' : '') + '</span>' +
+        '<span class="v">' + (r.owed > 0.004 ? '<span style="color:var(--status-overdue);">owes ' + money(r.owed) + '</span>' : '<span style="color:var(--status-paid);">all paid</span>') +
+        ' <span style="color:var(--text-faint);font-weight:400;">· paid ' + money(r.paid) + '</span></span></summary>' +
+        (unpaid.length ? '<div class="bt-hist-h">Still owes</div>' + wa + unpaid.map(itemHtml).join('') : '') +
+        (paidItems.length ? '<div class="bt-hist-h">History</div>' + paidItems.map(itemHtml).join('') : '') +
+        '</details>', false);
+    }).join('');
+    var owedTotal = rows.reduce(function(s, r){ return s + r.owed; }, 0);
+    return '<div class="card"><div class="field-list">' + body + '</div>' +
+      '<div class="field-row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">' +
+      '<span class="k" style="font-weight:600;">Still owed by tenants</span><span class="v" style="font-weight:600;">' + money(owedTotal) + '</span></div></div>';
+  }
+
   function renderBillsListTab(tabs){
     // Property tab — "All properties" or a specific one; the status filter (chips)
     // and the stats are computed AFTER applying this, so each tab shows its own
@@ -8665,19 +8740,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<div class="stat"><div class="label">Paid</div><div class="value">'+moneyStat(paidTotal)+'</div></div>'+
       '</div>';
 
+    var tab = normBillsFilter(billsFilter);
     var chipsHtml = '<div class="filter-chips">' + BILLS_FILTERS.map(function(f){
-      return '<button class="chip'+(billsFilter===f[0]?' active':'')+'" onclick="setBillsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
+      return '<button class="chip'+(tab===f[0]?' active':'')+'" onclick="setBillsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
     }).join('') + '</div>';
 
-    var filtered = sortBillsList(propertyScoped.filter(function(b){ return billMatchesFilter(b, billsFilter); }));
-    var rows = filtered.length===0
+    var filtered = sortBillsList(propertyScoped.filter(function(b){ return billMatchesFilter(b, tab); }));
+    var rows = tab === 'tenants' ? billsByTenantHtml(propertyScoped) : filtered.length===0
       ? (propertyScoped.length===0
           ? emptyState('receipt', 'No bills yet',
               billsPropertyFilter==='all'
                 ? 'Add your first electricity, water, gas or internet bill to start tracking what\'s owed.'
                 : (billsTypeFilter !== 'all' ? 'No ' + billTypeLabel(billsTypeFilter).toLowerCase() + ' bills recorded for this property yet.' : 'No bills recorded for this property yet.'),
               '<button class="mini-btn primary" onclick="openImportModal()">+ Add bill</button>')
-          : emptyState('receipt', 'Nothing in this filter', 'Try a different filter, or choose "All" to see every bill.', ''))
+          : emptyState('receipt', tab === 'history' ? 'No finished bills yet' : 'Nothing to collect',
+              tab === 'history' ? 'Bills show up here once every tenant and the provider are paid.' : 'Every bill here is fully paid — see History.', ''))
       : billsTableHtml(filtered, billsPropertyFilter==='all');
 
     // Order: title → switch → property picker → totals → status filter → the bills →
@@ -8692,8 +8769,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<div id="bills-list-anchor" style="scroll-margin-top:72px;"></div>'+
       billsSelectionHtml()+
       billsMissingAlertHtml() +
-      importQueueCard() + statHtml + chipsHtml + rows +
-      pendingBillsByTenantHtml(propertyScoped);
+      importQueueCard() + statHtml + chipsHtml + rows;
   }
 
   /* ============ "Missing invoices" tab — local calculation based on the average of past invoices ============

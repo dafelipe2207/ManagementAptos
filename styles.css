@@ -2832,3 +2832,16 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .mail-update-when{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--text);}
 .mail-update-when .badge{font-size:11px !important;padding:2px 8px !important;}
 .mail-update-text{margin:4px 0 6px;font-size:14px;line-height:1.5;color:var(--text);}
+
+/* Bills list: who paid / who owes on each bill, and the "By tenant" history headings */
+.bt-whos{display:flex;flex-direction:column;gap:2px;margin-top:4px;}
+.bt-who{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-dim);line-height:1.35;flex-wrap:wrap;}
+.bt-who i{font-style:normal;font-size:10px;width:11px;text-align:center;}
+.bt-who em{font-style:normal;color:var(--text-faint);}
+.bt-who.ok i{color:var(--status-paid);}
+.bt-who.due i{color:var(--status-due);}
+.bt-who.bad i,.bt-who.bad em{color:var(--status-overdue);}
+.bt-mark{font:inherit;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;}
+.bt-mark:hover{filter:brightness(.95);}
+.bill-card .bt-whos{margin:4px 0 2px;}
+.bt-hist-h{font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--text-faint);padding:8px 10px 2px;}
