@@ -25,6 +25,17 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+
+/** An Administrator may manage the logins of tenants in the properties assigned to them. */
+async function adminManagesTenantLogin(admin: any, callerProfileId: string, targetAuthUserId: string): Promise<boolean> {
+  const { data: t } = await admin.from("tenants").select("property_id").eq("auth_user_id", targetAuthUserId).limit(1);
+  const propertyId = t && t[0] && t[0].property_id;
+  if (!propertyId) return false;
+  const { data: pa } = await admin.from("property_administrators").select("id")
+    .eq("profile_id", callerProfileId).eq("property_id", propertyId).limit(1);
+  return !!(pa && pa.length);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
@@ -42,9 +53,10 @@ Deno.serve(async (req: Request) => {
   if (callerErr || !callerData?.user) return json({ error: "Not signed in." }, 401);
 
   const { data: callerProfile, error: profileErr } = await admin
-    .from("profiles").select("role, is_active").eq("auth_user_id", callerData.user.id).maybeSingle();
-  if (profileErr || !callerProfile || callerProfile.role !== "super_admin" || !callerProfile.is_active) {
-    return json({ error: "Only an active Super Admin can reset another user's password." }, 403);
+    .from("profiles").select("id, role, is_active").eq("auth_user_id", callerData.user.id).maybeSingle();
+  const callerIsAdmin = !!callerProfile && callerProfile.role === "administrator";
+  if (profileErr || !callerProfile || !callerProfile.is_active || (callerProfile.role !== "super_admin" && !callerIsAdmin)) {
+    return json({ error: "Only an active Super Admin or Administrator can reset another user's password." }, 403);
   }
 
   let body: { profileId?: string; newPassword?: string };
@@ -59,9 +71,11 @@ Deno.serve(async (req: Request) => {
   if (!newPassword || newPassword.length < 8) return json({ error: "Password must be at least 8 characters." }, 400);
 
   const { data: targetProfile, error: targetErr } = await admin
-    .from("profiles").select("auth_user_id").eq("id", profileId).maybeSingle();
+    .from("profiles").select("auth_user_id, role").eq("id", profileId).maybeSingle();
   if (targetErr || !targetProfile) return json({ error: "That user was not found." }, 400);
-
+  if (callerIsAdmin && !(targetProfile.role === "tenant" && await adminManagesTenantLogin(admin, callerProfile.id, targetProfile.auth_user_id))) {
+    return json({ error: "An Administrator can only manage the logins of tenants in their own properties." }, 403);
+  }
   const { error: updateErr } = await admin.auth.admin.updateUserById(targetProfile.auth_user_id, { password: newPassword });
   if (updateErr) {
     console.error("reset-password: updateUserById failed:", updateErr);

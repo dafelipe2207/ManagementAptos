@@ -25,6 +25,17 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+
+/** An Administrator may manage the logins of tenants in the properties assigned to them. */
+async function adminManagesTenantLogin(admin: any, callerProfileId: string, targetAuthUserId: string): Promise<boolean> {
+  const { data: t } = await admin.from("tenants").select("property_id").eq("auth_user_id", targetAuthUserId).limit(1);
+  const propertyId = t && t[0] && t[0].property_id;
+  if (!propertyId) return false;
+  const { data: pa } = await admin.from("property_administrators").select("id")
+    .eq("profile_id", callerProfileId).eq("property_id", propertyId).limit(1);
+  return !!(pa && pa.length);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
@@ -43,8 +54,9 @@ Deno.serve(async (req: Request) => {
 
   const { data: callerProfile, error: profileErr } = await admin
     .from("profiles").select("id, role, is_active").eq("auth_user_id", callerData.user.id).maybeSingle();
-  if (profileErr || !callerProfile || callerProfile.role !== "super_admin" || !callerProfile.is_active) {
-    return json({ error: "Only an active Super Admin can delete another user's account." }, 403);
+  const callerIsAdmin = !!callerProfile && callerProfile.role === "administrator";
+  if (profileErr || !callerProfile || !callerProfile.is_active || (callerProfile.role !== "super_admin" && !callerIsAdmin)) {
+    return json({ error: "Only an active Super Admin or Administrator can delete another user's account." }, 403);
   }
 
   let body: { profileId?: string };
@@ -60,7 +72,9 @@ Deno.serve(async (req: Request) => {
   const { data: target, error: targetErr } = await admin
     .from("profiles").select("auth_user_id, role").eq("id", profileId).maybeSingle();
   if (targetErr || !target) return json({ error: "That user was not found." }, 400);
-
+  if (callerIsAdmin && !(target.role === "tenant" && await adminManagesTenantLogin(admin, callerProfile.id, target.auth_user_id))) {
+    return json({ error: "An Administrator can only manage the logins of tenants in their own properties." }, 403);
+  }
   if (target.role === "tenant") {
     const { error: unlinkErr } = await admin.from("tenants").update({ auth_user_id: null }).eq("auth_user_id", target.auth_user_id);
     if (unlinkErr) console.error("delete-user: could not unlink tenant record:", unlinkErr);

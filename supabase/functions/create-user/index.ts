@@ -76,15 +76,16 @@ Deno.serve(async (req: Request) => {
 
   const { data: callerProfile, error: profileErr } = await admin
     .from("profiles")
-    .select("role, is_active")
+    .select("id, role, is_active")
     .eq("auth_user_id", callerData.user.id)
     .maybeSingle();
   if (profileErr) {
     console.error("create-user: could not load caller profile:", profileErr);
     return json({ error: "Could not verify your permissions." }, 500);
   }
-  if (!callerProfile || callerProfile.role !== "super_admin" || !callerProfile.is_active) {
-    return json({ error: "Only an active Super Admin can create new users." }, 403);
+  const callerIsAdmin = !!callerProfile && callerProfile.role === "administrator";
+  if (!callerProfile || !callerProfile.is_active || (callerProfile.role !== "super_admin" && !callerIsAdmin)) {
+    return json({ error: "Only an active Super Admin or Administrator can create new users." }, 403);
   }
 
   let body: {
@@ -107,6 +108,14 @@ Deno.serve(async (req: Request) => {
   if (!password || password.length < 8) return json({ error: "Password must be at least 8 characters." }, 400);
   if (!firstName) return json({ error: "First name is required." }, 400);
   if (!ALLOWED_ROLES.includes(role)) return json({ error: "Invalid role." }, 400);
+  // An Administrator creates tenant logins only, for tenants of the properties assigned to them.
+  if (callerIsAdmin) {
+    if (role !== "tenant" || !tenantId) return json({ error: "An Administrator can only create tenant logins (linked to a tenant)." }, 403);
+    const { data: tr } = await admin.from("tenants").select("property_id").eq("id", tenantId).maybeSingle();
+    const { data: pa } = tr ? await admin.from("property_administrators").select("id")
+      .eq("profile_id", callerProfile.id).eq("property_id", tr.property_id).limit(1) : { data: null };
+    if (!pa || !pa.length) return json({ error: "That tenant isn't in one of your properties." }, 403);
+  }
 
   // Tenants start deactivated unless the caller explicitly says otherwise; other roles default
   // to active, same as before.
