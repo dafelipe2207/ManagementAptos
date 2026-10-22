@@ -639,11 +639,11 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     if (p.id === historyModalEditingId){
       return '<div class="history-row" style="align-items:flex-end;gap:8px;">'+
         '<span style="display:flex;flex-direction:column;gap:4px;">'+
-          '<label style="font-size:10.5px;color:var(--text-faint);">Amount</label>'+
+          '<label style="font-size:11px;color:var(--text-faint);">Amount</label>'+
           '<input id="history-edit-amount" class="modal-input" type="number" min="0" step="0.01" value="'+p.amount+'" style="width:100px;" />'+
         '</span>'+
         '<span style="display:flex;flex-direction:column;gap:4px;">'+
-          '<label style="font-size:10.5px;color:var(--text-faint);">Date paid</label>'+
+          '<label style="font-size:11px;color:var(--text-faint);">Date paid</label>'+
           '<input id="history-edit-date" class="modal-input" type="date" value="'+p.date+'" style="width:140px;" />'+
         '</span>'+
         '<span style="display:flex;gap:4px;">'+
@@ -1325,6 +1325,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9c.2.6.8 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
     more:'<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
     chevron:'<path d="M9 5l7 7-7 7"/>',
+    coins:'<ellipse cx="9" cy="7" rx="6" ry="2.5"/><path d="M3 7v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V7"/><path d="M9 16.5c-3.3 0-6-1.1-6-2.5"/><path d="M3 11v6c0 1.4 2.7 2.5 6 2.5 1.2 0 2.3-.1 3.2-.4"/><circle cx="17" cy="16" r="4.5"/><path d="M17 14.2v3.6"/>',
+    history:'<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3 4v4.5h4.5"/><path d="M12 7.5V12l3 2"/>',
+    userkey:'<circle cx="9" cy="8" r="3.4"/><path d="M3 20c0-3.3 2.7-6 6-6 1.3 0 2.5.4 3.4 1.1"/><circle cx="17.5" cy="15.5" r="2.5"/><path d="M17.5 18v3M17.5 20h1.6"/>',
     mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>',
     sun:'<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>',
     moon:'<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
@@ -1353,21 +1356,25 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   // only; Tenant gets a small menu limited to their own data (see the "Tenant → only their
   // own data" rule).
   var STAFF_NAV = [
+    // Three groups instead of one flat list of 15 (HIG sidebars.md › "Group hierarchy…"); each
+    // icon means one thing (Reports, Profits and Audit log used to share the chart icon).
+    { header:true, label:'Operations' },
     { hash:'#/', label:'Dashboard', icon:'dashboard', primary:true },
     { hash:'#/properties', label:'Properties', icon:'building', primary:true },
+    { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:false },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
     { hash:'#/emails', label:'Correos', icon:'mail', primary:false },
-    { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:false },
-    { hash:'#/view-as', label:'Tenant view', icon:'eye', primary:false, superAdminOnly:true },
-    { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
-    { hash:'#/profits', label:'Profits', icon:'chart', primary:false },
-    { header:true, label:'Property Operations' },
-    { hash:'#/property-operations', label:'Property Operations', icon:'building', primary:false },
-    { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
+    { hash:'#/property-operations', label:'Property Operations', icon:'wrench', primary:false },
     { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
-    { hash:'#/users', label:'Users', icon:'tenants', primary:false, superAdminOnly:true },
-    { hash:'#/audit-log', label:'Audit log', icon:'chart', primary:false, superAdminOnly:true },
+    { header:true, label:'Insights' },
+    { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
+    { hash:'#/profits', label:'Profits', icon:'coins', primary:false },
+    { hash:'#/calendar', label:'Calendar', icon:'calendar', primary:false },
+    { header:true, label:'Admin' },
+    { hash:'#/users', label:'Users', icon:'userkey', primary:false, superAdminOnly:true },
+    { hash:'#/view-as', label:'Tenant view', icon:'eye', primary:false, superAdminOnly:true },
+    { hash:'#/audit-log', label:'Audit log', icon:'history', primary:false, superAdminOnly:true },
     { hash:'#/settings', label:'Settings', icon:'settings', primary:false }
   ];
   var TENANT_NAV = [
@@ -2738,7 +2745,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     return '<div style="position:absolute;top:0;bottom:0;left:calc('+leftPct+'% - 1px);width:2px;background:var(--text);opacity:0.55;pointer-events:none;"></div>';
   }
   function legendItem(colorVar, label){
-    return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
+    return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-faint);margin-right:10px;">'+
       '<span style="width:9px;height:9px;border-radius:2px;background:'+colorVar+';display:inline-block;"></span>'+label+'</span>';
   }
 
@@ -2839,7 +2846,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var left = pct(ym);
       // Short labels so they don't run into each other on a phone: the year only on the first tick and on January.
       var label = (i === 0 || ym.slice(5,7) === '01') ? monthLabel(ym) : monthLabel(ym).split(' ')[0];
-      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);white-space:nowrap;">'+label+'</span>';
+      return '<span style="position:absolute;left:'+left+'%;font-size:11px;color:var(--text-faint);white-space:nowrap;">'+label+'</span>';
     }).join('');
     var navBtn = function(label, onclick, enabled, title){
       return '<button type="button" class="mini-btn" style="min-height:34px;padding:5px 11px;font-size:12px;" title="'+title+'" onclick="'+onclick+'"'+(enabled?'':' disabled')+'>'+label+'</button>';
@@ -2858,9 +2865,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       (propRows || '<p style="font-size:12.5px;color:var(--text-faint);margin:6px 0;">No one was living there in these months.</p>')+
       '<div style="position:relative;height:14px;margin:6px 0 8px 92px;">'+monthTicks+'</div>'+
       '<div>'+legendItem('var(--status-paid)','Current') + legendItem('var(--status-upcoming)','Upcoming move-in') +
-        '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
+        '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-faint);margin-right:10px;">'+
         '<span style="width:4px;height:11px;border-radius:2px;background:#0b3d2c;display:inline-block;box-shadow:0 0 0 1px #ffffff, 0 0 0 2px var(--border);"></span>Rent paid until</span>'+
-        '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
+        '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-faint);">'+
         '<span style="width:2px;height:11px;background:var(--text);opacity:.55;display:inline-block;"></span>Today</span></div>'+
       '</div>');
   }
@@ -3513,8 +3520,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var candidateRowsHtml = (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Outstanding rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill (Unpaid)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('');
     var estimatedRowsHtml = (candidates.estimatedLines || []).map(function(l){
-      return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill <span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
-        '<br><span style="font-size:10.5px;color:var(--text-faint);">'+(l.includedInRent ? 'Included in rent' : gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo)+' (not billed yet)')+'</span></span><span class="v">'+money(l.amount)+'</span></div>';
+      return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill <span class="badge" style="font-size:11px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
+        '<br><span style="font-size:11px;color:var(--text-faint);">'+(l.includedInRent ? 'Included in rent' : gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo)+' (not billed yet)')+'</span></span><span class="v">'+money(l.amount)+'</span></div>';
     }).join('');
     var summaryHtml = '<div class="field-row"><span class="k">Original bond</span><span class="v">'+(bond?money(bond.amountPaid):'No bond on file')+'</span></div>'+
       '<div class="field-row"><span class="k">Total deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(totals.totalDeductions)+'</span></div>'+
@@ -3534,7 +3541,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     return '<div class="card"><h2>Move-Out Settlement — Pending Approval</h2>'+
       '<h3 style="font-size:12.5px;">Deductions in this proposal</h3>'+
       settlement.billsSnapshot.map(function(l){ return '<div class="field-row"><span class="k">'+esc(l.label)+
-        (l.kind === 'estimated' ? ' <span class="badge" style="font-size:10.5px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>' : '')+
+        (l.kind === 'estimated' ? ' <span class="badge" style="font-size:11px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>' : '')+
         '</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
       deductionRowsHtml+
       '<h3 style="font-size:12.5px;">Bond Summary</h3>'+summaryHtml+
@@ -3919,7 +3926,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   function moveOutEstimateBodyHtml(est, manual, who){
     manual = manual || [];
     var neg = function(v){ return '<span class="v" style="color:var(--status-overdue);">-'+money(v)+'</span>'; };
-    var sub = function(txt){ return '<br><span style="font-size:10.5px;font-weight:400;color:var(--text-faint);">'+txt+'</span>'; };
+    var sub = function(txt){ return '<br><span style="font-size:11px;font-weight:400;color:var(--text-faint);">'+txt+'</span>'; };
     var head = function(txt){ return '<h3 style="font-size:12.5px;margin:12px 0 4px;">'+txt+'</h3>'; };
     var owedItems = moveOutOwedItems(est, manual, true);
     var owedRows = owedItems.map(function(x){
@@ -6875,7 +6882,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
             (it.quantity != null && it.unitPrice != null ? ' <span style="color:var(--text-faint);">(' + it.quantity + ' × ' + esc(money(it.unitPrice)) + ')</span>' : '') +
             '</span><span>' + (it.amount != null ? esc(money(it.amount)) : '') + '</span></div>';
         }).join('') + '</details>' : '') +
-      '<div style="font-size:10.5px;color:var(--text-faint);margin-top:4px;">● green = sure · amber = check · red = low confidence. The form below is what gets saved.</div>' +
+      '<div style="font-size:11px;color:var(--text-faint);margin-top:4px;">● green = sure · amber = check · red = low confidence. The form below is what gets saved.</div>' +
       '</div>';
     el.hidden = false;
   }
@@ -8498,7 +8505,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   function billsSortArrow(col){
     if (billsSortColumn !== col) return '';
-    return ' <span style="font-size:9px;">'+(billsSortDir==='asc'?'▲':'▼')+'</span>';
+    return ' <span style="font-size:11px;">'+(billsSortDir==='asc'?'▲':'▼')+'</span>';
   }
   var BILLS_LIMIT = 15;
   var billsShowAll = false;
@@ -9135,7 +9142,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var monthTicks = months.map(function(ym, i){
       if (i % tickEvery !== 0) return '';
       var left = pct(ym + '-01');
-      return '<span style="position:absolute;left:'+left+'%;font-size:9.5px;color:var(--text-faint);white-space:nowrap;'+(i===0?'':'transform:translateX(-1px);')+'">'+monthLabel(ym, i)+'</span>';
+      return '<span style="position:absolute;left:'+left+'%;font-size:11px;color:var(--text-faint);white-space:nowrap;'+(i===0?'':'transform:translateX(-1px);')+'">'+monthLabel(ym, i)+'</span>';
     }).join('');
     var isDefault = !billsTimelineRange;
     var preset = function(n, label){
@@ -9162,9 +9169,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       legendItem('var(--tl-unpaid)','Not paid to provider yet (line underneath = tenants)') +
       legendItem('var(--status-paid)','Paid') + legendItem('var(--status-due)','Due') +
       legendItem('var(--status-overdue)','Overdue') + legendItem('var(--status-upcoming)','Allocated') +
-      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);margin-right:10px;">'+
+      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-faint);margin-right:10px;">'+
       '<span class="timeline-track" style="width:9px;height:9px;border-radius:2px;display:inline-block;"></span>No bill loaded</span>'+
-      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--text-faint);">'+
+      '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-faint);">'+
       '<span style="width:2px;height:11px;background:var(--text);opacity:0.55;display:inline-block;"></span>Today</span>'+
       '</div>'+
       '</details>';
@@ -11535,11 +11542,19 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   window.saveChangePassword = saveChangePassword;
 
   function renderMore(){
-    var items = NAV.filter(function(i){ return !i.primary && !i.header && i.hash; }); // section headers aren't links
-    var rows = items.map(function(item){
-      return '<a href="'+item.hash+'">'+svg(item.icon)+'<span>'+item.label+'</span>'+svg('chevron','class="chev"')+'</a>';
+    // Same groups as the sidebar; a group shows only when it has something not already in the tab bar.
+    var groups = [], cur = { label:'', items:[] };
+    NAV.forEach(function(i){
+      if (i.header){ if (cur.items.length) groups.push(cur); cur = { label:i.label, items:[] }; return; }
+      if (!i.primary && i.hash) cur.items.push(i);
+    });
+    if (cur.items.length) groups.push(cur);
+    var html = groups.map(function(g){
+      return (g.label ? '<h3 class="more-group">'+esc(g.label)+'</h3>' : '')+'<div class="more-list">'+g.items.map(function(item){
+        return '<a href="'+item.hash+'">'+svg(item.icon)+'<span>'+item.label+'</span>'+svg('chevron','class="chev"')+'</a>';
+      }).join('')+'</div>';
     }).join('');
-    return pageHeader('More', 'Everything else, in one place.') + '<div class="more-list">'+rows+'</div>';
+    return pageHeader('More', 'Everything else, in one place.') + html;
   }
 
   /* ============ Correos: emails from the real-estate agencies ============

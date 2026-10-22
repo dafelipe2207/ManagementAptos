@@ -11,16 +11,16 @@
     --border: #dde2db;
     --text: #1c2521;
     --text-dim: #57625b;
-    --text-faint: #8a968e;
+    --text-faint: #66716a; /* 5.1:1 on white, 4.55:1 on --bg (was #8a968e, 3.1:1) */
     --accent: #2e4d6e;
     --accent-bg: #e5ebf0;
     --sidebar-bg: #ffffff;
     --shadow: 0 1px 2px rgba(20,30,25,0.05), 0 1px 3px rgba(20,30,25,0.06);
-    --status-paid: #1a9c5b;
+    --status-paid: #137a47; /* 5.4:1 on white (was #1a9c5b, 3.5:1) */
     --status-paid-bg: #e5f7ee;
-    --status-due: #b9750a;
+    --status-due: #9a6108; /* 5.1:1 on white (was #b9750a, 3.7:1) */
     --status-due-bg: #fbf0dd;
-    --status-overdue: #d8393f;
+    --status-overdue: #c1272e; /* 5.8:1 on white (was #d8393f, 4.6:1) */
     --status-overdue-bg: #fbe7e7;
     --status-upcoming: #2f6fd1;
     --status-upcoming-bg: #e8eefd;
@@ -93,7 +93,7 @@
   .nav a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .nav-section-header{
     padding:14px 12px 4px;
-    font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
     color:var(--text-faint);
   }
   .sidebar-foot{padding:14px 20px;font-size:11.5px;color:var(--text-faint);border-top:1px solid var(--border);}
@@ -376,7 +376,7 @@
   .cal-toolbar .mini-btn:hover{background:var(--bg-elevated);}
   .cal-month-label{flex:1;text-align:center;font-weight:700;font-size:14.5px;letter-spacing:-.005em;}
   .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
-  .cal-weekday{text-align:center;font-size:10.5px;font-weight:700;color:var(--text-faint);
+  .cal-weekday{text-align:center;font-size:11px;font-weight:700;color:var(--text-faint);
     letter-spacing:.04em;text-transform:uppercase;padding-bottom:8px;}
   .cal-days{margin-bottom:14px;}
   .cal-daycell{
@@ -390,7 +390,7 @@
   .cal-daynum{font-size:11px;color:var(--text-faint);font-weight:700;font-family:var(--font-mono);padding:0 1px;}
   .cal-daycell.today .cal-daynum{color:var(--accent);}
   .cal-pill{
-    display:block;font-size:10px;line-height:1.6;padding:1px 4px;border-radius:5px;
+    display:block;font-size:11px;line-height:1.6;padding:1px 4px;border-radius:5px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;font-weight:700;
     transition:filter .15s ease,transform .1s ease;
   }
@@ -403,7 +403,7 @@
   .cal-pill.bin{background:var(--status-upcoming-bg);color:var(--status-upcoming);}
   .cal-pill.cleaning.past, .cal-pill.bin.past{cursor:default;opacity:.55;filter:none;}
   button.cal-pill{border:none;width:100%;text-align:left;cursor:pointer;font-family:inherit;box-shadow:0 1px 1px rgba(20,30,25,.05);}
-  .cal-more{font-size:9px;color:var(--text-faint);padding:0 3px;}
+  .cal-more{font-size:11px;color:var(--text-faint);padding:0 3px;}
   /* Tenant calendar + turn cards */
   .cal-pill.other{opacity:.45;font-weight:600;}
   .cal-pill.mine{box-shadow:inset 0 0 0 1.5px currentColor;}
@@ -415,7 +415,7 @@
   .tenant-week{padding-top:12px;}
   .tenant-week.current{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
   .tenant-week-head{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text-dim);font-family:var(--font-mono);margin-bottom:6px;}
-  .week-chip{font-family:inherit;background:var(--accent);color:#fff;border-radius:999px;padding:2px 8px;font-size:10.5px;letter-spacing:.03em;text-transform:uppercase;}
+  .week-chip{font-family:inherit;background:var(--accent);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;letter-spacing:.03em;text-transform:uppercase;}
   .duty-row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--border);}
   .tenant-week-head + .duty-row{border-top:none;}
   .duty-art{flex-shrink:0;min-width:52px;height:52px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:2px;padding:0 6px;}
@@ -483,13 +483,13 @@
   .notif-dot-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
   .notif-dot{display:block;width:9px;height:9px;border-radius:50%;background:var(--border);}
   .notif-dot.unread{background:var(--accent);}
-  .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin-left:auto;border-radius:999px;background:var(--status-overdue);color:#fff;font-size:10.5px;font-weight:700;line-height:1;}
+  .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin-left:auto;border-radius:999px;background:var(--status-overdue);color:#fff;font-size:11px;font-weight:700;line-height:1;}
   .card > a, .card.prop-card > a:first-child{transition:opacity .15s ease;}
   @media (min-width:640px){
     .cal-daycell{min-height:92px;padding:6px 6px;gap:3px;}
     .cal-daynum{font-size:12.5px;}
     .cal-pill{font-size:11.5px;padding:2px 6px;border-radius:6px;}
-    .cal-more{font-size:10.5px;}
+    .cal-more{font-size:11px;}
   }
 
   .placeholder-box{
@@ -585,7 +585,7 @@
   }
   .bottomnav a{
     display:flex;flex-direction:column;align-items:center;gap:2px;
-    padding:8px 2px 7px;text-decoration:none;color:var(--text-faint);font-size:10.5px;font-weight:600;
+    padding:8px 2px 7px;text-decoration:none;color:var(--text-faint);font-size:11px;font-weight:600;
     transition:color .15s ease;
   }
   .bottomnav a svg{width:22px;height:22px;}
@@ -768,7 +768,7 @@
 .pdfv-page canvas{display:block;}
 .pdfv-page-spinner-wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
 .pdfv-page-num-badge{
-  position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.55);color:#fff;font-size:10.5px;
+  position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.55);color:#fff;font-size:11px;
   padding:2px 6px;border-radius:4px;font-variant-numeric:tabular-nums;pointer-events:none;
 }
 /* pdf.js text layer — invisible, selectable text positioned exactly over the canvas, used both
@@ -886,7 +886,7 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .wa-status.sent{background:var(--status-paid-bg);color:var(--status-paid);}
 .wa-status.pending{background:var(--status-due-bg);color:var(--status-due);}
 .wa-status .text-link{font-size:12px;margin:0;}
-.wa-mini{font-size:10.5px;font-weight:600;color:var(--text-faint);margin-top:3px;white-space:nowrap;}
+.wa-mini{font-size:11px;font-weight:600;color:var(--text-faint);margin-top:3px;white-space:nowrap;}
 .wa-mini.sent{color:var(--status-paid);}
 
 /* ===== Section tones (Property Operations) ===== */
@@ -911,7 +911,7 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .rt-tile{--tone:#3b6fb6;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:36px;height:36px;border-radius:11px;font-size:19px;
   background:color-mix(in srgb, var(--tone) 16%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--tone) 25%, transparent);}
 .rt-tile.big{width:52px;height:52px;border-radius:16px;font-size:27px;}
-.rl-pill{display:inline-block;flex-shrink:0;font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 8px;border-radius:999px;white-space:nowrap;line-height:1.5;}
+.rl-pill{display:inline-block;flex-shrink:0;font-size:11px;font-weight:700;letter-spacing:.01em;padding:2px 8px;border-radius:999px;white-space:nowrap;line-height:1.5;}
 .rl-must{background:var(--status-overdue-bg);color:var(--status-overdue);}
 .rl-please{background:var(--status-due-bg);color:var(--status-due);}
 .rl-tip{background:var(--status-upcoming-bg);color:var(--status-upcoming);}
@@ -983,7 +983,7 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .res-rule{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;padding:10px 0;border-top:1px dashed var(--border);}
 .res-rule:first-child{border-top:none;}
 .lvl-seg{display:flex;flex-direction:column;gap:3px;}
-.lvl{border:1px solid var(--border);background:var(--bg);color:var(--text-faint);font:inherit;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;cursor:pointer;text-align:center;white-space:nowrap;}
+.lvl{border:1px solid var(--border);background:var(--bg);color:var(--text-faint);font:inherit;font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;cursor:pointer;text-align:center;white-space:nowrap;}
 .lvl.on.lvl-must{background:var(--status-overdue-bg);color:var(--status-overdue);border-color:transparent;}
 .lvl.on.lvl-please{background:var(--status-due-bg);color:var(--status-due);border-color:transparent;}
 .lvl.on.lvl-tip{background:var(--status-upcoming-bg);color:var(--status-upcoming);border-color:transparent;}
@@ -1062,7 +1062,7 @@ input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;
 .rei-hist-date{flex-shrink:0;width:48px;border-radius:10px;text-align:center;padding:5px 0;background:var(--bg);border:1px solid var(--border);}
 .rei-hist-item.up .rei-hist-date{background:var(--tone-inspection);border-color:var(--tone-inspection);color:#fff;}
 .rei-hist-date b{display:block;font-size:18px;line-height:1.1;}
-.rei-hist-date span{font-size:10.5px;opacity:.8;}
+.rei-hist-date span{font-size:11px;opacity:.8;}
 .rei-hist-body{flex:1;min-width:0;}
 .rei-hist-top{font-size:13.5px;font-weight:650;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
 .rei-hist-sub{font-size:12px;color:var(--text-dim);margin-top:2px;}
@@ -1567,7 +1567,7 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
 .view-btn{text-transform:none !important;}
 .badge{font-weight:600;letter-spacing:0;}
 .nav a, .sidebar a, .bottomnav a{letter-spacing:-0.01em;}
-.bottomnav a span, .bottomnav .label{font-size:10.5px;font-weight:600;}
+.bottomnav a span, .bottomnav .label{font-size:11px;font-weight:600;}
 
 /* "Add" buttons: pill with a "+" on wide screens, a round "+" next to the title on phones */
 .add-btn{display:inline-flex !important;align-items:center;gap:6px;white-space:nowrap;}
@@ -1748,7 +1748,7 @@ h1.page-title{font-size:32px !important;font-weight:750;letter-spacing:-0.025em;
   .filter-bar .pill-btn,.page-toolbar .pill-btn{flex:1 1 150px;justify-content:center;}
 }
 .seg.seg-wide + .filter-bar{margin-top:-6px;}
-.ps-tile small{font-size:10.5px;color:var(--text-faint);font-weight:500;line-height:1.25;}
+.ps-tile small{font-size:11px;color:var(--text-faint);font-weight:500;line-height:1.25;}
 
 /* Dropdown lists must follow the APP theme, not the computer's: with the app in dark mode on a
    light Windows, the native list opened white with light-grey text (unreadable). */
@@ -1818,7 +1818,7 @@ input[type="date"].dp-open{border-color:var(--accent,#0a84ff) !important;box-sha
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     --bg:#1d222b; --bg-elevated:#262c37; --border:#353d4a; --sidebar-bg:#1a1f27;
-    --text:#e4e7ec; --text-dim:#a9b1bd; --text-faint:#808a97;
+    --text:#e4e7ec; --text-dim:#a9b1bd; --text-faint:#939ca8;
     --accent:#8fb0d4; --accent-bg:#2a3646;
     --status-paid:#5cc191; --status-paid-bg:#1f3a2e;
     --status-due:#d9ae5c; --status-due-bg:#3a3020;
@@ -1836,7 +1836,7 @@ input[type="date"].dp-open{border-color:var(--accent,#0a84ff) !important;box-sha
 }
 :root[data-theme="dark"]{
     --bg:#1d222b; --bg-elevated:#262c37; --border:#353d4a; --sidebar-bg:#1a1f27;
-    --text:#e4e7ec; --text-dim:#a9b1bd; --text-faint:#808a97;
+    --text:#e4e7ec; --text-dim:#a9b1bd; --text-faint:#939ca8;
     --accent:#8fb0d4; --accent-bg:#2a3646;
     --status-paid:#5cc191; --status-paid-bg:#1f3a2e;
     --status-due:#d9ae5c; --status-due-bg:#3a3020;
@@ -2111,7 +2111,7 @@ button.cal-day-btn:focus-visible{outline:2px solid var(--accent);outline-offset:
 .cal-day-btn.selected .cal-dots em{color:var(--bg-elevated);}
 .cal-dots{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-top:auto;}
 .cal-dots i{width:9px;height:9px;border-radius:50%;display:block;}
-.cal-dots em{font-style:normal;font-size:10.5px;font-weight:700;color:var(--text-dim);}
+.cal-dots em{font-style:normal;font-size:11px;font-weight:700;color:var(--text-dim);}
 .cal-pills{display:none;flex-direction:column;gap:3px;min-width:0;}
 .cal-day-btn .cal-pill{cursor:inherit;}
 @media (min-width:900px){
@@ -2251,7 +2251,7 @@ button.mt-step{cursor:pointer;}
 .mt-thumb{width:100%;aspect-ratio:1;object-fit:cover;border-radius:12px;border:1px solid var(--border);background:var(--border);cursor:pointer;display:block;}
 .mt-thumb-new{position:relative;}
 .mt-thumb-x{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:12px;cursor:pointer;}
-.mt-new-tag{position:absolute;left:4px;bottom:4px;padding:1px 6px;border-radius:999px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;}
+.mt-new-tag{position:absolute;left:4px;bottom:4px;padding:1px 6px;border-radius:999px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;}
 .mt-add{aspect-ratio:1;border-radius:12px;border:1.5px dashed var(--text-faint);background:transparent;color:var(--text-dim);font:inherit;font-size:12px;font-weight:650;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;}
 .mt-add span{font-size:22px;}
@@ -2626,7 +2626,7 @@ a.prc-name:hover{color:var(--accent);}
   .rei-banner{flex-direction:row !important;gap:12px !important;padding:12px !important;}
   .rei-count{align-self:flex-start;min-height:66px;flex-direction:column !important;min-width:58px !important;padding:8px 6px !important;justify-content:center !important;}
   .rei-count b{font-size:24px;}
-  .rei-count span{font-size:10.5px;margin-top:2px !important;text-align:center;line-height:1.15;}
+  .rei-count span{font-size:11px;margin-top:2px !important;text-align:center;line-height:1.15;}
   .rei-when{font-size:15.5px;}
 }
 
@@ -2836,12 +2836,12 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 /* Bills list: who paid / who owes on each bill, and the "By tenant" history headings */
 .bt-whos{display:flex;flex-direction:column;gap:2px;margin-top:4px;}
 .bt-who{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-dim);line-height:1.35;flex-wrap:wrap;}
-.bt-who i{font-style:normal;font-size:10px;width:11px;text-align:center;}
+.bt-who i{font-style:normal;font-size:11px;width:11px;text-align:center;}
 .bt-who em{font-style:normal;color:var(--text-faint);}
 .bt-who.ok i{color:var(--status-paid);}
 .bt-who.due i{color:var(--status-due);}
 .bt-who.bad i,.bt-who.bad em{color:var(--status-overdue);}
-.bt-mark{font:inherit;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;}
+.bt-mark{font:inherit;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;}
 .bt-mark:hover{filter:brightness(.95);}
 .bill-card .bt-whos{margin:4px 0 2px;}
 .bt-hist-h{font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--text-faint);padding:8px 10px 2px;}
@@ -2873,3 +2873,7 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .wa-log{font-size:11.5px;color:var(--text-dim);}
 .wa-log.none{color:var(--text-faint);}
 .wa-log.today{color:var(--status-paid);}
+
+/* More page: same groups as the sidebar */
+.more-group{font-size:12.5px;font-weight:600;color:var(--text-dim);margin:16px 4px 6px;}
+.more-group:first-of-type{margin-top:4px;}
