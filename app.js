@@ -41,7 +41,7 @@ import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
-import * as agencyEmailService from './services/agencyEmailService.js?v=4';
+import * as agencyEmailService from './services/agencyEmailService.js?v=5';
 import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
 
 (function(){
@@ -1574,7 +1574,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
         '<span class="dash-mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
         '<span class="dash-mail-main"><span class="dash-mail-title">'+esc(pp.title)+'</span>'+
           '<span class="dash-mail-meta">'+agencyStatusTag(agencyEmailStatus(n))+(pp.urgent ? badge('overdue', 'Urgente') : '')+
-          '<span>'+(p ? esc(p.name)+' · ' : '')+esc(agoEs(n.createdAt))+'</span></span></span>'+
+          (agencyUpdatesOf(n).length ? '<span class="mail-upd-tag">🔄 Update</span>' : '')+
+          '<span>'+(p ? esc(p.name)+' · ' : '')+esc(agoEs(agencyEmailActivityAt(n)))+'</span></span></span>'+
         '<span class="dash-mail-chev">'+svg('chevron')+'</span></button>';
     }).join('');
     return '<div class="card needs-card dash-mail-card"><h2>✉️ Correos nuevos <span class="count-pill">'+fresh.length+'</span></h2>'+
@@ -11349,13 +11350,22 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     var s = agencyStatusInfo(key);
     return '<span class="mail-st st-'+s.key+'" title="Estado">'+s.ic+' '+esc(s.short)+'</span>';
   }
-  var agencyCases = [], agencyLastCheck = null, staffDirectory = [];
+  var agencyCases = [], agencyLastCheck = null, staffDirectory = [], agencyUpdates = [];
+  /** Newest first by last activity: the email arriving, or a follow-up email ("Update") filed under it,
+   *  so a case that just got an update comes back to the top. */
   function myAgencyEmails(){
     var me = currentProfile ? currentProfile.authUserId : null;
     return notificationsList.filter(function(n){ return n.relatedTable === 'agency_email' && n.authUserId === me && !n.archivedAt; })
-      .sort(function(a, b){ return String(b.createdAt).localeCompare(String(a.createdAt)); });
+      .sort(function(a, b){ return String(agencyEmailActivityAt(b)).localeCompare(String(agencyEmailActivityAt(a))); });
   }
   function agencyCaseOf(n){ return n.dedupKey ? agencyCases.find(function(c){ return c.dedupKey === n.dedupKey; }) || null : null; }
+  /** Follow-up emails filed under this email's case, newest first. */
+  function agencyUpdatesOf(n){ return n.dedupKey ? agencyUpdates.filter(function(u){ return u.caseDedupKey === n.dedupKey; }) : []; }
+  function agencyEmailActivityAt(n){
+    var ups = agencyUpdatesOf(n), t = n.createdAt;
+    if (ups.length && String(ups[0].receivedAt) > String(t)) t = ups[0].receivedAt;
+    return t;
+  }
   /** "hace 5 min" / "hace 3 h" / "ayer" / "hace 4 días" — for the last-check and last-update lines. */
   function agoEs(iso){
     var t = new Date(iso).getTime(); if (isNaN(t)) return '';
@@ -11371,7 +11381,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   }
   /** When this email's card last changed: the email itself arriving, or its case being updated (assigned…). */
   function agencyEmailUpdatedAt(n){
-    var c = agencyCaseOf(n), u = n.createdAt;
+    var c = agencyCaseOf(n), u = agencyEmailActivityAt(n);
     if (c && c.updatedAt && String(c.updatedAt) > String(u)) u = c.updatedAt;
     if (c && c.statusChangedAt && String(c.statusChangedAt) > String(u)) u = c.statusChangedAt;
     return u;
@@ -11486,11 +11496,11 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     var canAssign = canAssignAgencyEmails();
     var lastDay = null;
     function dayHeader(n){
-      var day = toIsoLocal(new Date(n.createdAt));
+      var at = agencyEmailActivityAt(n), day = toIsoLocal(new Date(at));
       if (day === lastDay) return '';
       lastDay = day;
       var y = new Date(); y.setDate(y.getDate() - 1);
-      var label = day === TODAY ? 'Hoy' : day === toIsoLocal(y) ? 'Ayer' : new Date(n.createdAt).toLocaleDateString('es-AU', { weekday:'long', day:'numeric', month:'short' });
+      var label = day === TODAY ? 'Hoy' : day === toIsoLocal(y) ? 'Ayer' : new Date(at).toLocaleDateString('es-AU', { weekday:'long', day:'numeric', month:'short' });
       return '<h3 class="mail-day">'+esc(label)+'</h3>';
     }
     var cards = list.map(function(n){
@@ -11563,18 +11573,32 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
         stRow = '<div class="mail-fact"><span class="mail-fact-k">Estado</span><span>'+agencyStatusTag(st)+'</span>'+stSince+'</div>';
       }
       var upd = agencyEmailUpdatedAt(n);
+      // "Updates": later emails about the same case (the agency's follow-ups), filed here instead of as new cards.
+      var ups = agencyUpdatesOf(n), updTag = '', updHtml = '';
+      if (ups.length){
+        updTag = '<span class="mail-upd-tag" title="Updates">🔄 '+ups.length+' update'+(ups.length === 1 ? '' : 's')+'</span>';
+        updHtml = '<div class="mail-updates"><h4 class="mail-updates-h">Updates <span class="count-pill">'+ups.length+'</span></h4>'+
+          ups.map(function(u){
+            return '<div class="mail-update'+(u.action ? ' action' : '')+'">'+
+              '<div class="mail-update-when">'+esc(whenEs(u.receivedAt))+' <span class="mail-fact-sub">('+esc(agoEs(u.receivedAt))+')</span>'+(u.action ? ' '+badge('due', 'Requiere acción') : '')+'</div>'+
+              '<p class="mail-update-text">'+esc(u.summary)+'</p>'+
+              (u.url ? '<button type="button" class="mini-btn" onclick="openAgencyUpdate(\''+esc(u.dedupKey)+'\')">Abrir correo</button>' : '')+
+            '</div>';
+          }).join('')+'</div>';
+      }
       return dayHtml + '<details class="mail-card'+(n.isRead ? '' : ' unread')+(pp.urgent ? ' urgent' : pp.action ? ' action' : '')+'" id="mail-'+n.id+'"'+(open ? ' open' : '')+' ontoggle="onMailToggle(this, \''+n.id+'\')">'+
         '<summary><span class="mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
           '<span class="mail-main"><span class="mail-title">'+esc(pp.title)+'</span>'+
-          '<span class="mail-meta">'+agencyStatusTag(st)+tag+billTag+linkTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
+          '<span class="mail-meta">'+agencyStatusTag(st)+tag+updTag+billTag+linkTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
           '<span class="mail-side">'+(n.isRead ? '' : '<i class="mail-dot" aria-label="Sin leer"></i>')+'<span class="mail-chev">'+svg('chevron')+'</span></span>'+
         '</summary>'+
         '<div class="mail-body">'+
           '<p class="mail-text">'+esc(pp.text).replace(/https?:\/\/[^\s<)]+[^\s<).,;]/g, function(u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+u.replace(/^https?:\/\//, '').slice(0, 42)+(u.length > 50 ? '…' : '')+'</a>'; }).replace(/\n/g, '<br>')+'</p>'+
+          (ups.length && ups[0].action ? '<p class="mail-latest"><b>Último update:</b> '+esc(ups[0].summary)+'</p>' : '')+
           '<div class="mail-facts">'+stRow+billRow+linkRow+assignRow+
             '<div class="mail-fact"><span class="mail-fact-k">Actualizado</span><span>'+esc(whenEs(upd))+' <span class="mail-fact-sub">('+esc(agoEs(upd))+')</span>'+
               (upd !== n.createdAt ? ' <span class="mail-fact-sub">· llegó '+esc(whenEs(n.createdAt))+'</span>' : '')+'</span></div>'+
-          '</div>'+
+          '</div>'+updHtml+
           '<div class="mail-actions">'+
             (pp.url ? '<button type="button" class="mini-btn primary" onclick="openAgencyEmail(\''+n.id+'\')">Abrir correo</button>' : '')+
             (p ? '<button type="button" class="mini-btn" onclick="location.hash=\'#/properties/'+p.id+'\'">View property</button>' : '')+
@@ -11680,7 +11704,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
   }
   window.openAgencyEmail = function(id){
     var n = notificationsList.find(function(x){ return x.id === id; }); if (!n) return;
-    var url = agencyEmailParts(n).url; if (!url) return;
+    openGmailUrl(agencyEmailParts(n).url);
+  };
+  window.openAgencyUpdate = function(key){
+    var u = agencyUpdates.find(function(x){ return x.dedupKey === key; });
+    if (u) openGmailUrl(u.url);
+  };
+  function openGmailUrl(url){
+    if (!url) return;
     var app = isAppleMobile() ? gmailAppUrl(url) : null;
     if (app){
       var left = false;
@@ -11694,7 +11725,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       return;
     }
     var w = window.open(url, '_blank', 'noopener'); if (!w) location.href = url;
-  };
+  }
 
   function accessDeniedPage(){
     return pageHeader('Access denied', "You don't have permission to view this page.") +
@@ -16869,7 +16900,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     taskIndexRows = s.taskIndexRows.filter(ownOrSharedDuty);
     activityLogRows = s.activityLogRows.filter(ownOrSharedDuty);
     entityLinks = []; roomIncludedBills = []; leasePayments = []; allProfiles = []; propertyAssignments = [];
-    agencyCases = []; agencyLastCheck = null; staffDirectory = [];
+    agencyCases = []; agencyLastCheck = null; staffDirectory = []; agencyUpdates = [];
     return fakeAuthId;
   }
 
@@ -18245,7 +18276,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
       // ran, and the admins that can be assigned (staff only).
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getCases().catch(function(e){ console.error('agency email cases', e); return []; })),
       (isTenantRole() ? Promise.resolve(null) : agencyEmailService.getLastCheck().catch(function(){ return null; })),
-      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getStaff().catch(function(){ return []; }))
+      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getStaff().catch(function(){ return []; })),
+      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getUpdates().catch(function(e){ console.error('agency email updates', e); return []; }))
     ]);
     // Fingerprint of everything just loaded — a background refresh that brings back exactly the
     // same data doesn't redraw the page (no flicker, no lost scroll, no swallowed taps).
@@ -18288,6 +18320,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=1';
     leasePayments = results[31];
     if (isSuperAdmin()){ allProfiles = results[32]; propertyAssignments = results[33]; }
     agencyCases = results[34] || []; agencyLastCheck = results[35] || null; staffDirectory = results[36] || [];
+    agencyUpdates = results[37] || [];
     recomputeRentCharges();
     refreshStaticSelects();
     if (opts && opts.skipMaintenance) return;

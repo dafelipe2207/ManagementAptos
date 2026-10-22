@@ -2818,3 +2818,17 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .rei-follow .rei-actions{align-items:center;}
 .rei-follow .mail-st-select{min-height:34px;font-size:13px;}
 .rei-banner.rei-follow .rei-actions select.mail-st-select{font-size:14px;font-weight:650;min-height:36px;height:auto;width:auto;max-width:100%;padding:6px 30px 6px 10px;}
+
+/* Correos — "Updates": follow-up emails filed under the original case */
+.mail-upd-tag{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;
+  background:color-mix(in srgb, var(--accent) 14%, transparent);color:var(--accent);white-space:nowrap;}
+.mail-latest{margin:-4px 0 12px;padding:8px 12px;border-radius:12px;font-size:13.5px;line-height:1.5;
+  background:var(--status-due-bg, rgba(255,149,0,.12));color:var(--text);}
+.mail-updates{margin:0 0 12px;}
+.mail-updates-h{margin:0 0 8px;font-size:12px;font-weight:650;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:6px;}
+.mail-update{position:relative;padding:8px 0 10px 14px;border-left:2px solid var(--border);margin-left:4px;}
+.mail-update.action{border-left-color:var(--accent);}
+.mail-update + .mail-update{margin-top:2px;}
+.mail-update-when{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--text);}
+.mail-update-when .badge{font-size:11px !important;padding:2px 8px !important;}
+.mail-update-text{margin:4px 0 6px;font-size:14px;line-height:1.5;color:var(--text);}

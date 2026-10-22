@@ -36,6 +36,23 @@ export async function getCases() {
   return data.map(fromRow);
 }
 
+/** Follow-up emails ("Updates") filed under an earlier case instead of becoming a new
+ *  notification. See supabase/migrations/20261022_agency_email_updates.sql. */
+export async function getUpdates() {
+  const { data, error } = await supabase.from('agency_email_updates').select('*')
+    .order('received_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    dedupKey: r.dedup_key,
+    caseDedupKey: r.case_dedup_key,
+    receivedAt: r.received_at || r.created_at,
+    summary: r.summary || '',
+    action: !!r.action,
+    url: r.url || '',
+    createdAt: r.created_at
+  }));
+}
+
 export async function getLastCheck() {
   const { data, error } = await supabase.from('agency_email_checks')
     .select('checked_at, emails_found, notified').order('checked_at', { ascending: false }).limit(1);
