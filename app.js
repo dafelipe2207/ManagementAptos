@@ -42,6 +42,7 @@ import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
 import * as agencyEmailService from './services/agencyEmailService.js?v=5';
+import * as whatsappSendService from './services/whatsappSendService.js?v=1';
 import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
 
 (function(){
@@ -993,6 +994,48 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    *  everything they owe right now — rent periods already started/due plus bill shares due
    *  today or earlier — so each tenant is a single tap to WhatsApp their statement. Tenants
    *  already messaged today sink to the bottom with a "Sent today" mark. */
+  /* ---------- WhatsApp sends, shared by every admin (table whatsapp_sends) ----------
+   * Who sent which bill / owed statement by WhatsApp, and when — so two admins don't send the
+   * same thing twice. Loaded with everything else, re-checked right before a send. */
+  var waSends = [];
+  async function refreshWaSends(){
+    try { waSends = await whatsappSendService.getAll(); } catch(e){ console.warn('whatsapp sends', e); }
+  }
+  /** Sends matching `fn`, newest first. */
+  function waSendsWhere(fn){ return waSends.filter(fn); }
+  function waWhoWhen(x){
+    var who = x.sentByProfileId ? (staffName(x.sentByProfileId) || 'an admin') : 'an admin';
+    var d = new Date(x.sentAt);
+    var day = toIsoLocal(d);
+    var hm = d.toLocaleTimeString('en-AU', { hour:'numeric', minute:'2-digit' });
+    return { who: who, when: (day === TODAY ? 'today ' + hm : shortDate(day) + ' ' + hm), day: day };
+  }
+  /** "💬 Sent 2× · last 22 Oct 10:12 by Daniel" (counts distinct send moments). */
+  function waSentLine(list, emptyText){
+    var moments = {}; list.forEach(function(x){ moments[x.sentAt] = true; });
+    var n = Object.keys(moments).length;
+    if (!n) return emptyText ? '<span class="wa-log none">💬 '+esc(emptyText)+'</span>' : '';
+    var w = waWhoWhen(list[0]);
+    return '<span class="wa-log'+(w.day === TODAY ? ' today' : '')+'">💬 Sent'+(n > 1 ? ' '+n+'×' : '')+' · '+(n > 1 ? 'last ' : '')+esc(w.when)+' by '+esc(w.who)+'</span>';
+  }
+  /** Before sending: fresh check; if any of these were already sent, ask before sending again. */
+  async function confirmNotAlreadySent(matchFn, what){
+    await refreshWaSends();
+    var prior = waSendsWhere(matchFn);
+    if (!prior.length) return true;
+    var w = waWhoWhen(prior[0]);
+    return confirm(what + ' was already sent by WhatsApp ' + w.when + ' by ' + w.who + '.\n\nSend it again?');
+  }
+  async function logWaSends(rows){
+    try {
+      var saved = await whatsappSendService.log(rows, currentProfile ? currentProfile.id : null);
+      waSends = saved.concat(waSends);
+      renderPreservingScroll();
+    } catch(e){ console.warn('log whatsapp send', e); }
+  }
+  /** Latest send of an owed statement / bill to this tenant (shared across admins). */
+  function waLastToTenant(tenantId){ return waSends.find(function(x){ return x.kind === 'tenant' && x.tenantId === tenantId; }) || null; }
+
   var COLLECT_SENT_KEY = 'ma.collectSent';
   function collectSentMap(){
     try { var m = JSON.parse(localStorage.getItem(COLLECT_SENT_KEY) || '{}'); return (m && typeof m === 'object') ? m : {}; } catch(_e){ return {}; }
@@ -1003,7 +1046,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     try { localStorage.setItem(COLLECT_SENT_KEY, JSON.stringify(m)); } catch(_e){ /* private mode — just not remembered */ }
     renderPreservingScroll();
   }
-  function collectLastSent(tenantId){ return collectSentMap()[tenantId] || null; }
+  function collectLastSent(tenantId){
+    var x = waLastToTenant(tenantId);
+    return x ? toIsoLocal(new Date(x.sentAt)) : (collectSentMap()[tenantId] || null);
+  }
   function getCollectToday(){
     var sent = collectSentMap();
     var items = [];
@@ -1024,7 +1070,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         rent: rent, bills: billsDue,
         total: round2(rent.reduce(function(s,c){ return s + c.remaining; }, 0) + billsDue.reduce(function(s,o){ return s + o.alloc.amount; }, 0)),
         daysOverdue: Math.max(0, daysBetween(oldest[0], TODAY)),
-        sentToday: sent[t.id] === TODAY
+        sentToday: collectLastSent(t.id) === TODAY
       });
     });
     return items.sort(function(a,b){
@@ -1513,7 +1559,6 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   window.__dashNeedsAll = function(){ dashNeedsShowAll = !dashNeedsShowAll; renderPreservingScroll(); };
   function renderDashboard(){
     var needs = getNeedsAttention();
-    var upcoming = getUpcomingEvents();
 
     var NEEDS_LIMIT = 5;
     var needsShown = dashNeedsShowAll ? needs : needs.slice(0, NEEDS_LIMIT);
@@ -1526,11 +1571,11 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         : needsShown.map(function(item){
             if (item.type === 'lease'){
               var leaseBadge = item.daysUntil === 0 ? badge('due', 'Due today') : badge('due', 'Due in '+item.daysUntil+' day'+(item.daysUntil===1?'':'s'));
-              return '<div class="row"><div class="who"><div class="name">'+esc(item.propertyName)+'</div>'+
+              return '<div class="row collect-row"><div class="who"><div class="name">'+esc(item.propertyName)+'</div>'+
                 '<div class="meta">Rent payment to the real estate</div></div>'+
-                '<div style="display:flex;align-items:center;gap:10px;">'+
-                '<div class="amount">'+(item.amount!=null?money(item.amount):'—')+'<br/>'+leaseBadge+'</div>'+
-                '<button class="text-link" style="margin:0;text-align:center;" onclick="location.hash=\'#/properties/'+item.propertyId+'\'">View</button>'+
+                '<div class="na-side">'+
+                '<div class="amount na-amount">'+(item.amount!=null?money(item.amount):'—')+'<br/>'+leaseBadge+'</div>'+
+                '<div class="na-actions"><span class="wa-btn-spacer"></span><button class="text-link" style="margin:0;" onclick="location.hash=\'#/properties/'+item.propertyId+'\'">View</button></div>'+
                 '</div></div>';
             }
             // One row per tenant: what they owe, one tap to WhatsApp it, and "Mark as paid" when
@@ -1550,30 +1595,28 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
             return '<div class="row collect-row'+(item.sentToday ? ' is-sent' : '')+'"><div class="who"><div class="name">'+esc(item.tenantName)+'</div>'+
               '<div class="meta">'+esc(item.propertyName)+' • '+esc(item.roomName)+'</div>'+
               '<div class="collect-parts owe-chips">'+chips.join('')+'</div>'+
-              (function(){ var last = !item.sentToday && collectLastSent(item.tenantId); return last ? '<div class="meta" style="color:var(--text-faint);">Last messaged '+shortDate(last)+'</div>' : ''; })()+
+              (function(){
+                var x = waLastToTenant(item.tenantId);
+                if (x){ var w = waWhoWhen(x); return '<div class="meta na-sent'+(item.sentToday ? ' today' : '')+'">💬 '+(item.sentToday ? 'Sent ' : 'Last messaged ')+esc(w.when)+' by '+esc(w.who)+'</div>'; }
+                var last = !item.sentToday && collectLastSent(item.tenantId);
+                return last ? '<div class="meta" style="color:var(--text-faint);">Last messaged '+shortDate(last)+'</div>' : '';
+              })()+
               '</div>'+
-              '<div style="display:flex;align-items:center;gap:10px;">'+
-              '<div class="amount">'+money(item.total)+'<br/>'+(item.sentToday ? badge('paid', '✓ Sent today') : status)+'</div>'+
-              '<div style="display:flex;flex-direction:column;gap:6px;">'+
+              '<div class="na-side">'+
+              '<div class="amount na-amount">'+money(item.total)+'<br/>'+(item.sentToday ? badge('paid', '✓ Sent today') : status)+'</div>'+
+              '<div class="na-actions">'+
               '<button class="view-btn wa-btn" onclick="sendTenantOwedStatement(\''+item.tenantId+'\')">'+(item.sentToday ? 'Resend' : 'WhatsApp')+'</button>'+
-              (markPaid || '<button class="text-link" style="margin:0;text-align:center;" onclick="viewTenantPayments(\''+item.tenantId+'\')">View</button>')+
+              (markPaid || '<button class="text-link" style="margin:0;" onclick="viewTenantPayments(\''+item.tenantId+'\')">View</button>')+
               '</div></div></div>';
           }).join('') +
           (needs.length > NEEDS_LIMIT ? '<button type="button" class="show-more-btn" onclick="__dashNeedsAll()">'+(dashNeedsShowAll ? 'Show less' : 'Show all '+needs.length)+'</button>' : '')
       ) + '</div>';
 
-    var upcomingHtml = '<div class="card"><h2>Upcoming</h2>' +
-      (upcoming.length===0
-        ? '<p style="font-size:13.5px;color:var(--text-dim);margin:0;">Nothing coming up in the next two weeks.</p>'
-        : upcoming.map(function(e){
-            return '<div class="upcoming-row"><span class="date">'+shortDate(e.date)+'</span><span class="title">'+esc(e.title)+'</span></div>';
-          }).join('')
-      ) + '</div>';
 
     // Only inspections still to come; once one is over it drops off, unless the agency asked for
     // something after it (a linked Correos email still open) — then it stays as a follow-up.
     var reiHtml = realEstateInspectionBannerHtml(false) + dashboardInspectionFollowupsHtml();
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml + upcomingHtml;
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml;
   }
 
   /** Dashboard "Payments reported" card: every payment a tenant has reported and is waiting for
@@ -8467,6 +8510,16 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   // layout that's built always matches the screen.
   if (PHONE_MQ){ var onPhoneMq = function(){ try { renderPreservingScroll(); } catch(_e){} };
     if (PHONE_MQ.addEventListener) PHONE_MQ.addEventListener('change', onPhoneMq); else if (PHONE_MQ.addListener) PHONE_MQ.addListener(onPhoneMq); }
+  /** "✓ Sent to group · today 10:12 by Daniel (2×)" — from the shared log; older sends (before the
+   *  log existed) fall back to the bill's own "shared" date. */
+  function billGroupSentHtml(b){
+    var list = waSendsWhere(function(x){ return x.kind === 'group' && x.billId === b.id; });
+    if (list.length){
+      var w = waWhoWhen(list[0]);
+      return '<div class="bt-sub ok">✓ Sent to group · '+esc(w.when)+' by '+esc(w.who)+(list.length > 1 ? ' ('+list.length+'×)' : '')+'</div>';
+    }
+    return '<div class="bt-sub '+(b.whatsappGroupSharedAt ? 'ok' : '')+'">'+(b.whatsappGroupSharedAt ? '✓ Sent to group'+(b.whatsappGroupShareCount > 1 ? ' ('+b.whatsappGroupShareCount+'×)' : '') : 'Not sent to group')+'</div>';
+  }
   function tenantFirstName(full){ return String(full || '').trim().split(/\s+/)[0] || 'Tenant'; }
   /** Who paid and who still owes on one bill: unpaid first ("Luis · owes $26.39" + Mark paid),
    *  then paid ("Ana ✓ 14 Oct"). `withButtons` = false on phones, where the whole card is a link. */
@@ -8516,7 +8569,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         : '<div class="bt-prog"><i style="width:'+pct+'%"></i></div>'+
           '<div class="bt-sub"><b>'+paidN+'/'+tA.length+'</b> paid · '+money(billPaidAmount(b))+'</div>'+
           billTenantLinesHtml(b, tA, true)+
-          (billPendingRank(b) === 3 ? '' : '<div class="bt-sub '+(b.whatsappGroupSharedAt ? 'ok' : '')+'">'+(b.whatsappGroupSharedAt ? '✓ Sent to group' : 'Not sent to group')+'</div>');
+          (billPendingRank(b) === 3 ? '' : billGroupSentHtml(b));
       return groupRow + '<tr class="report-row-link" onclick="location.hash=\'#/bills/'+b.id+'\'">'+
         '<td><div class="bt-bill"><span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span><span>'+
           '<b>'+esc(b.provider || billTypeLabel(b.billType))+'</b>'+
@@ -8696,7 +8749,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         (canMark ? ' <button class="mini-btn primary" style="padding:2px 8px;font-size:11px;" onclick="openAllocPaidModal(\'' + b.id + '\',\'' + a.tenantId + '\')">Mark paid</button>' : '');
     return '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;padding-left:10px;">' +
       '<div class="who"><a href="#/bills/' + b.id + '" style="font-weight:500;color:inherit;">' + esc(billTypeLabel(b.billType)) + ' — ' + esc(b.provider || '') + '</a>' +
-      '<div class="meta">' + esc(when) + '</div></div>' +
+      '<div class="meta">' + esc(when) + '</div>' +
+      (a.paid ? '' : '<div class="meta">' + waSentLine(waSendsWhere(function(x){ return x.kind === 'tenant' && x.tenantId === a.tenantId && x.billId === b.id; }), 'Not sent to ' + tenantFirstName((tenantOf(a.tenantId) || {}).fullName)) + '</div>') +
+      '</div>' +
       '<div style="display:flex;align-items:center;gap:8px;"><b>' + money(a.amount) + '</b>' + state + '</div></div>';
   }
   /** Every bill share of each tenant within `scopedBills`, newest first, with owed / paid totals. */
@@ -8752,7 +8807,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var wa = t && unpaid.length ? pendingBillsWhatsAppRowHtml(t, unpaid, prop) : '';
     return '<div class="card">' +
       '<div class="detail-head" style="margin-top:0;align-items:flex-start;"><div><h2 style="margin:0;font-size:16px;">' + esc(t ? t.fullName : 'Unknown tenant') + '</h2>' +
-      '<div class="bt-faint">' + (prop ? esc(prop.name) + ' · ' : '') + r.items.length + ' bill share' + (r.items.length === 1 ? '' : 's') + '</div></div>' +
+      '<div class="bt-faint">' + (prop ? esc(prop.name) + ' · ' : '') + r.items.length + ' bill share' + (r.items.length === 1 ? '' : 's') + '</div>' +
+      '<div class="bt-faint" style="margin-top:2px;">' + waSentLine(waSendsWhere(function(x){ return x.kind === 'tenant' && x.tenantId === tenantId; }), 'Nothing sent by WhatsApp yet') + '</div></div>' +
       '<div style="text-align:right;font-weight:600;">' + owedPaidHtml(r) + '</div></div>' +
       (unpaid.length ? '<div class="bt-hist-h">Still owes</div>' + wa + unpaid.map(function(it){ return billTenantShareRowHtml(it, canMark); }).join('') : '') +
       (paidItems.length ? '<div class="bt-hist-h">History</div>' + paidItems.map(function(it){ return billTenantShareRowHtml(it, canMark); }).join('') : '') +
@@ -9953,6 +10009,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     }).sort(function(x, y){ return x.name.localeCompare(y.name); });
     if (!rows.length){ showToast('No tenant shares on this bill to send.', 'error'); return; }
 
+    if (!(await confirmNotAlreadySent(function(x){ return x.kind === 'group' && x.billId === bill.id; }, 'This bill (to ' + property.name + '\'s group)'))) return;
     var m = groupSendModalShell('Send to ' + property.name + '\'s WhatsApp group', 'Preparing the bill and each tenant\'s share…');
     var message = billGroupWhatsAppMessage(bill, property, rows);
     var hiddenDoc = isTenantHiddenProvider(bill.provider); // the original names the agency — never sent
@@ -9969,7 +10026,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     showGroupSend(m, { message: message, imageBlob: imageBlob,
       imageName: billTypeLabel(bill.billType) + '-' + (bill.billingPeriodEnd || TODAY) + '.png', docFiles: docFile ? [docFile] : [],
       chatUrl: property.whatsappGroupLink, chatLabel: 'group',
-      onSent: function(){ markBillSharedToGroup(bill, true); },
+      onSent: function(){ markBillSharedToGroup(bill, true); logWaSends([{ kind:'group', billId:bill.id, tenantId:null }]); },
       note: hiddenDoc ? 'Sent as "'+billTypeLabel(bill.billType)+' bill" — the provider and its document are never shown to tenants.'
         : !docFile && bill.receiptPath ? 'Couldn\'t load the bill document — the message includes a link to it instead.' : (!bill.receiptPath ? 'This bill has no document attached — only the split is shown.' : '') });
   }
@@ -10286,6 +10343,19 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   window.sendTenantOwedStatement = sendTenantOwedStatement;
   async function sendTenantStatement(t, rent, billItems, title, onSent){
+    var billIdsSent = billItems.map(function(o){ return o.bill.id; });
+    var ok = await confirmNotAlreadySent(function(x){
+      return x.kind === 'tenant' && x.tenantId === t.id &&
+        (x.billId ? billIdsSent.indexOf(x.billId) > -1 : (rent.length > 0 && toIsoLocal(new Date(x.sentAt)) === TODAY));
+    }, 'What ' + (t.fullName || 'this tenant') + ' owes');
+    if (!ok) return;
+    var userOnSent = onSent;
+    onSent = function(){
+      var rows = billIdsSent.map(function(id){ return { kind:'tenant', billId:id, tenantId:t.id }; });
+      if (rent.length || !rows.length) rows.push({ kind:'tenant', billId:null, tenantId:t.id });
+      logWaSends(rows);
+      if (userOnSent) userOnSent();
+    };
     var property = propertyOf(t.propertyId);
     var m = groupSendModalShell(title, 'Preparing the statement…');
     var ref = tenantPaymentRef(t);
@@ -18465,7 +18535,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getCases().catch(function(e){ console.error('agency email cases', e); return []; })),
       (isTenantRole() ? Promise.resolve(null) : agencyEmailService.getLastCheck().catch(function(){ return null; })),
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getStaff().catch(function(){ return []; })),
-      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getUpdates().catch(function(e){ console.error('agency email updates', e); return []; }))
+      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getUpdates().catch(function(e){ console.error('agency email updates', e); return []; })),
+      (isTenantRole() ? Promise.resolve([]) : whatsappSendService.getAll().catch(function(e){ console.error('whatsapp sends', e); return []; }))
     ]);
     // Fingerprint of everything just loaded — a background refresh that brings back exactly the
     // same data doesn't redraw the page (no flicker, no lost scroll, no swallowed taps).
@@ -18508,6 +18579,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     leasePayments = results[31];
     agencyCases = results[34] || []; agencyLastCheck = results[35] || null; staffDirectory = results[36] || [];
     agencyUpdates = results[37] || [];
+    waSends = results[38] || [];
     if (isAdminLike()){ allProfiles = withStaffStubs(results[32] || []); propertyAssignments = results[33] || []; }
     recomputeRentCharges();
     refreshStaticSelects();

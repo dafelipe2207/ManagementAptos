@@ -2853,3 +2853,23 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 button.bt-tenant-row{width:100%;font:inherit;color:inherit;background:none;border:0;border-bottom:1px solid var(--border);cursor:pointer;text-align:left;}
 button.bt-tenant-row:hover{background:var(--bg);}
 .bt-go{color:var(--text-faint);margin-left:6px;font-size:16px;}
+/* Dashboard "Needs attention": the amount and the buttons line up in fixed columns on every row */
+.needs-card .row.collect-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:16px;}
+.needs-card .row.collect-row > .na-side{display:flex;align-items:center;gap:14px;margin-left:0;}
+.needs-card .na-amount{width:150px;text-align:right;}
+.needs-card .row.collect-row > .na-side > .na-actions{display:flex;flex-direction:row !important;align-items:center;gap:10px;width:200px;}
+.needs-card .na-actions .wa-btn,.needs-card .na-actions .wa-btn-spacer{flex:0 0 112px;width:112px;justify-content:center;text-align:center;}
+.needs-card .na-actions .text-link{flex:1;text-align:left;white-space:nowrap;}
+.needs-card .na-sent{color:var(--text-faint);}
+.needs-card .na-sent.today{color:var(--status-paid);}
+@media (max-width:640px){
+  .needs-card .row.collect-row{grid-template-columns:1fr;row-gap:8px;}
+  .needs-card .row.collect-row > .na-side{justify-content:space-between;}
+  .needs-card .na-amount{width:auto;text-align:left;}
+  .needs-card .row.collect-row > .na-side > .na-actions{width:auto;}
+  .needs-card .na-actions .wa-btn-spacer{display:none;}
+}
+/* WhatsApp send log: who sent it and when (shared by every admin) */
+.wa-log{font-size:11.5px;color:var(--text-dim);}
+.wa-log.none{color:var(--text-faint);}
+.wa-log.today{color:var(--status-paid);}
