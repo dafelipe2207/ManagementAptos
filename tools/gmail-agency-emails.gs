@@ -88,8 +88,12 @@ function run_(query, receiptsOnly) {
   items.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
 
   if (receiptsOnly) {
-    // Smaller batches: each one carries PDFs and the app reads every PDF.
-    for (var r = 0; r < items.length; r += 3) post(url, { receiptsOnly: true, messages: items.slice(r, r + 3) });
+    // One receipt per call with a pause, so Gemini isn't flooded (it answers "too many requests").
+    // Safe to run again: receipts already stored are skipped.
+    items.forEach(function (it, k) {
+      if (k) Utilities.sleep(6000);
+      post(url, { receiptsOnly: true, messages: [it] });
+    });
     return;
   }
   var runId = Utilities.getUuid();

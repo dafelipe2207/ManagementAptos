@@ -186,15 +186,16 @@ async function readReceiptPdf(base64: string, deadline: number): Promise<Receipt
     contents: [{ role: "user", parts: [{ inline_data: { mime_type: "application/pdf", data: base64 } }, { text: RECEIPT_PROMPT }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: RECEIPT_SCHEMA },
   });
-  let lastErr = "";
+  let lastErr = "", busy = false;
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt) await sleep(attempt === 1 ? 2000 : 5000);
+    // Gemini rate limit / overload (429, 503): wait longer before trying again.
+    if (attempt) await sleep(busy ? (attempt === 1 ? 10000 : 25000) : (attempt === 1 ? 2000 : 5000));
     const left = deadline - Date.now();
     if (left < 8000) break;
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(Math.min(45000, left - 3000)) });
-      if (!res.ok) { lastErr = `HTTP ${res.status}`; continue; }
+      if (!res.ok) { lastErr = `HTTP ${res.status}`; busy = res.status === 429 || res.status === 503; continue; }
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text || "").join("") || "";
       const parsed = JSON.parse(text);
