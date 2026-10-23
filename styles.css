@@ -2997,3 +2997,24 @@ button.bt-tenant-row:hover{background:var(--bg);}
   .lightbox-bar{padding-left:20px;padding-right:110px;justify-content:flex-start;}
   .lightbox-titles{text-align:left;}
 }
+
+/* ============ Tenant login: quick row on tenant cards + "Send login" sheet ============ */
+.tenant-card-login{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
+  margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+.tenant-card-login .mini-btn{padding:5px 12px;font-size:12.5px;}
+.tenant-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.tls-card .field-list{margin:4px 0 10px;}
+.tls-saved{margin:0 0 8px;font-size:13px;font-weight:650;color:var(--status-paid);}
+.tls-pw{font-family:ui-monospace, SFMono-Regular, Menlo, monospace;letter-spacing:.5px;font-weight:600;}
+.tls-inline{display:inline;margin:0 0 0 6px;font-size:12px;}
+.tls-check{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--text-dim);margin:2px 0 4px;cursor:pointer;}
+.tls-check input{margin-top:2px;width:auto;}
+.tls-warn{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--status-due);
+  background:var(--status-due-bg);border-radius:12px;padding:8px 10px;margin:0 0 10px;}
+.tls-send{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px;}
+.tls-send .mini-btn{justify-content:center;text-align:center;text-decoration:none;}
+.tls-send .mini-btn.tls-wa{grid-column:1 / -1;background:#25d366 !important;border-color:#25d366 !important;color:#fff !important;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:650;}
+.tls-send .mini-btn.tls-wa span{color:#fff;}
+.tls-send .tls-wa .wa-icon{width:18px;height:18px;flex:0 0 auto;}
+.tls-send .mini-btn{white-space:nowrap;}
+@media (max-width:380px){ .tls-send{grid-template-columns:1fr;} }

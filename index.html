@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=334">
+<link rel="modulepreload" href="app.js?v=335">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -35,7 +35,7 @@
 <link rel="modulepreload" href="services/storageService.js?v=4">
 <link rel="modulepreload" href="services/aiService.js?v=5">
 <link rel="modulepreload" href="services/billExtractionService.js?v=1">
-<link rel="modulepreload" href="services/profileService.js?v=7">
+<link rel="modulepreload" href="services/profileService.js?v=8">
 <link rel="modulepreload" href="services/maintenanceService.js">
 <link rel="modulepreload" href="services/notificationService.js?v=3">
 <link rel="modulepreload" href="services/paymentReportService.js?v=3">
@@ -61,7 +61,7 @@
 <link rel="modulepreload" href="lib/tenantInvoice.js?v=1">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=150">
+<link rel="stylesheet" href="styles.css?v=151">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -1384,6 +1384,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=334"></script>
+<script type="module" src="app.js?v=335"></script>
 </body>
 </html>

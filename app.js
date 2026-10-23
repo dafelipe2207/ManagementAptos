@@ -20,7 +20,7 @@ import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=4';
 import * as aiService from './services/aiService.js?v=5';
 import * as billExtractionService from './services/billExtractionService.js?v=1';
-import * as profileService from './services/profileService.js?v=7';
+import * as profileService from './services/profileService.js?v=8';
 import * as maintenanceService from './services/maintenanceService.js';
 import * as notificationService from './services/notificationService.js?v=3';
 import * as paymentReportService from './services/paymentReportService.js?v=3';
@@ -2702,13 +2702,22 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         var stay = isPast
           ? shortDate(t.moveInDate)+' – '+(t.actualMoveOutDate ? shortDate(t.actualMoveOutDate) : '—')
           : 'Since '+shortDate(t.moveInDate);
-        return groupHeading + '<a class="card tenant-card'+(isPast?' past':'')+'" style="display:block;text-decoration:none;color:inherit;" href="#/tenants/'+t.id+'">'+
+        // Current tenants get a quick "send login" row (staff only) — the card itself stays a link,
+        // so it's a div with link behaviour instead of an <a> (a button can't live inside a link).
+        var loginRow = '';
+        if (!isPast && canManageTenantLogins()){
+          var ls = tenantLoginState(t);
+          var chip = ls === 'none' ? badge('neutral', 'No app login') : ls === 'inactive' ? badge('due', 'Login inactive') : badge('paid', 'App login active');
+          loginRow = '<div class="tenant-card-login">'+chip+
+            '<button type="button" class="mini-btn" onclick="event.stopPropagation();openTenantLoginSheet(\''+t.id+'\')">'+(ls === 'none' ? 'Create &amp; send login' : 'Send login')+'</button></div>';
+        }
+        return groupHeading + '<div class="card tenant-card'+(isPast?' past':'')+'" role="link" tabindex="0" style="display:block;color:inherit;cursor:pointer;" onclick="location.hash=\'#/tenants/'+t.id+'\'" onkeydown="if(event.key===\'Enter\'&&event.target===this)location.hash=\'#/tenants/'+t.id+'\'">'+
           '<div class="row" style="border:none;padding:0;">'+
           '<div class="who"><div class="name" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'+esc(t.fullName)+tenantLifecycleBadge(t)+'</div>'+
           '<div class="meta"><strong style="color:var(--text);">'+esc(p?p.name:'—')+'</strong> • '+stay+'</div>'+
           '<div class="meta">'+bondLine+'</div></div>'+
           '<div class="amount">$'+t.rentAmount+'<br/><span style="font-weight:400;color:var(--text-faint);text-transform:capitalize;font-size:11.5px;">'+t.rentFrequency+'</span></div>'+
-          '</div></a>';
+          '</div>'+loginRow+'</div>';
       }).join('');
     }
     function sectionTitle(txt, n){
@@ -3628,8 +3637,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var prof = tenantLoginProfile(t);
     var ref = tenantPaymentRef(t);
     if (!t.authUserId){
-      return '<div class="card"><h2>App access</h2><p style="font-size:13px;color:var(--text-dim);margin:0;">'+
-        'This tenant has no login yet. Create it in <a href="#/users">Users</a> (link it to this tenant) — then their access details show here.</p></div>';
+      return '<div class="card"><h2>App access</h2><p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">'+
+        'This tenant has no login yet.</p>'+
+        (canManageTenantLogins() ? '<button type="button" class="mini-btn primary" onclick="openTenantLoginSheet(\''+t.id+'\')">Create &amp; send login</button>' : '')+'</div>';
     }
     var pw = prof && prof.currentPassword
       ? '<span class="pw-mask" data-pw="'+esc(prof.currentPassword)+'" data-shown="0" style="letter-spacing:1px;">••••••••</span> <button type="button" class="text-link" style="display:inline;margin:0 0 0 6px;font-size:12px;" onclick="var m=this.previousElementSibling;var on=m.dataset.shown===\'1\';m.textContent=on?\'••••••••\':m.dataset.pw;m.dataset.shown=on?\'0\':\'1\';this.textContent=on?\'Show\':\'Hide\';">Show</button>'
@@ -3646,6 +3656,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         (digits ? waButton('sendTenantAccess(\''+t.id+'\')', 'Send access details to '+esc(t.fullName)+' by WhatsApp') : '')+
         '<button type="button" class="mini-btn" onclick="copyTenantAccess(\''+t.id+'\', this)">Copy access details</button>'+
         '<button type="button" class="mini-btn primary" onclick="openTenantLoginQr(\''+t.id+'\', this)">▦ Login QR code</button>'+
+        (canManageTenantLogins() ? '<button type="button" class="mini-btn" onclick="openTenantLoginSheet(\''+t.id+'\')">Send login</button>' : '')+
       '</div></div>';
   }
   function sendTenantAccess(tenantId){
@@ -3657,12 +3668,144 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   function copyTenantAccess(tenantId, btn){
     var t = tenantOf(tenantId); if (!t) return;
     copyTextReliably(tenantAccessMessage(t)).then(function(ok){
-      if (ok && btn){ btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = 'Copy access details'; }, 1800); }
+      if (ok && btn){ var was = btn.innerHTML; btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.innerHTML = was; }, 1800); }
       else if (!ok) showToast(tenantAccessMessage(t), 'info');
     });
   }
   window.sendTenantAccess = sendTenantAccess;
   window.copyTenantAccess = copyTenantAccess;
+
+  /* ---------- "Send login" sheet: create a tenant's app login and send it, in one place ----------
+   * Opened right after a new tenant is saved, from the Tenants list ("Send login" on each card)
+   * and from the tenant page's App access card. No login yet → it creates one (phone / tenant ID +
+   * a generated password, via the create-user Edge Function — the same as Users does) and then
+   * offers WhatsApp, email, copy and the one-tap QR. Viewers never see it. */
+  var tenantLoginSheet = { tenantId: null, password: '', activate: true, justCreated: false, afterSave: false, busy: false };
+  function canManageTenantLogins(){ return isStaff() && !isViewer(); }
+  function tenantLoginState(t){
+    if (!t || !t.authUserId) return 'none';
+    var prof = tenantLoginProfile(t);
+    return prof && prof.isActive === false ? 'inactive' : 'active';
+  }
+  function tenantSplitName(t){
+    var parts = String(t.fullName || '').trim().split(/\s+/);
+    return { first: parts.shift() || 'Tenant', last: parts.join(' ') };
+  }
+  function tenantAccessEmailUrl(t){
+    if (!t.email) return '';
+    return 'mailto:' + encodeURIComponent(t.email) + '?subject=' + encodeURIComponent('Your access to the house app') + '&body=' + encodeURIComponent(tenantAccessMessage(t));
+  }
+  window.openTenantLoginSheet = function(tenantId, opts){
+    if (!canManageTenantLogins()) return;
+    var t = tenantOf(tenantId); if (!t) return;
+    tenantLoginSheet = { tenantId: tenantId, password: generatePassword(8), activate: true, justCreated: false, afterSave: !!(opts && opts.afterSave), busy: false };
+    renderTenantLoginSheet();
+  };
+  window.closeTenantLoginSheet = function(){
+    var mm = document.getElementById('tenant-login-sheet');
+    if (mm) mm.hidden = true;
+    tenantLoginSheet.tenantId = null;
+  };
+  function tenantLoginRow(k, v){ return '<div class="field-row"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>'; }
+  function renderTenantLoginSheet(){
+    var st = tenantLoginSheet, t = tenantOf(st.tenantId);
+    if (!t) return;
+    var mm = document.getElementById('tenant-login-sheet');
+    if (!mm){
+      mm = document.createElement('div'); mm.className = 'modal-overlay'; mm.id = 'tenant-login-sheet';
+      mm.addEventListener('click', function(e){ if (e.target === mm && !tenantLoginSheet.busy) closeTenantLoginSheet(); });
+      document.body.appendChild(mm);
+    }
+    var first = tenantSplitName(t).first;
+    var ref = tenantPaymentRef(t);
+    var state = tenantLoginState(t);
+    var prof = tenantLoginProfile(t);
+    var hasPhone = phoneDigitsOnly(t.phone || '').length >= 8;
+    var userLine = (ref ? '<b>'+esc(ref)+'</b>' : '') + (ref && t.phone ? ' <span style="color:var(--text-faint);font-weight:400;">or '+esc(t.phone)+'</span>' : (!ref ? esc(t.phone || '—') : ''));
+    var lead = st.afterSave ? '<p class="tls-saved">✓ '+esc(first)+' was added as a tenant.</p>' : '';
+    var body = '', actions = '';
+    if (state === 'none' && !hasPhone){
+      body = '<p class="modal-sub">'+esc(first)+' logs in with their mobile number or tenant ID, so the login needs a phone number (with country code). Add it to the tenant first.</p>';
+      actions = '<button type="button" class="mini-btn" onclick="closeTenantLoginSheet()">Later</button>'+
+        '<button type="button" class="mini-btn primary" onclick="closeTenantLoginSheet();openTenantModal(\''+t.id+'\')">Edit tenant</button>';
+    } else if (state === 'none'){
+      body = '<p class="modal-sub">Create '+esc(first)+'\'s login to the house app, then send it straight away.</p>'+
+        '<div class="field-list">'+
+          tenantLoginRow('User', userLine)+
+          tenantLoginRow('Password', '<span class="tls-pw">'+esc(st.password)+'</span> <button type="button" class="text-link tls-inline" onclick="tenantLoginSheetNewPassword()">New</button>')+
+        '</div>'+
+        '<label class="tls-check"><input type="checkbox" id="tls-activate" '+(st.activate?'checked':'')+' /> '+
+          '<span>Activate now — they can sign in as soon as they get the message</span></label>';
+      actions = '<button type="button" class="mini-btn" onclick="closeTenantLoginSheet()">'+(st.afterSave ? 'Not now' : 'Cancel')+'</button>'+
+        '<button type="button" class="mini-btn primary" id="tls-create" onclick="tenantLoginSheetCreate()">Create login</button>';
+    } else {
+      var pw = prof && prof.currentPassword
+        ? '<span class="pw-mask" data-pw="'+esc(prof.currentPassword)+'" data-shown="'+(st.justCreated?'1':'0')+'">'+(st.justCreated ? esc(prof.currentPassword) : '••••••••')+'</span> <button type="button" class="text-link tls-inline" onclick="var m=this.previousElementSibling;var on=m.dataset.shown===\'1\';m.textContent=on?\'••••••••\':m.dataset.pw;m.dataset.shown=on?\'0\':\'1\';this.textContent=on?\'Show\':\'Hide\';">'+(st.justCreated?'Hide':'Show')+'</button>'
+        : '<span style="color:var(--text-faint);">Not on file — the QR code works without it</span>';
+      body = (st.justCreated ? '<p class="tls-saved">✓ Login created'+(state==='active' ? ' and active' : '')+'.</p>' : '')+
+        '<p class="modal-sub">Send '+esc(first)+' everything they need to get into the app.</p>'+
+        '<div class="field-list">'+
+          tenantLoginRow('App', '<a href="'+esc(appPublicUrl())+'" target="_blank" rel="noopener">'+esc(appPublicUrl().replace(/^https?:\/\//,''))+'</a>')+
+          tenantLoginRow('User', userLine)+
+          tenantLoginRow('Password', pw)+
+        '</div>'+
+        (state === 'inactive' ? '<div class="tls-warn">The login is <b>deactivated</b> — '+esc(first)+' won\'t be able to sign in until you activate it. <button type="button" class="mini-btn" id="tls-activate-btn" onclick="tenantLoginSheetActivate()">Activate login</button></div>' : '')+
+        '<div class="tls-send">'+
+          (hasPhone ? '<button type="button" class="mini-btn tls-wa" onclick="sendTenantAccess(\''+t.id+'\')">'+WA_ICON+'<span>Send by WhatsApp</span></button>' : '')+
+          (t.email ? '<a class="mini-btn" href="'+esc(tenantAccessEmailUrl(t))+'">Email details</a>' : '')+
+          '<button type="button" class="mini-btn" onclick="copyTenantAccess(\''+t.id+'\', this)">Copy details</button>'+
+          '<button type="button" class="mini-btn" onclick="closeTenantLoginSheet();openTenantLoginQr(\''+t.id+'\')">▦ Login QR</button>'+
+        '</div>';
+      actions = '<button type="button" class="mini-btn" onclick="closeTenantLoginSheet()">Done</button>';
+    }
+    mm.innerHTML = '<div class="card modal-card tls-card" style="max-width:440px;">'+
+      '<h2 class="modal-title">'+(state === 'none' ? 'App login for ' : 'Send login to ')+esc(first)+'</h2>'+
+      lead + body +
+      '<p class="form-error" id="tls-error" hidden></p>'+
+      '<div class="modal-actions">'+actions+'</div></div>';
+    mm.hidden = false;
+  }
+  window.tenantLoginSheetNewPassword = function(){ tenantLoginSheet.password = generatePassword(8); renderTenantLoginSheet(); };
+  window.tenantLoginSheetCreate = async function(){
+    var st = tenantLoginSheet, t = tenantOf(st.tenantId);
+    if (!t || st.busy) return;
+    var errEl = document.getElementById('tls-error');
+    var btn = document.getElementById('tls-create');
+    var cb = document.getElementById('tls-activate'); if (cb) st.activate = cb.checked;
+    st.busy = true;
+    if (btn){ btn.disabled = true; btn.lastChild.textContent = 'Creating…'; }
+    try {
+      var nm = tenantSplitName(t);
+      var result = await profileService.createUser({ password: st.password, firstName: nm.first, lastName: nm.last, phone: t.phone, role: 'tenant', tenantId: t.id, isActive: st.activate });
+      if (result && result.warning) throw new Error(result.warning);
+      if (result && result.userId) t.authUserId = result.userId;
+      allProfiles = withStaffStubs(await profileService.getAll());
+      st.justCreated = true;
+      st.busy = false;
+      renderTenantLoginSheet();
+      renderPreservingScroll();
+    } catch(err){
+      st.busy = false;
+      if (btn){ btn.disabled = false; btn.lastChild.textContent = 'Create login'; }
+      errEl.textContent = friendlyErrorMessage(err); errEl.hidden = false;
+    }
+  };
+  window.tenantLoginSheetActivate = async function(){
+    var t = tenantOf(tenantLoginSheet.tenantId), prof = tenantLoginProfile(t);
+    if (!prof) return;
+    var btn = document.getElementById('tls-activate-btn');
+    if (btn) btn.disabled = true;
+    try {
+      await profileService.setActive(prof.id, true);
+      prof.isActive = true;
+      showToast('Login activated.', 'success');
+      renderTenantLoginSheet();
+      renderPreservingScroll();
+    } catch(err){
+      if (btn) btn.disabled = false;
+      var errEl = document.getElementById('tls-error'); errEl.textContent = friendlyErrorMessage(err); errEl.hidden = false;
+    }
+  };
 
   /* ---------- One-tap login QR (tenant-qr-login Edge Function) ----------
    * Staff make a QR for a tenant; scanning it (or tapping the link) opens <app>#/qr/<token>, which
@@ -17230,6 +17373,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       showToast(isNewTenant && tenantObj && tenantPaymentRef(tenantObj)
         ? 'Tenant saved — tenant ID ' + tenantPaymentRef(tenantObj) + ' assigned.' : 'Tenant saved successfully.', 'success');
       render();
+      // A brand-new tenant without a login: go straight to creating and sending it.
+      if (isNewTenant && !tenantObj.authUserId && canManageTenantLogins()) openTenantLoginSheet(tenantObj.id, { afterSave: true });
     } catch(err){
       errorEl.textContent = 'Could not save this tenant. ' + friendlyErrorMessage(err);
       errorEl.hidden = false;

@@ -61,9 +61,11 @@ export async function setActive(profileId, isActive) {
  *  they immediately see their own data. A tenant logs in with their PHONE number (no email
  *  needed) — pass `phone`, not `email`, when role is 'tenant'; the Edge Function derives an
  *  internal email behind the scenes. Throws with a plain message on failure. */
-export async function createUser({ email, password, firstName, lastName, phone, role, tenantId }) {
+export async function createUser({ email, password, firstName, lastName, phone, role, tenantId, isActive }) {
+  const body = { email, password, firstName, lastName, phone, role, tenantId: tenantId || null };
+  if (typeof isActive === 'boolean') body.isActive = isActive; // tenants default to deactivated on the server
   const res = await supabase.functions.invoke('create-user', {
-    body: { email, password, firstName, lastName, phone, role, tenantId: tenantId || null }
+    body
   });
   if (res.error) throw await describeFunctionError(res.error);
   if (res.data && res.data.error) throw new Error(res.data.error);
