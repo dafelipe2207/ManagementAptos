@@ -1364,9 +1364,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     { hash:'#/tenants', label:'Tenants', icon:'tenants', primary:false },
     { hash:'#/payments', label:'Payments', icon:'payments', primary:true },
     { hash:'#/bills', label:'Bills', icon:'receipt', primary:true },
-    { hash:'#/emails', label:'Correos', icon:'mail', primary:false },
+    { hash:'#/emails', label:'E-mail', icon:'mail', primary:false },
     { hash:'#/property-operations', label:'Property Operations', icon:'wrench', primary:false },
-    { hash:'#/notifications', label:'Notifications', icon:'bell', primary:false },
     { header:true, label:'Insights' },
     { hash:'#/reports', label:'Reports', icon:'chart', primary:false },
     { hash:'#/profits', label:'Profits', icon:'coins', primary:false },
@@ -1645,10 +1644,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           '<span>'+(p ? esc(p.name)+' · ' : '')+esc(agoEs(agencyEmailActivityAt(n)))+'</span></span></span>'+
         '<span class="dash-mail-chev">'+svg('chevron')+'</span></button>';
     }).join('');
-    return '<div class="card needs-card dash-mail-card"><h2>✉️ Correos nuevos <span class="count-pill">'+fresh.length+'</span></h2>'+
+    return '<div class="card needs-card dash-mail-card"><h2>✉️ E-mails nuevos <span class="count-pill">'+fresh.length+'</span></h2>'+
       '<p class="modal-hint" style="margin:-4px 0 8px;">Llegaron de las agencias y todavía no los has abierto.</p>'+rows+
-      (fresh.length > 4 ? '<button type="button" class="mini-btn" style="margin-top:8px;" onclick="location.hash=\'#/emails\'">Ver los '+fresh.length+' en Correos</button>'
-        : '<button type="button" class="text-link" style="margin-top:6px;" onclick="location.hash=\'#/emails\'">Ir a Correos</button>')+'</div>';
+      (fresh.length > 4 ? '<button type="button" class="mini-btn" style="margin-top:8px;" onclick="location.hash=\'#/emails\'">Ver los '+fresh.length+' en E-mail</button>'
+        : '<button type="button" class="text-link" style="margin-top:6px;" onclick="location.hash=\'#/emails\'">Ir a E-mail</button>')+'</div>';
   }
   function dashboardReportedPaymentsHtml(){
     // One row per TRANSFER: everything a tenant reported with the same payment date (rent and
@@ -11936,7 +11935,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var tabsHtml = '<div class="filter-chips" style="margin-bottom:10px;">'+
       '<button type="button" class="chip'+(inArchive ? '' : ' active')+'" onclick="setEmailsTab(\'inbox\')">Bandeja'+(inboxN ? ' <span class="chip-count">'+inboxN+'</span>' : '')+'</button>'+
       '<button type="button" class="chip'+(inArchive ? ' active' : '')+'" onclick="setEmailsTab(\'archived\')">🗄️ Archivados'+(archivedList.length ? ' <span class="chip-count">'+archivedList.length+'</span>' : '')+'</button></div>';
-    return pageHeaderIcon('Correos', 'Lo que mandan las agencias, revisado cada hora. Los informativos pasan a Archivados al día siguiente. Toca uno para verlo completo, asignar un responsable y abrir el correo.', 'mail', 'documents') +
+    return pageHeaderIcon('E-mail', 'Lo que mandan las agencias, revisado cada hora. Los informativos pasan a Archivados al día siguiente. Toca uno para verlo completo, asignar un responsable y abrir el correo.', 'mail', 'documents') +
       lastLine + tabsHtml +
       (list.length ? '<div class="mail-list">'+cards+'</div>' : empty);
   }
@@ -11971,7 +11970,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var s = profileId && staffDirectory.find(function(x){ return x.id === profileId; });
       if (s && profileId !== (currentProfile && currentProfile.id)){
         if (s.authUserId) notificationService.notify(s.authUserId, '👤 Te asignaron: ' + agencyEmailParts(n).title,
-          (staffName(currentProfile.id) || 'Un admin') + ' te asignó el seguimiento de este correo de la agencia. Míralo en Correos.',
+          (staffName(currentProfile.id) || 'Un admin') + ' te asignó el seguimiento de este correo de la agencia. Míralo en E-mail.',
           'agency_email', null, { category: 'important_notice', propertyId: n.propertyId, createdByProfileId: currentProfile.id });
       }
       renderPreservingScroll();
@@ -14065,7 +14064,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           '<div class="rei-actions">'+
             (canAssignAgencyEmails() ? '<select class="mail-assign mail-st-select st-'+it.st+'" aria-label="Estado" onchange="setAgencyEmailStatus(\''+it.n.id+'\', this.value)">'+
               AGENCY_STATUSES.map(function(s2){ return '<option value="'+s2.key+'"'+(s2.key === it.st ? ' selected' : '')+'>'+s2.ic+' '+esc(s2.short)+'</option>'; }).join('')+'</select>' : '')+
-            '<button type="button" class="mini-btn" onclick="openEmailsAt(\''+it.n.id+'\')">Ver en Correos</button>'+
+            '<button type="button" class="mini-btn" onclick="openEmailsAt(\''+it.n.id+'\')">Ver en E-mail</button>'+
           '</div>'+
         '</div></div>';
     }).join('');
@@ -16834,6 +16833,26 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       showToast('Could not update the tenant. ' + friendlyErrorMessage(err), 'error');
     }
   }
+  /** Tenants who left: 8 days after their ACTUAL move-out date the tenant is deactivated (hidden
+   *  from the active list — their history, and anything they still owe, stays in Payments/Bills)
+   *  and their app login is turned off. Runs with the other automatic checks when an admin opens
+   *  the app. Reactivating by hand is still possible from the tenant page / Users. */
+  var AUTO_DEACTIVATE_DAYS = 8;
+  async function autoDeactivateMovedOutTenants(){
+    if (!isAdminLike() || isViewer()) return;
+    var due = tenants.filter(function(t){
+      return t.isActive !== false && t.actualMoveOutDate && daysBetween(t.actualMoveOutDate, TODAY) >= AUTO_DEACTIVATE_DAYS;
+    });
+    for (var i = 0; i < due.length; i++){
+      var t = due[i];
+      try {
+        var saved = await tenantService.update(t.id, Object.assign({}, t, { isActive: false }));
+        tenants = tenants.map(function(x){ return x.id === saved.id ? saved : x; });
+        var prof = (allProfiles || []).find(function(p){ return p.role === 'tenant' && p.authUserId && p.authUserId === t.authUserId && p.isActive !== false; });
+        if (prof){ await profileService.setActive(prof.id, false); prof.isActive = false; }
+      } catch(e){ console.warn('auto-deactivate tenant', t.fullName, e); }
+    }
+  }
   /** "Deactivate tenant" / "Reactivate tenant" button on the detail page. Reactivating is immediate. To
    *  deactivate: if the tenant has ALREADY moved out (actual move-out recorded) and doesn't owe
    *  anything on rent or bills, that's the normal case — it's just confirmed. If they don't yet
@@ -18681,6 +18700,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     try { await refreshOperationsReadModels(); } catch(_e){ console.error('refreshOperationsReadModels failed', _e); }
     recomputeRentCharges();
     try { await autoReconcileMoveOutEstimates(); } catch(_e){ console.error('autoReconcileMoveOutEstimates failed', _e); }
+    try { await autoDeactivateMovedOutTenants(); } catch(_e){ console.error('autoDeactivateMovedOutTenants failed', _e); }
     // Must run after recomputeRentCharges() — its rent-reminder rules read the freshly computed
     // rentCharges array, which doesn't exist yet at the point the other automatic checks above run.
     try { await ensureAutomaticNotifications(); } catch(_e){ console.error('ensureAutomaticNotifications failed', _e); }
