@@ -8,6 +8,8 @@ function fromRow(r) {
     id: r.id, propertyId: r.property_id, periodStart: r.period_start, periodEnd: r.period_end || null,
     amount: r.amount != null ? Number(r.amount) : null, paidDate: r.paid_date || null,
     method: r.method || null, receiptPath: r.receipt_path || null, notes: r.notes || '',
+    // The receipt the real estate emailed (stored by the agency-email function) — read-only here.
+    agencyReceiptPath: r.agency_receipt_path || null, agencyReceiptNumber: r.agency_receipt_number || null,
     createdAt: r.created_at
   };
 }

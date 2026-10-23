@@ -15,6 +15,11 @@
  *  3. In the editor pick the function "setup" and press Run. Accept the Gmail permissions.
  *     That creates the hourly timer and runs a first check. Done.
  *  View → Executions shows each run and the app's answer.
+ *
+ * RECEIPTS: when an agency email is a payment receipt with a PDF, the PDF goes along; the app keeps
+ * it as the "Real estate receipt" of the rent payment or bill it covers.
+ * Once, after updating this script: pick "backfillReceipts" and press Run — it sends the receipt PDFs
+ * of the last 60 days (no new notifications are created).
  */
 
 var QUERY = 'newer_than:2d -category:promotions (' + [
@@ -24,6 +29,8 @@ var QUERY = 'newer_than:2d -category:promotions (' + [
 ].join(' OR ') + ')';
 var ME = 'dafelipe2207@gmail.com';
 var BATCH = 10;
+var RECEIPT_RE = /receipt|recibo|payment received|thanks for your (recent )?payment/i;
+var MAX_PDF = 5 * 1024 * 1024;
 
 function setup() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -33,12 +40,29 @@ function setup() {
   sendAgencyEmails();
 }
 
-function sendAgencyEmails() {
+function sendAgencyEmails() { run_(QUERY, false); }
+
+/** One-off: the receipt PDFs of the last 60 days (only receipts; no notifications). */
+function backfillReceipts() {
+  run_(QUERY.replace('newer_than:2d', 'newer_than:60d') + ' has:attachment', true);
+}
+
+/** PDFs of a receipt email (a receipt is told by the subject / start of the body). */
+function receiptPdfs_(m) {
+  if (!RECEIPT_RE.test((m.getSubject() || '') + ' ' + (m.getPlainBody() || '').slice(0, 600))) return [];
+  return m.getAttachments({ includeInlineImages: false }).filter(function (a) {
+    return /pdf/i.test(a.getContentType()) && a.getSize() <= MAX_PDF;
+  }).slice(0, 2).map(function (a) {
+    return { name: a.getName(), mimeType: 'application/pdf', base64: Utilities.base64Encode(a.getBytes()) };
+  });
+}
+
+function run_(query, receiptsOnly) {
   var url = PropertiesService.getScriptProperties().getProperty('WEBHOOK_URL');
   if (!url) throw new Error('Add the WEBHOOK_URL script property first (see SETUP).');
 
   var items = [];
-  var threads = GmailApp.search(QUERY, 0, 50);
+  var threads = GmailApp.search(query, 0, receiptsOnly ? 100 : 50);
   threads.forEach(function (thread) {
     var msgs = thread.getMessages();
     var context = msgs.map(function (m) {
@@ -48,18 +72,26 @@ function sendAgencyEmails() {
     msgs.forEach(function (m) {
       if (m.isDraft() || m.isInTrash()) return;
       if ((m.getFrom() || '').toLowerCase().indexOf(ME) !== -1) return; // Daniel's own sent emails
-      if (Date.now() - m.getDate().getTime() > 2 * 86400000) return;
+      if (!receiptsOnly && Date.now() - m.getDate().getTime() > 2 * 86400000) return;
+      var pdfs = receiptPdfs_(m);
+      if (receiptsOnly && !pdfs.length) return;
       items.push({
         messageId: m.getId(), threadId: thread.getId(), date: m.getDate().toISOString(),
         from: m.getFrom(), to: m.getTo(), subject: m.getSubject(),
         body: (m.getPlainBody() || '').slice(0, 12000),
         url: 'https://mail.google.com/mail/?authuser=' + ME + '#all/' + m.getId(),
-        thread: context
+        thread: context,
+        attachments: pdfs
       });
     });
   });
   items.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
 
+  if (receiptsOnly) {
+    // Smaller batches: each one carries PDFs and the app reads every PDF.
+    for (var r = 0; r < items.length; r += 3) post(url, { receiptsOnly: true, messages: items.slice(r, r + 3) });
+    return;
+  }
   var runId = Utilities.getUuid();
   if (!items.length) { post(url, { runId: runId, final: true, messages: [] }); return; }
   for (var i = 0; i < items.length; i += BATCH) {

@@ -37,6 +37,8 @@ function fromRow(row) {
   if (row.allocation_method) b.allocationMethod = row.allocation_method;
   if (row.receipt_path) b.receiptPath = row.receipt_path;
   if (row.admin_receipt_path) b.adminReceiptPath = row.admin_receipt_path;
+  // Receipt the real estate emailed for this bill (agency-email function) — read-only here.
+  b.agencyReceiptPath = row.agency_receipt_path || null;
   // The clean invoice made for tenants (no agency/owner details) — shown to tenants instead of
   // the original document once attached. tenantInvoiceData = the fields it's drawn from.
   b.tenantInvoicePath = row.tenant_invoice_path || null;

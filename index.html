@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=330">
+<link rel="modulepreload" href="app.js?v=331">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -29,7 +29,7 @@
 <link rel="modulepreload" href="services/bondService.js?v=5">
 <link rel="modulepreload" href="services/rentScheduleService.js">
 <link rel="modulepreload" href="services/paymentService.js?v=2">
-<link rel="modulepreload" href="services/billService.js?v=8">
+<link rel="modulepreload" href="services/billService.js?v=9">
 <link rel="modulepreload" href="services/billAllocationService.js?v=4">
 <link rel="modulepreload" href="services/tenantDocumentService.js">
 <link rel="modulepreload" href="services/storageService.js?v=3">
@@ -43,7 +43,7 @@
 <link rel="modulepreload" href="services/houseRulesService.js">
 <link rel="modulepreload" href="services/maintenanceLogService.js">
 <link rel="modulepreload" href="services/realEstateInspectionService.js">
-<link rel="modulepreload" href="services/leasePaymentService.js?v=1">
+<link rel="modulepreload" href="services/leasePaymentService.js?v=2">
 <link rel="modulepreload" href="services/auditService.js?v=3">
 <link rel="modulepreload" href="services/recurringBillService.js?v=3">
 <link rel="modulepreload" href="services/cleaningService.js?v=3">
@@ -56,7 +56,7 @@
 <link rel="modulepreload" href="services/activityLogService.js?v=1">
 <link rel="modulepreload" href="services/entityLinkService.js">
 <link rel="modulepreload" href="services/roomIncludedBillService.js">
-<link rel="modulepreload" href="services/agencyEmailService.js?v=5">
+<link rel="modulepreload" href="services/agencyEmailService.js?v=6">
 <link rel="modulepreload" href="services/whatsappSendService.js?v=1">
 <link rel="modulepreload" href="lib/tenantInvoice.js?v=1">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
@@ -1352,6 +1352,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=330"></script>
+<script type="module" src="app.js?v=331"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import { AiResult, Ctx, decide, InMsg, isAgencySender, keyOf, perthToday } from "./logic.ts";
+import { AiResult, Ctx, decide, InMsg, isAgencySender, keyOf, normalizeProperty, perthToday } from "./logic.ts";
+import { looksLikeReceipt, RECEIPT_PROMPT, RECEIPT_SCHEMA, ReceiptRead, receiptTargets } from "./receipts.ts";
 import { buildPrompt, RESPONSE_SCHEMA } from "./prompt.ts";
 
 // PUBLIC webhook (verify_jwt: false), protected by a secret token in the URL:
@@ -19,7 +20,11 @@ import { buildPrompt, RESPONSE_SCHEMA } from "./prompt.ts";
 //   variable {{1}}), WA_ALERT_TO (comma-separated numbers, international format), WA_ALERT_LANG
 //   (default "es"), plus the existing WA_TOKEN, WA_PHONE_ID, WA_API_VERSION.
 //
-// Body: { runId?: string, final?: boolean, messages: InMsg[] }
+// Body: { runId?: string, final?: boolean, receiptsOnly?: boolean, messages: InMsg[] }
+//   messages[].attachments?: [{ name, mimeType, base64 }] — PDFs of receipt emails. A real-estate
+//   payment receipt is stored in the `receipts` bucket, read by Gemini and attached as the "Real
+//   estate receipt" of the rent payment (lease_payments) or bill it covers (receipts.ts); a bill it
+//   covers is marked paid to the provider. receiptsOnly = backfill: only receipts, no notifications.
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -163,6 +168,83 @@ async function sendWhatsApp(text: string): Promise<void> {
   }
 }
 
+// ------------------------------------------------------------------ receipts
+
+type Att = { name?: string; mimeType?: string; base64?: string };
+function pdfOf(m: InMsg): Att | null {
+  const atts = ((m as unknown as { attachments?: Att[] }).attachments) || [];
+  return atts.find((a) => a && a.base64 && (/pdf/i.test(a.mimeType || "") || /\.pdf$/i.test(a.name || ""))) || null;
+}
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64.replace(/\s+/g, ""));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function readReceiptPdf(base64: string, deadline: number): Promise<ReceiptRead> {
+  const body = JSON.stringify({
+    contents: [{ role: "user", parts: [{ inline_data: { mime_type: "application/pdf", data: base64 } }, { text: RECEIPT_PROMPT }] }],
+    generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: RECEIPT_SCHEMA },
+  });
+  let lastErr = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await sleep(attempt === 1 ? 2000 : 5000);
+    const left = deadline - Date.now();
+    if (left < 8000) break;
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(Math.min(45000, left - 3000)) });
+      if (!res.ok) { lastErr = `HTTP ${res.status}`; continue; }
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text || "").join("") || "";
+      const parsed = JSON.parse(text);
+      if (typeof parsed?.isReceipt !== "boolean") { lastErr = "invalid JSON shape"; continue; }
+      return parsed as ReceiptRead;
+    } catch (e) { lastErr = String((e as Error)?.message || e); }
+  }
+  throw new Error("gemini receipt: " + (lastErr || "out of time"));
+}
+/** Stores and attaches the receipt PDF of one email, once. Returns a short result for the log. */
+async function handleReceipt(db: SupabaseClient, m: InMsg, superAuthId: string | null, deadline: number): Promise<string | null> {
+  const pdf = pdfOf(m);
+  if (!pdf || !looksLikeReceipt(m.subject, m.body)) return null;
+  const key = keyOf(m.messageId);
+  const exists = await db.from("agency_email_receipts").select("dedup_key", { count: "exact", head: true }).eq("dedup_key", key);
+  if ((exists.count ?? 0) > 0) return "receipt already stored";
+  const propName = normalizeProperty(m.subject + " " + (m.body || "").slice(0, 2000));
+  const props = await db.from("properties").select("id,name");
+  const prop = propName ? (props.data || []).find((p) => p.name.toLowerCase() === propName.toLowerCase()) : null;
+  if (!prop) return "receipt: property not recognised";
+  const read = await readReceiptPdf(pdf.base64!, deadline);
+  if (!read.isReceipt) return "pdf is not a receipt";
+  const safe = (pdf.name || "receipt.pdf").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+  const path = `${superAuthId || "agency"}/agency-receipts/${m.messageId}-${safe}`;
+  const up = await db.storage.from("receipts").upload(path, b64ToBytes(pdf.base64!), { contentType: "application/pdf", upsert: true });
+  if (up.error) throw new Error("upload receipt: " + up.error.message);
+  const [lp, bl] = await Promise.all([
+    db.from("lease_payments").select("id,property_id,amount,paid_date,period_start,agency_receipt_path").eq("property_id", prop.id),
+    db.from("bills").select("id,property_id,invoice_number,amount,due_date,agency_receipt_path").eq("property_id", prop.id),
+  ]);
+  const targets = receiptTargets(read, prop.id,
+    (lp.data || []).map((x) => ({ id: x.id, propertyId: x.property_id, amount: x.amount == null ? null : Number(x.amount), paidDate: x.paid_date, periodStart: x.period_start, agencyReceiptPath: x.agency_receipt_path })),
+    (bl.data || []).map((x) => ({ id: x.id, propertyId: x.property_id, invoiceNumber: x.invoice_number, amount: x.amount == null ? null : Number(x.amount), dueDate: x.due_date, agencyReceiptPath: x.agency_receipt_path })));
+  for (const t of targets) {
+    if (t.table === "lease_payments") {
+      await db.from("lease_payments").update({ agency_receipt_path: path, agency_receipt_number: read.receiptNumber }).eq("id", t.id).is("agency_receipt_path", null);
+    } else {
+      await db.from("bills").update({ agency_receipt_path: path, admin_paid: true }).eq("id", t.id).is("agency_receipt_path", null);
+      if (read.paidDate) await db.from("bills").update({ admin_paid_date: read.paidDate }).eq("id", t.id).is("admin_paid_date", null);
+    }
+  }
+  const { error } = await db.from("agency_email_receipts").upsert({
+    dedup_key: key, property_id: prop.id, storage_path: path, file_name: pdf.name || null, receipt_number: read.receiptNumber,
+    amount: read.total, paid_date: read.paidDate && /^\d{4}-\d{2}-\d{2}$/.test(read.paidDate) ? read.paidDate : null,
+    items: read.items || [], targets,
+  }, { onConflict: "dedup_key", ignoreDuplicates: true });
+  if (error) throw new Error("save receipt: " + error.message);
+  return targets.length ? `receipt attached to ${targets.map((t) => t.table).join(" + ")}` : "receipt stored (no matching payment)";
+}
+
 // ------------------------------------------------------------------ handler
 
 Deno.serve(async (req) => {
@@ -178,7 +260,7 @@ Deno.serve(async (req) => {
     authorized = !!data?.value && safeEqual(given, String(data.value));
   }
   if (!authorized) return json({ error: "unauthorized" }, 401);
-  let payload: { runId?: string; final?: boolean; messages?: InMsg[] };
+  let payload: { runId?: string; final?: boolean; receiptsOnly?: boolean; messages?: InMsg[] };
   try { payload = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const messages = Array.isArray(payload.messages) ? payload.messages : null;
   if (!messages) return json({ error: "messages[] required" }, 400);
@@ -199,6 +281,12 @@ Deno.serve(async (req) => {
       if (!m?.messageId || typeof m.messageId !== "string") continue;
       const key = keyOf(m.messageId);
       if (!isAgencySender(m.from, m.subject)) { results.push({ key, result: "skipped: sender" }); continue; }
+      // Receipt PDFs: stored/attached once, whether the email itself is new or already processed.
+      if (pdfOf(m) && Date.now() < deadline - 15000) {
+        try { const rr = await handleReceipt(db, m, superAuthId, deadline); if (rr) results.push({ key, result: rr }); }
+        catch (e) { console.error(key, e); results.push({ key, result: "receipt error", error: String((e as Error)?.message || e) }); }
+      }
+      if (payload.receiptsOnly) continue;
       if (await alreadyProcessed(db, key)) { counts.found++; results.push({ key, result: "already processed" }); continue; }
       if (Date.now() > deadline - 10000) { results.push({ key, result: "deferred: time" }); continue; }
 
@@ -268,7 +356,7 @@ Deno.serve(async (req) => {
       const r = (Array.isArray(data) ? data[0] : data) as { emails_found: number; notified: number; updates: number; errors: number };
       totals = { found: r.emails_found, notified: r.notified, updates: r.updates, errors: r.errors };
     }
-    if (!payload.runId || payload.final) {
+    if (!payload.receiptsOnly && (!payload.runId || payload.final)) {
       const { error } = await db.from("agency_email_checks").insert({
         emails_found: totals.found, notified: totals.notified, updates: totals.updates, errors: totals.errors, source: "app",
       });

@@ -14,7 +14,7 @@ import * as tenantService from './services/tenantService.js?v=10';
 import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
-import * as billService from './services/billService.js?v=8';
+import * as billService from './services/billService.js?v=9';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
 import * as storageService from './services/storageService.js?v=3';
@@ -28,7 +28,7 @@ import * as rentPaymentReportService from './services/rentPaymentReportService.j
 import * as houseRulesService from './services/houseRulesService.js';
 import * as maintenanceLogService from './services/maintenanceLogService.js';
 import * as realEstateInspectionService from './services/realEstateInspectionService.js';
-import * as leasePaymentService from './services/leasePaymentService.js?v=1';
+import * as leasePaymentService from './services/leasePaymentService.js?v=2';
 import * as auditService from './services/auditService.js?v=3';
 import * as recurringBillService from './services/recurringBillService.js?v=3';
 import * as cleaningService from './services/cleaningService.js?v=3';
@@ -41,7 +41,7 @@ import * as taskIndexService from './services/taskIndexService.js?v=1';
 import * as activityLogService from './services/activityLogService.js?v=1';
 import * as entityLinkService from './services/entityLinkService.js';
 import * as roomIncludedBillService from './services/roomIncludedBillService.js';
-import * as agencyEmailService from './services/agencyEmailService.js?v=5';
+import * as agencyEmailService from './services/agencyEmailService.js?v=6';
 import * as whatsappSendService from './services/whatsappSendService.js?v=1';
 import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
 
@@ -2443,6 +2443,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var meta = [];
       meta.push(x.paidDate ? 'Paid ' + fullDate(x.paidDate) : 'Paid date not recorded');
       if (x.notes) meta.push(esc(x.notes));
+      if (x.agencyReceiptPath) meta.push('<button type="button" class="text-link" style="margin:0;padding:0;min-height:0;font-size:12px;" onclick="viewReceipt(\'receipts\',\''+x.agencyReceiptPath+'\')">📎 Real estate receipt'+(x.agencyReceiptNumber ? ' #'+esc(x.agencyReceiptNumber) : '')+'</button>');
       return '<div class="row" style="padding:8px 0;">'+
         '<div class="who"><div class="name" style="font-size:13px;">'+shortDate(x.periodStart)+(x.periodEnd ? ' – '+shortDate(x.periodEnd) : '')+'</div>'+
         '<div class="meta" style="white-space:normal;">'+meta.join(' • ')+'</div></div>'+
@@ -10649,7 +10650,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       (adminReady ? 'All tenants have paid — you can now forward this on to '+esc(b.provider)+'.' : 'Not every tenant has paid their share yet — you can still mark this as paid to '+esc(b.provider)+', but you\'ll be asked to confirm first.')+
       '</p>'+
       '<div class="alloc-summary-row" style="align-items:center;flex-wrap:wrap;">'+
-      '<div class="who"><div>'+esc(b.provider)+'</div>'+receiptLinkHtml(b.adminReceiptPath, b.id, null)+'</div>'+
+      '<div class="who"><div>'+esc(b.provider)+'</div>'+receiptLinkHtml(b.adminReceiptPath, b.id, null)+
+        (b.agencyReceiptPath ? '<button type="button" class="text-link" style="margin:2px 0 0;padding:0;min-height:0;font-size:12px;" onclick="viewReceipt(\'receipts\',\''+b.agencyReceiptPath+'\')">📎 Real estate receipt</button>' : '')+'</div>'+
       '<div style="display:flex;align-items:center;gap:10px;">'+
       '<div style="text-align:right;"><div style="font-weight:650;">'+money(b.amount)+'</div>'+adminPaidBit+'</div>'+
       adminActionBtn+
@@ -11608,6 +11610,62 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   function agencyCaseOf(n){ return n.dedupKey ? agencyCases.find(function(c){ return c.dedupKey === n.dedupKey; }) || null : null; }
   /** Follow-up emails filed under this email's case, newest first. */
   function agencyUpdatesOf(n){ return n.dedupKey ? agencyUpdates.filter(function(u){ return u.caseDedupKey === n.dedupKey; }) : []; }
+  /* ---------- Real-estate payment receipts (PDF) emailed by the agency ----------
+   * Stored by the agency-email function and attached as the "Real estate receipt" of the rent
+   * payment or bill they cover (table agency_email_receipts). */
+  var agencyReceipts = [];
+  /** Receipts of this email or of any Update filed under it. */
+  function agencyReceiptsOf(n){
+    if (!n.dedupKey) return [];
+    var keys = [n.dedupKey].concat(agencyUpdatesOf(n).map(function(u){ return u.dedupKey; }));
+    return agencyReceipts.filter(function(r){ return keys.indexOf(r.dedupKey) > -1; });
+  }
+  function receiptTargetLabel(t){
+    if (t.table === 'lease_payments'){
+      var x = leasePayments.find(function(r){ return r.id === t.id; });
+      return x ? 'Pago de renta '+shortDate(x.periodStart)+(x.periodEnd ? ' – '+shortDate(x.periodEnd) : '')+(x.amount != null ? ' · '+money(x.amount) : '') : 'Pago de renta';
+    }
+    var b = billOf(t.id);
+    return b ? 'Factura '+(b.provider || billTypeLabel(b.billType))+(b.invoiceNumber ? ' #'+b.invoiceNumber : '')+' · '+money(b.amount) : 'Factura';
+  }
+  /** Rent payments and bills of the receipt's property around its date — for attaching it by hand. */
+  function receiptTargetOptions(r){
+    var opts = [];
+    var near = function(d){ return !r.paidDate || !d || Math.abs(daysBetween(d, r.paidDate)) <= 45; };
+    leasePayments.filter(function(x){ return x.propertyId === r.propertyId && near(x.paidDate || x.periodStart); })
+      .forEach(function(x){ opts.push(['lease_payments:'+x.id, '🏠 Renta '+shortDate(x.periodStart)+(x.periodEnd ? ' – '+shortDate(x.periodEnd) : '')+(x.amount != null ? ' · '+money(x.amount) : '')+(x.agencyReceiptPath ? ' (ya tiene)' : '')]); });
+    bills.filter(function(b){ return b.propertyId === r.propertyId && near(b.dueDate || b.issueDate); })
+      .forEach(function(b){ opts.push(['bills:'+b.id, '🧾 '+(b.provider || billTypeLabel(b.billType))+(b.invoiceNumber ? ' #'+b.invoiceNumber : '')+' · '+money(b.amount)+(b.agencyReceiptPath ? ' (ya tiene)' : '')]); });
+    return opts;
+  }
+  function agencyReceiptRowHtml(n){
+    return agencyReceiptsOf(n).map(function(r){
+      var info = [r.number ? '#'+r.number : '', r.amount != null ? money(r.amount) : '', r.paidDate ? shortDate(r.paidDate) : ''].filter(Boolean).join(' · ');
+      var where = r.targets.length
+        ? 'Adjuntado a: <b>'+r.targets.map(function(t){ return esc(receiptTargetLabel(t)); }).join('</b> y <b>')+'</b>'
+        : '<b>No encontré el pago</b> — elige a cuál corresponde.';
+      var pick = (isViewer() || isTenantRole()) ? '' :
+        '<select class="mail-assign" aria-label="Adjuntar comprobante a" onchange="attachAgencyReceipt(\''+n.id+'\',\''+r.dedupKey+'\', this.value)">'+
+          '<option value="">'+(r.targets.length ? 'Adjuntar también a…' : 'Adjuntar a…')+'</option>'+
+          receiptTargetOptions(r).map(function(o){ return '<option value="'+o[0]+'">'+esc(o[1])+'</option>'; }).join('')+'</select>';
+      return '<div class="mail-fact"><span class="mail-fact-k">Comprobante</span><span>📎 Real estate'+(info ? ' ('+esc(info)+')' : '')+'<br>'+where+'</span>'+
+        '<button type="button" class="mini-btn" onclick="viewReceipt(\'receipts\',\''+r.path+'\')">Ver comprobante</button>'+pick+'</div>';
+    }).join('');
+  }
+  window.attachAgencyReceipt = async function(notifId, receiptKey, value){
+    if (!value) return;
+    var r = agencyReceipts.find(function(x){ return x.dedupKey === receiptKey; });
+    if (!r) return;
+    var parts = value.split(':');
+    try {
+      r.targets = await agencyEmailService.attachReceipt(r, parts[0], parts[1]);
+      if (parts[0] === 'lease_payments'){ var lp = leasePayments.find(function(x){ return x.id === parts[1]; }); if (lp){ lp.agencyReceiptPath = r.path; lp.agencyReceiptNumber = r.number; } }
+      else { var b = billOf(parts[1]); if (b){ b.agencyReceiptPath = r.path; b.adminPaid = true; if (!b.adminPaidDate && r.paidDate) b.adminPaidDate = r.paidDate; } }
+      emailsOpenId = notifId;
+      showToast('Comprobante adjuntado.', 'success');
+      renderPreservingScroll();
+    } catch(e){ showToast('No se pudo adjuntar: ' + friendlyErrorMessage(e), 'error'); }
+  };
   function agencyEmailActivityAt(n){
     var ups = agencyUpdatesOf(n), t = n.createdAt;
     if (ups.length && String(ups[0].receivedAt) > String(t)) t = ups[0].receivedAt;
@@ -11855,7 +11913,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '<div class="mail-body">'+
           '<p class="mail-text">'+esc(pp.text).replace(/https?:\/\/[^\s<)]+[^\s<).,;]/g, function(u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+u.replace(/^https?:\/\//, '').slice(0, 42)+(u.length > 50 ? '…' : '')+'</a>'; }).replace(/\n/g, '<br>')+'</p>'+
           (ups.length && ups[0].action ? '<p class="mail-latest"><b>Último update:</b> '+esc(ups[0].summary)+'</p>' : '')+
-          '<div class="mail-facts">'+stRow+billRow+linkRow+assignRow+
+          '<div class="mail-facts">'+stRow+billRow+agencyReceiptRowHtml(n)+linkRow+assignRow+
             '<div class="mail-fact"><span class="mail-fact-k">Actualizado</span><span>'+esc(whenEs(upd))+' <span class="mail-fact-sub">('+esc(agoEs(upd))+')</span>'+
               (upd !== n.createdAt ? ' <span class="mail-fact-sub">· llegó '+esc(whenEs(n.createdAt))+'</span>' : '')+'</span></div>'+
           '</div>'+updHtml+
@@ -17172,7 +17230,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     taskIndexRows = s.taskIndexRows.filter(ownOrSharedDuty);
     activityLogRows = s.activityLogRows.filter(ownOrSharedDuty);
     entityLinks = []; roomIncludedBills = []; leasePayments = []; allProfiles = []; propertyAssignments = [];
-    agencyCases = []; agencyLastCheck = null; staffDirectory = []; agencyUpdates = [];
+    agencyCases = []; agencyLastCheck = null; staffDirectory = []; agencyUpdates = []; agencyReceipts = []; waSends = [];
     return fakeAuthId;
   }
 
@@ -18551,7 +18609,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       (isTenantRole() ? Promise.resolve(null) : agencyEmailService.getLastCheck().catch(function(){ return null; })),
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getStaff().catch(function(){ return []; })),
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getUpdates().catch(function(e){ console.error('agency email updates', e); return []; })),
-      (isTenantRole() ? Promise.resolve([]) : whatsappSendService.getAll().catch(function(e){ console.error('whatsapp sends', e); return []; }))
+      (isTenantRole() ? Promise.resolve([]) : whatsappSendService.getAll().catch(function(e){ console.error('whatsapp sends', e); return []; })),
+      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getReceipts().catch(function(e){ console.error('agency receipts', e); return []; }))
     ]);
     // Fingerprint of everything just loaded — a background refresh that brings back exactly the
     // same data doesn't redraw the page (no flicker, no lost scroll, no swallowed taps).
@@ -18595,6 +18654,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     agencyCases = results[34] || []; agencyLastCheck = results[35] || null; staffDirectory = results[36] || [];
     agencyUpdates = results[37] || [];
     waSends = results[38] || [];
+    agencyReceipts = results[39] || [];
     if (isAdminLike()){ allProfiles = withStaffStubs(results[32] || []); propertyAssignments = results[33] || []; }
     recomputeRentCharges();
     refreshStaticSelects();

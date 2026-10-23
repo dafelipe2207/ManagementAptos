@@ -117,3 +117,29 @@ export async function setStatus(dedupKey, status, byProfileId, propertyId) {
   if (error) throw error;
   return fromRow(data);
 }
+
+/** Payment receipts the real estate emailed (PDF) and where each was attached. */
+export async function getReceipts() {
+  const { data, error } = await supabase.from('agency_email_receipts').select('*').order('created_at', { ascending: false }).limit(300);
+  if (error) throw error;
+  return data.map((r) => ({ dedupKey: r.dedup_key, propertyId: r.property_id, path: r.storage_path, fileName: r.file_name,
+    number: r.receipt_number, amount: r.amount != null ? Number(r.amount) : null, paidDate: r.paid_date, items: r.items || [],
+    targets: Array.isArray(r.targets) ? r.targets : [] }));
+}
+
+/** Attach a stored receipt by hand to a rent payment (lease_payments) or a bill. A bill is also
+ *  marked paid to the provider (date = the receipt's, unless it already had one). */
+export async function attachReceipt(receipt, table, id) {
+  if (table === 'lease_payments') {
+    const { error } = await supabase.from('lease_payments').update({ agency_receipt_path: receipt.path, agency_receipt_number: receipt.number || null }).eq('id', id);
+    if (error) throw error;
+  } else if (table === 'bills') {
+    const { error } = await supabase.from('bills').update({ agency_receipt_path: receipt.path, admin_paid: true }).eq('id', id);
+    if (error) throw error;
+    if (receipt.paidDate) await supabase.from('bills').update({ admin_paid_date: receipt.paidDate }).eq('id', id).is('admin_paid_date', null);
+  } else throw new Error('Unknown target');
+  const targets = (receipt.targets || []).filter((t) => !(t.table === table && t.id === id)).concat([{ table, id }]);
+  const { error } = await supabase.from('agency_email_receipts').update({ targets }).eq('dedup_key', receipt.dedupKey);
+  if (error) throw error;
+  return targets;
+}
