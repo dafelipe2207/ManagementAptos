@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=332">
+<link rel="modulepreload" href="app.js?v=333">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -118,8 +118,9 @@
       <input id="lock-pin-input" type="password" inputmode="numeric" maxlength="6" class="modal-input"
         style="text-align:center;font-size:18px;letter-spacing:6px;" placeholder="••••" />
       <p id="lock-error" class="form-error" hidden>Incorrect PIN. Try again.</p>
-      <div class="modal-actions" style="justify-content:center;">
+      <div class="modal-actions" style="justify-content:center;flex-wrap:wrap;">
         <button class="mini-btn primary" onclick="attemptUnlock()">Unlock</button>
+        <button id="lock-bio-btn" class="mini-btn" onclick="unlockWithBiometrics()" hidden>Use Face ID</button>
       </div>
     </div>
   </div>
@@ -1352,6 +1353,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=332"></script>
+<script type="module" src="app.js?v=333"></script>
 </body>
 </html>

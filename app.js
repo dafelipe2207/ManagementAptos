@@ -11413,7 +11413,77 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     closeSetPinModal();
     render();
   }
-  function removeAppPin(){ setAppPin(''); render(); }
+  function removeAppPin(){ setAppPin(''); setBioCredId(''); render(); }
+
+  /* ---------- Face ID / Touch ID / fingerprint unlock (on top of the PIN) ----------
+   * Uses the device's own biometric check through WebAuthn (a passkey kept on this device, never
+   * sent anywhere). Like the PIN it is a LOCAL screen lock, not real authentication. The PIN stays
+   * as the fallback: cancel or fail Face ID and type the PIN. One registration per device. */
+  var APP_BIO_KEY = 'belmont-manager-app-bio-cred';
+  function getBioCredId(){ try { return localStorage.getItem(APP_BIO_KEY) || ''; } catch(e){ return ''; } }
+  function setBioCredId(v){ try { if (v) localStorage.setItem(APP_BIO_KEY, v); else localStorage.removeItem(APP_BIO_KEY); } catch(e){ /* ignore */ } }
+  var bioAvailable = null; // null = not checked yet
+  function bioLabel(){ return /iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'Face ID / Touch ID' : 'fingerprint / face unlock'; }
+  function checkBioAvailable(){
+    if (bioAvailable !== null) return Promise.resolve(bioAvailable);
+    if (!window.PublicKeyCredential || !PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) { bioAvailable = false; return Promise.resolve(false); }
+    return PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(function(ok){ bioAvailable = !!ok; return bioAvailable; })
+      .catch(function(){ bioAvailable = false; return false; });
+  }
+  function b64urlFromBuf(buf){ var s = '', b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+  function bufFromB64url(str){ str = str.replace(/-/g,'+').replace(/_/g,'/'); while (str.length % 4) str += '='; var bin = atob(str), b = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i); return b.buffer; }
+  function randomBytes(n){ var b = new Uint8Array(n); crypto.getRandomValues(b); return b; }
+  async function enableBiometricUnlock(){
+    if (!getAppPin()){ showToast('Set a PIN first — it stays as the backup.', 'error'); return; }
+    try {
+      var who = currentProfile ? (currentProfile.email || ((currentProfile.firstName || '') + ' ' + (currentProfile.lastName || '')).trim() || 'Manager') : 'Manager';
+      var cred = await navigator.credentials.create({ publicKey: {
+        challenge: randomBytes(32),
+        rp: { name: 'ManagementAptos' },
+        user: { id: randomBytes(16), name: who, displayName: who },
+        pubKeyCredParams: [{ type:'public-key', alg:-7 }, { type:'public-key', alg:-257 }],
+        authenticatorSelection: { authenticatorAttachment:'platform', userVerification:'required', residentKey:'discouraged' },
+        timeout: 60000, attestation: 'none'
+      }});
+      if (!cred) throw new Error('cancelled');
+      setBioCredId(b64urlFromBuf(cred.rawId));
+      showToast(bioLabel() + ' unlock is on for this device.', 'success');
+      render();
+    } catch(e){
+      console.warn('biometric enroll', e);
+      showToast('Could not turn on ' + bioLabel() + (e && e.name === 'NotAllowedError' ? ' (cancelled).' : '.'), 'error');
+    }
+  }
+  function disableBiometricUnlock(){ setBioCredId(''); render(); }
+  async function unlockWithBiometrics(){
+    var id = getBioCredId(); if (!id) return;
+    try {
+      var ok = await navigator.credentials.get({ publicKey: {
+        challenge: randomBytes(32),
+        allowCredentials: [{ type:'public-key', id: bufFromB64url(id), transports:['internal'] }],
+        userVerification: 'required', timeout: 60000
+      }});
+      if (ok){
+        document.getElementById('lock-screen').hidden = true;
+        document.getElementById('lock-error').hidden = true;
+      }
+    } catch(e){
+      console.warn('biometric unlock', e); // cancelled or failed → the PIN field is right there
+      var inp = document.getElementById('lock-pin-input'); if (inp) inp.focus();
+    }
+  }
+  /** Lock screen: show the Face ID button when this device has it on, and try it straight away
+   *  (some browsers only allow it after a tap — then the button does it). */
+  function showLockScreen(){
+    document.getElementById('lock-screen').hidden = false;
+    var btn = document.getElementById('lock-bio-btn');
+    var has = !!getBioCredId();
+    if (btn){ btn.hidden = !has; btn.textContent = 'Use ' + bioLabel(); }
+    if (has) unlockWithBiometrics(); else document.getElementById('lock-pin-input').focus();
+  }
+  window.enableBiometricUnlock = enableBiometricUnlock;
+  window.disableBiometricUnlock = disableBiometricUnlock;
+  window.unlockWithBiometrics = unlockWithBiometrics;
   function attemptUnlock(){
     var input = document.getElementById('lock-pin-input');
     var err = document.getElementById('lock-error');
@@ -11478,12 +11548,18 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var pinCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">App lock (local)</h2>'+
       '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">A simple screen PIN for this app on this device. It is not encryption or real authentication — it only stops a casual glance; anyone using the browser\'s developer tools can bypass it.</p>'+
       (pin
-        ? '<div class="field-row"><span class="k">Status</span><span class="v">PIN set</span></div>'+
-          '<div style="display:flex;gap:8px;margin-top:12px;">'+
+        ? '<div class="field-row"><span class="k">Status</span><span class="v">PIN set'+(getBioCredId() ? ' · '+esc(bioLabel())+' on' : '')+'</span></div>'+
+          '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">'+
           '<button class="mini-btn" onclick="openSetPinModal()">Change PIN</button>'+
-          '<button class="mini-btn" onclick="removeAppPin()">Remove PIN</button></div>'
+          '<button class="mini-btn" onclick="removeAppPin()">Remove PIN</button>'+
+          (getBioCredId()
+            ? '<button class="mini-btn" onclick="disableBiometricUnlock()">Turn off '+esc(bioLabel())+'</button>'
+            : (bioAvailable === false ? '' : '<button class="mini-btn primary" id="bio-enable-btn" onclick="enableBiometricUnlock()">Use '+esc(bioLabel())+'</button>'))+
+          '</div>'+
+          (!getBioCredId() && bioAvailable !== false ? '<p style="font-size:12px;color:var(--text-faint);margin:8px 0 0;">Unlock with your face or fingerprint; the PIN stays as the backup.</p>' : '')
         : '<button class="mini-btn primary" onclick="openSetPinModal()">Set a PIN</button>')+
       '</div>';
+    if (bioAvailable === null) checkBioAvailable().then(function(ok){ if (!ok && location.hash.indexOf('settings') > -1) renderPreservingScroll(); });
     var backupCard = '<div class="card"><h2 style="text-transform:none;letter-spacing:0;">Backup</h2>'+
       '<p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">Your data lives in your own Supabase project (protected by row-level security) and loads fresh every time you sign in. Download a JSON copy of everything you can see here as an extra offline backup.</p>'+
       '<button class="mini-btn primary" onclick="exportBackup()">Export backup (.json)</button>'+
@@ -19172,10 +19248,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     restoreExtractionQueue();
     if (!isViewer()) runMaintenanceTasks().then(function(){ if (!anyModalOpen()) render(true); })
       .catch(function(e){ console.error('maintenance failed', e); });
-    if (getAppPin()){
-      document.getElementById('lock-screen').hidden = false;
-      document.getElementById('lock-pin-input').focus();
-    }
+    if (getAppPin()) showLockScreen();
   }
 
 
