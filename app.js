@@ -17,7 +17,7 @@ import * as paymentService from './services/paymentService.js?v=2';
 import * as billService from './services/billService.js?v=9';
 import * as billAllocationService from './services/billAllocationService.js?v=4';
 import * as tenantDocumentService from './services/tenantDocumentService.js';
-import * as storageService from './services/storageService.js?v=3';
+import * as storageService from './services/storageService.js?v=4';
 import * as aiService from './services/aiService.js?v=5';
 import * as billExtractionService from './services/billExtractionService.js?v=1';
 import * as profileService from './services/profileService.js?v=7';
@@ -33,7 +33,7 @@ import * as auditService from './services/auditService.js?v=3';
 import * as recurringBillService from './services/recurringBillService.js?v=3';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
-import * as inspectionService from './services/inspectionService.js';
+import * as inspectionService from './services/inspectionService.js?v=2';
 import { weeklyDutyService, binDutyService } from './services/dutyService.js?v=1';
 import * as binOutTaskService from './services/binOutTaskService.js?v=5';
 import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=2';
@@ -13965,15 +13965,155 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   window.confirmAddInspectionDocument = confirmAddInspectionDocument;
 
+  /* ---------- iPhone Photos-style grid for one tenant's move-in or move-out photos ----------
+   * Every submission's photos sit in one square, tightly packed grid grouped by day (newest
+   * submission notes under each date). All tiles share one lightbox gallery, so swiping in the
+   * viewer runs through every photo of that move-in/out. Long sets collapse after 3 rows behind a
+   * "+N" tile. "Select" turns taps into ticks with Download / Delete — tenants can delete only
+   * what they uploaded in the last 24 h (move-in photos are bond evidence); staff can always. */
+  var INSPECTION_GRID_COLLAPSE = 12;
+  var INSPECTION_TENANT_DELETE_MS = 24 * 3600 * 1000;
+  function inspectionCanDeleteSubmission(s){
+    if (isViewer()) return false;
+    if (isStaff()) return true;
+    var t = Date.parse(s.createdAt || '');
+    return !isNaN(t) && (Date.now() - t) < INSPECTION_TENANT_DELETE_MS;
+  }
+  function inspectionPhotoGridHtml(tenantId, type, subs){
+    var ordered = subs.slice().sort(function(a,b){ return String(a.createdAt||'').localeCompare(String(b.createdAt||'')); });
+    var groupId = 'lbg' + (++lightboxGroupSeq);
+    var label = INSPECTION_TYPE_LABEL[type] || 'Inspection';
+    var total = ordered.reduce(function(n, s){ return n + (s.photoPaths||[]).length; }, 0);
+    var byDay = [];
+    ordered.forEach(function(s){
+      var day = (s.createdAt||'').slice(0,10);
+      var g = byDay.length && byDay[byDay.length-1].day === day ? byDay[byDay.length-1] : null;
+      if (!g){ g = { day: day, subs: [] }; byDay.push(g); }
+      g.subs.push(s);
+    });
+    var idx = 0;
+    return byDay.map(function(g){
+      var notes = g.subs.filter(function(s){ return s.note; }).map(function(s){ return '<p class="ph-note">'+esc(s.note)+'</p>'; }).join('');
+      var count = g.subs.reduce(function(n, s){ return n + (s.photoPaths||[]).length; }, 0);
+      var tiles = '';
+      g.subs.forEach(function(s){
+        var deletable = inspectionCanDeleteSubmission(s);
+        (s.photoPaths||[]).forEach(function(path){
+          var i = idx++;
+          var hiddenCls = i >= INSPECTION_GRID_COLLAPSE ? ' ph-extra' : '';
+          var more = (i === INSPECTION_GRID_COLLAPSE - 1 && total > INSPECTION_GRID_COLLAPSE)
+            ? '<span class="ph-more" aria-hidden="true">+'+(total - INSPECTION_GRID_COLLAPSE)+'</span>' : '';
+          tiles += '<button type="button" class="ph-tile'+hiddenCls+(more?' has-more':'')+(deletable?' can-delete':'')+'" data-sub="'+s.id+'" data-path="'+esc(path)+'" onclick="inspectionTileTap(this)" aria-label="'+esc(label)+' photo '+(i+1)+' of '+total+'">'+
+            '<img class="lazy-thumb ph-img" data-noclick="1" data-bucket="inspection-photos" data-path="'+esc(path)+'" data-thumb="'+esc(storageService.thumbPathFor(path))+'" data-group="'+groupId+'" data-index="'+i+'" data-caption="'+esc(label + ' · ' + fullDate(g.day))+'" alt="" draggable="false" />'+
+            '<span class="ph-check" aria-hidden="true"></span>'+more+
+          '</button>';
+        });
+      });
+      return '<div class="ph-day"><div class="ph-day-head"><span>'+fullDate(g.day)+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
+        '<div class="ph-grid">'+tiles+'</div></div>';
+    }).join('');
+  }
+  function inspectionSectionRoot(el){ return el && el.closest ? el.closest('.insp-photos') : null; }
+  window.inspectionTileTap = function(tile){
+    var root = inspectionSectionRoot(tile);
+    if (root && root.classList.contains('is-selecting')){
+      tile.classList.toggle('is-selected');
+      tile.setAttribute('aria-pressed', tile.classList.contains('is-selected') ? 'true' : 'false');
+      inspectionUpdateSelBar(root);
+      return;
+    }
+    if (tile.classList.contains('has-more') && root && !root.classList.contains('is-expanded')){
+      root.classList.add('is-expanded');
+      hydrateLazyThumbs();
+      return;
+    }
+    var img = tile.querySelector('img');
+    if (img) openLightboxForThumb(img);
+  };
+  window.inspectionToggleSelect = function(btn){
+    var root = inspectionSectionRoot(btn);
+    if (!root) return;
+    var on = !root.classList.contains('is-selecting');
+    root.classList.toggle('is-selecting', on);
+    if (on){ root.classList.add('is-expanded'); hydrateLazyThumbs(); }
+    else root.querySelectorAll('.ph-tile.is-selected').forEach(function(t){ t.classList.remove('is-selected'); t.removeAttribute('aria-pressed'); });
+    inspectionUpdateSelBar(root);
+  };
+  function inspectionSelectedTiles(root){ return Array.prototype.slice.call(root.querySelectorAll('.ph-tile.is-selected')); }
+  function inspectionUpdateSelBar(root){
+    var sel = inspectionSelectedTiles(root);
+    var countEl = root.querySelector('.ph-selcount');
+    if (countEl) countEl.textContent = sel.length ? sel.length + ' photo' + (sel.length===1?'':'s') + ' selected' : 'Tap photos to select them';
+    var dl = root.querySelector('.ph-sel-download'), del = root.querySelector('.ph-sel-delete');
+    if (dl) dl.disabled = !sel.length;
+    if (del){
+      var blocked = sel.some(function(t){ return !t.classList.contains('can-delete'); });
+      del.disabled = !sel.length || blocked;
+      del.title = blocked ? 'Photos older than 24 hours can only be removed by your property manager.' : '';
+    }
+  }
+  window.inspectionSelectAll = function(btn){
+    var root = inspectionSectionRoot(btn); if (!root) return;
+    var tiles = Array.prototype.slice.call(root.querySelectorAll('.ph-tile'));
+    var all = tiles.every(function(t){ return t.classList.contains('is-selected'); });
+    tiles.forEach(function(t){ t.classList.toggle('is-selected', !all); });
+    inspectionUpdateSelBar(root);
+  };
+  window.inspectionDownloadSelected = function(btn){
+    var root = inspectionSectionRoot(btn); if (!root) return;
+    var items = inspectionSelectedTiles(root).map(function(t){ return { bucket: 'inspection-photos', path: t.getAttribute('data-path') }; });
+    downloadStoredFiles(items);
+  };
+  /** A photo path can also be referenced by a maintenance / cleaning task created from a finding
+   *  (they reuse the same storage path) — keep the file then, only drop it from the inspection. */
+  function inspectionPathUsedElsewhere(path){
+    var needle = JSON.stringify(path);
+    try { return JSON.stringify(maintenanceRequests).indexOf(needle) >= 0 || JSON.stringify(cleaningTasks).indexOf(needle) >= 0; }
+    catch(_e){ return true; }
+  }
+  window.inspectionDeleteSelected = function(btn){
+    var root = inspectionSectionRoot(btn); if (!root) return;
+    var sel = inspectionSelectedTiles(root);
+    if (!sel.length) return;
+    if (sel.some(function(t){ return !t.classList.contains('can-delete'); })){ showToast('Photos older than 24 hours can only be removed by your property manager.', 'info'); return; }
+    var n = sel.length;
+    var tenantId = root.getAttribute('data-tenant');
+    openConfirmModal('Delete ' + n + ' photo' + (n===1?'':'s') + '?', 'They will be removed from this ' + (INSPECTION_TYPE_LABEL[root.getAttribute('data-type')]||'').toLowerCase() + ' record. This can\'t be undone.', async function(){
+      var bySub = {};
+      sel.forEach(function(t){ (bySub[t.getAttribute('data-sub')] = bySub[t.getAttribute('data-sub')] || []).push(t.getAttribute('data-path')); });
+      var removedPaths = [];
+      try {
+        for (var subId in bySub){
+          var s = inspectionSubmissions.find(function(x){ return x.id === subId; });
+          if (!s) continue;
+          var drop = bySub[subId];
+          var keep = (s.photoPaths||[]).filter(function(p){ return drop.indexOf(p) < 0; });
+          if (!keep.length && isStaff()){
+            await inspectionService.remove(s.id);
+            inspectionSubmissions = inspectionSubmissions.filter(function(x){ return x.id !== s.id; });
+          } else {
+            var updated = await inspectionService.updatePhotos(s.id, keep);
+            s.photoPaths = updated.photoPaths;
+          }
+          removedPaths = removedPaths.concat(drop);
+        }
+        storageService.removeInspectionPhotos(removedPaths.filter(function(p){ return !inspectionPathUsedElsewhere(p); }));
+        showToast(n + ' photo' + (n===1?'':'s') + ' deleted.', 'success');
+      } catch(err){
+        showToast('Could not delete the photos. ' + friendlyErrorMessage(err), 'error');
+      }
+      refreshInspectionViews(tenantId);
+    }, { confirmLabel: 'Delete', danger: true });
+  };
+
   function inspectionSectionHtml(tenantId, type, canAdd, canComment){
-    var subs = inspectionSubmissionsFor(tenantId, type);
+    // Submissions emptied by a tenant's delete (photo_paths = []) simply drop out of view.
+    var subs = inspectionSubmissionsFor(tenantId, type).filter(function(s){ return (s.photoPaths||[]).length; });
     var comments = inspectionCommentsFor(tenantId, type);
-    var photosHtml = subs.length===0 ? '<p style="font-size:12.5px;color:var(--text-dim);margin:0;">No photos yet.</p>' :
-      subs.map(function(s){
-        return '<div style="margin-bottom:8px;">'+
-          (s.note ? '<p style="font-size:12px;color:var(--text-faint);margin:0 0 4px;">'+esc(s.note)+' · '+shortDate((s.createdAt||'').slice(0,10))+'</p>' : '<p style="font-size:11px;color:var(--text-faint);margin:0 0 4px;">'+shortDate((s.createdAt||'').slice(0,10))+'</p>')+
-          '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+photoThumbsHtml('inspection-photos', s.photoPaths)+'</div></div>';
-      }).join('');
+    var photoTotal = subs.reduce(function(n, s){ return n + s.photoPaths.length; }, 0);
+    var photosHtml = subs.length===0
+      ? '<div class="ph-empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/></svg><span>No photos yet</span></div>'
+      : inspectionPhotoGridHtml(tenantId, type, subs);
     var commentsHtml = comments.length===0 ? '' :
       '<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">'+comments.map(function(c){
         var sevBadge = c.findingSeverity ? ' '+badge(INSPECTION_SEVERITY_BADGE[c.findingSeverity]||'neutral', INSPECTION_SEVERITY_LABEL[c.findingSeverity]||c.findingSeverity) : '';
@@ -14035,10 +14175,20 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '</select>'+
       '</div>'+
       '<button class="mini-btn" onclick="saveInspectionComment(\''+tenantId+'\',\''+type+'\')">Add comment</button>';
-    return '<div class="card" style="margin-bottom:10px;">'+
-      '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+INSPECTION_TYPE_LABEL[type]+' photos</h2>'+
-      (canAdd ? '<button class="mini-btn primary" onclick="openInspectionSubmitModal(\''+tenantId+'\',\''+type+'\')">'+(subs.length?'Add more photos':'Add photos')+'</button>' : '')+
-      '</div>'+photosHtml+commentsHtml+commentFormHtml+'</div>';
+    var canSelect = photoTotal > 0;
+    return '<div class="card insp-photos" style="margin-bottom:10px;" data-tenant="'+tenantId+'" data-type="'+type+'">'+
+      '<div class="detail-head insp-photos-head" style="margin-top:0;align-items:center;">'+
+        '<h2 style="margin:0;font-size:14px;">'+INSPECTION_TYPE_LABEL[type]+' photos'+(photoTotal ? ' <span class="ph-total">'+photoTotal+'</span>' : '')+'</h2>'+
+        '<div class="insp-photos-actions">'+
+          (canSelect ? '<button class="mini-btn ph-btn-select" onclick="inspectionToggleSelect(this)">Select</button><button class="mini-btn ph-btn-done" onclick="inspectionToggleSelect(this)">Done</button>' : '')+
+          (canAdd && !isViewer() ? '<button class="mini-btn primary ph-btn-add" onclick="openInspectionSubmitModal(\''+tenantId+'\',\''+type+'\')">'+(subs.length?'Add more':'Add photos')+'</button>' : '')+
+        '</div>'+
+      '</div>'+
+      (canSelect ? '<div class="ph-selbar"><span class="ph-selcount">Tap photos to select them</span>'+
+        '<button class="mini-btn ph-sel-all" onclick="inspectionSelectAll(this)">Select all</button>'+
+        '<button class="mini-btn ph-sel-download" disabled onclick="inspectionDownloadSelected(this)">Download</button>'+
+        '<button class="mini-btn ph-sel-delete" disabled onclick="inspectionDeleteSelected(this)">Delete</button></div>' : '')+
+      photosHtml+commentsHtml+commentFormHtml+'</div>';
   }
 
   function renderInspection(){
@@ -14070,8 +14220,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var tenantsHere = byProperty[propId].slice().sort(function(a,b){ return (a.fullName||'').localeCompare(b.fullName||''); });
       var rows = tenantsHere.map(function(t){
         var r = t.roomId ? roomOf(t.roomId) : null;
-        var moveIn = inspectionSubmissionsFor(t.id, 'move_in').length;
-        var moveOut = inspectionSubmissionsFor(t.id, 'move_out').length;
+        var countPhotos = function(type){ return inspectionSubmissionsFor(t.id, type).reduce(function(n, s){ return n + (s.photoPaths||[]).length; }, 0); };
+        var moveIn = countPhotos('move_in');
+        var moveOut = countPhotos('move_out');
         return '<div class="card" style="cursor:pointer;" onclick="openInspectionDetailModal(\''+t.id+'\')">'+
           '<div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;font-size:14px;">'+esc(t.fullName)+'</h2></div>'+
           '<p style="font-size:12.5px;color:var(--text-dim);margin:2px 0;">'+(r?esc(r.name):'—')+'</p>'+
@@ -14391,6 +14542,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   function openInspectionDetailModal(tenantId){
     var t = tenantOf(tenantId);
     if (!t) return;
+    inspectionDetailTenantId = tenantId;
     document.getElementById('inspection-detail-title').textContent = t.fullName;
     document.getElementById('inspection-detail-body').innerHTML =
       inspectionSectionHtml(tenantId, 'move_in', true, true) + inspectionSectionHtml(tenantId, 'move_out', true, true);
@@ -14426,50 +14578,260 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   window.saveInspectionComment = saveInspectionComment;
 
-  function closeInspectionDetailModal(){ document.getElementById('inspection-detail-modal').hidden = true; }
+  function closeInspectionDetailModal(){ document.getElementById('inspection-detail-modal').hidden = true; inspectionDetailTenantId = null; }
   window.closeInspectionDetailModal = closeInspectionDetailModal;
 
+  /* ============ Move-in / move-out photo composer (iPhone Photos-style) ============
+   * Take photos one after another or pick many from the library — they pile up in a square grid
+   * you can review (tap = full-screen preview) and prune (×) before uploading. Each photo is
+   * shrunk on the phone first (max 2560 px JPEG — a 4 MB iPhone shot becomes ~600 KB) plus a
+   * ~30 KB thumbnail for grids, then up to 3 upload in parallel with a progress ring per tile.
+   * A failed photo keeps its tile with a retry badge; the ones that made it are never re-sent. */
+  var PHC_MAX_DIM = 2560, PHC_THUMB_DIM = 480, PHC_PARALLEL = 3, PHC_MAX_FILES = 80;
+  var phc = { tenantId:null, type:null, items:[], seq:0, busy:false, dropBound:false };
+  // Kept under the old names too — other screens (welcome guide) call openInspectionSubmitModal.
   var inspectionSubmitTenantId = null, inspectionSubmitType = null;
+
+  function phcDrawToBlob(source, w, h, maxDim, quality){
+    var scale = Math.min(1, maxDim / Math.max(w, h));
+    var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+    var canvas = document.createElement('canvas');
+    canvas.width = cw; canvas.height = ch;
+    var ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, cw, ch);
+    return new Promise(function(resolve){ canvas.toBlob(function(b){ resolve(b); }, 'image/jpeg', quality); });
+  }
+  function phcDecode(file){
+    // createImageBitmap honours the EXIF rotation; <img> is the fallback for older Safari.
+    if (window.createImageBitmap){
+      return createImageBitmap(file, { imageOrientation: 'from-image' }).then(function(bmp){ return { src: bmp, w: bmp.width, h: bmp.height, close: function(){ try { bmp.close(); } catch(_e){} } }; })
+        .catch(function(){ return phcDecodeImg(file); });
+    }
+    return phcDecodeImg(file);
+  }
+  function phcDecodeImg(file){
+    return new Promise(function(resolve, reject){
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){ resolve({ src: img, w: img.naturalWidth, h: img.naturalHeight, close: function(){ URL.revokeObjectURL(url); } }); };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error('decode')); };
+      img.src = url;
+    });
+  }
+  /** → { file, thumb } — the photo to upload (shrunk JPEG, or the original if that's smaller or the
+   *  browser can't decode it, e.g. HEIC on a desktop) and an optional small thumbnail blob. */
+  async function phcPrepare(file){
+    if (!/^image\//.test(file.type || '') || /gif|svg/.test(file.type)) return { file: file, thumb: null };
+    var decoded;
+    try { decoded = await phcDecode(file); } catch(_e){ return { file: file, thumb: null }; }
+    try {
+      var big = await phcDrawToBlob(decoded.src, decoded.w, decoded.h, PHC_MAX_DIM, 0.85);
+      var thumb = await phcDrawToBlob(decoded.src, decoded.w, decoded.h, PHC_THUMB_DIM, 0.72);
+      var base = (file.name || 'photo').replace(/\.[^.]+$/, '') || 'photo';
+      var out = (big && big.size < file.size) ? new File([big], base + '.jpg', { type: 'image/jpeg' }) : file;
+      return { file: out, thumb: thumb || null };
+    } catch(_e){
+      return { file: file, thumb: null };
+    } finally { decoded.close(); }
+  }
+
   function openInspectionSubmitModal(tenantId, type){
-    inspectionSubmitTenantId = tenantId;
-    inspectionSubmitType = type;
-    document.getElementById('inspection-submit-title').textContent = 'Add ' + (INSPECTION_TYPE_LABEL[type]||'').toLowerCase() + ' photos';
-    document.getElementById('inspection-submit-photos').value = '';
+    phcReset();
+    phc.tenantId = inspectionSubmitTenantId = tenantId;
+    phc.type = inspectionSubmitType = type;
+    document.getElementById('inspection-submit-title').textContent = (INSPECTION_TYPE_LABEL[type]||'') + ' photos';
     document.getElementById('inspection-submit-note').value = '';
     document.getElementById('inspection-submit-modal-error').hidden = true;
+    phcBindDrop();
+    phcRender();
     document.getElementById('inspection-submit-modal').hidden = false;
   }
   window.openInspectionSubmitModal = openInspectionSubmitModal;
 
-  function closeInspectionSubmitModal(){ document.getElementById('inspection-submit-modal').hidden = true; inspectionSubmitTenantId = null; inspectionSubmitType = null; }
+  function phcReset(){
+    phc.items.forEach(function(it){ if (it.previewUrl) URL.revokeObjectURL(it.previewUrl); });
+    phc.items = []; phc.busy = false;
+    var grid = document.getElementById('phc-grid'); if (grid) grid.innerHTML = '';
+  }
+
+  function closeInspectionSubmitModal(force){
+    if (phc.busy && force !== true) return; // never close mid-upload
+    var pending = phc.items.filter(function(it){ return it.status !== 'done'; }).length;
+    if (force !== true && pending > 0){
+      openConfirmModal('Discard these photos?', pending + ' photo' + (pending===1?'':'s') + ' haven\'t been uploaded yet.', function(){ closeInspectionSubmitModal(true); }, { confirmLabel: 'Discard', danger: true });
+      return;
+    }
+    document.getElementById('inspection-submit-modal').hidden = true;
+    phcReset();
+    phc.tenantId = phc.type = inspectionSubmitTenantId = inspectionSubmitType = null;
+  }
   window.closeInspectionSubmitModal = closeInspectionSubmitModal;
+
+  window.phcPick = function(which){
+    if (phc.busy) return;
+    var input = document.getElementById(which === 'camera' ? 'phc-input-camera' : 'phc-input-library');
+    input.value = '';
+    input.click();
+  };
+  window.phcFilesChosen = function(input){ phcAddFiles(input.files); input.value = ''; };
+
+  function phcAddFiles(fileList){
+    var files = Array.prototype.slice.call(fileList || []).filter(function(f){ return /^image\//.test(f.type || '') || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name || ''); });
+    if (!files.length) return;
+    var room = PHC_MAX_FILES - phc.items.length;
+    if (files.length > room){
+      showToast('Up to ' + PHC_MAX_FILES + ' photos at a time — upload these, then add more.', 'info');
+      files = files.slice(0, Math.max(0, room));
+    }
+    files.forEach(function(f){
+      // Skip exact duplicates (same file picked twice from the library).
+      if (phc.items.some(function(it){ return it.original.name === f.name && it.original.size === f.size && it.original.lastModified === f.lastModified; })) return;
+      phc.items.push({ id: 'phc' + (++phc.seq), original: f, previewUrl: URL.createObjectURL(f), status: 'ready', progress: 0, path: null, error: '' });
+    });
+    document.getElementById('inspection-submit-modal-error').hidden = true;
+    phcRender();
+    // Scroll the newest photos into view, like the Photos app jumping to the end.
+    var grid = document.getElementById('phc-grid');
+    if (grid && grid.lastElementChild) grid.lastElementChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function phcBindDrop(){
+    if (phc.dropBound) return;
+    phc.dropBound = true;
+    var drop = document.getElementById('phc-drop');
+    ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); if (!phc.busy) drop.classList.add('is-over'); }); });
+    ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('is-over'); }); });
+    drop.addEventListener('drop', function(e){ if (!phc.busy && e.dataTransfer) phcAddFiles(e.dataTransfer.files); });
+    document.addEventListener('paste', function(e){
+      var modal = document.getElementById('inspection-submit-modal');
+      if (!modal || modal.hidden || phc.busy || !e.clipboardData) return;
+      var files = Array.prototype.slice.call(e.clipboardData.files || []);
+      if (files.length){ e.preventDefault(); phcAddFiles(files); }
+    });
+  }
+
+  var PHC_RING_C = 2 * Math.PI * 15;
+  function phcTileInner(it, idx){
+    var overlay = '';
+    if (it.status === 'uploading' || it.status === 'preparing' || (phc.busy && it.status === 'ready')){
+      overlay = '<span class="phc-state"><svg class="phc-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" class="phc-ring-bg"/><circle cx="18" cy="18" r="15" class="phc-ring-fg" stroke-dasharray="'+PHC_RING_C.toFixed(1)+'" stroke-dashoffset="'+(PHC_RING_C*(1-(it.progress||0))).toFixed(1)+'"/></svg></span>';
+    } else if (it.status === 'done'){
+      overlay = '<span class="phc-state is-done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>';
+    } else if (it.status === 'error'){
+      overlay = '<span class="phc-state is-error" title="'+esc(it.error||'Upload failed')+'">!</span>';
+    }
+    var removable = !phc.busy && it.status !== 'done';
+    return '<img src="'+esc(it.previewUrl)+'" alt="Photo '+(idx+1)+'" draggable="false" />'+overlay+
+      (removable ? '<span class="phc-remove" role="button" tabindex="0" aria-label="Remove photo '+(idx+1)+'" onclick="event.stopPropagation();phcRemove(\''+it.id+'\')">&times;</span>' : '');
+  }
+  function phcRender(){
+    var grid = document.getElementById('phc-grid');
+    if (!grid) return;
+    grid.innerHTML = phc.items.map(function(it, idx){
+      return '<button type="button" class="ph-tile phc-tile" data-id="'+it.id+'" onclick="phcPreview('+idx+')">'+phcTileInner(it, idx)+'</button>';
+    }).join('');
+    phcUpdateChrome();
+  }
+  function phcRenderTile(it){
+    var el = document.querySelector('#phc-grid .phc-tile[data-id="'+it.id+'"]');
+    if (el) el.innerHTML = phcTileInner(it, phc.items.indexOf(it));
+  }
+  function phcUpdateChrome(){
+    var n = phc.items.length;
+    var failed = phc.items.filter(function(it){ return it.status === 'error'; }).length;
+    document.getElementById('phc-empty').hidden = n > 0;
+    document.getElementById('phc-count').textContent = n ? n + ' photo' + (n===1?'':'s') : '';
+    var btn = document.getElementById('phc-submit');
+    var label = phc.busy ? 'Uploading…' : failed ? 'Retry ' + failed + ' failed' : n ? 'Upload ' + n + ' photo' + (n===1?'':'s') : 'Submit photos';
+    // Keep the auto-added button icon: replace only the text node.
+    var textNode = Array.prototype.slice.call(btn.childNodes).filter(function(c){ return c.nodeType === 3; }).pop();
+    if (textNode) textNode.textContent = label; else btn.appendChild(document.createTextNode(label));
+    btn.disabled = phc.busy || n === 0;
+    document.getElementById('phc-cancel').disabled = phc.busy;
+    document.querySelectorAll('#inspection-submit-modal .phc-pick').forEach(function(b){ b.disabled = phc.busy; });
+  }
+  window.phcRemove = function(id){
+    if (phc.busy) return;
+    var i = phc.items.findIndex(function(it){ return it.id === id; });
+    if (i < 0) return;
+    var it = phc.items[i];
+    var el = document.querySelector('#phc-grid .phc-tile[data-id="'+id+'"]');
+    var finish = function(){ URL.revokeObjectURL(it.previewUrl); phc.items.splice(phc.items.indexOf(it), 1); phcRender(); };
+    if (el){ el.classList.add('is-removing'); setTimeout(finish, 160); } else finish();
+  };
+  window.phcPreview = function(idx){
+    openLightbox(phc.items.map(function(it, i){ return { url: it.previewUrl, caption: 'Not uploaded yet · ' + (i+1) + ' of ' + phc.items.length }; }), idx);
+  };
+
+  async function phcUploadOne(it){
+    it.status = 'preparing'; it.progress = 0.04; it.error = ''; phcRenderTile(it);
+    try {
+      var prepared = await phcPrepare(it.original);
+      it.status = 'uploading'; phcRenderTile(it);
+      var lastPaint = 0;
+      it.path = await storageService.uploadInspectionPhotoWithProgress(prepared.file, prepared.thumb, function(p){
+        it.progress = 0.04 + p * 0.94;
+        var now = Date.now(); if (now - lastPaint > 80){ lastPaint = now; phcRenderTile(it); }
+      });
+      it.status = 'done'; it.progress = 1;
+    } catch(err){
+      it.status = 'error'; it.error = friendlyErrorMessage(err);
+    }
+    phcRenderTile(it);
+  }
 
   async function saveInspectionSubmitForm(){
     var errorEl = document.getElementById('inspection-submit-modal-error');
-    var t = tenantOf(inspectionSubmitTenantId);
-    if (!t || !inspectionSubmitType){ errorEl.textContent = 'Something went wrong — close and try again.'; errorEl.hidden = false; return; }
-    var files = document.getElementById('inspection-submit-photos').files;
-    if (!files || !files.length){ errorEl.textContent = 'Add at least one photo.'; errorEl.hidden = false; return; }
-    var note = document.getElementById('inspection-submit-note').value.trim();
-    var saveBtn = document.querySelector('#inspection-submit-modal .mini-btn.primary');
-    var originalLabel = saveBtn ? saveBtn.textContent : '';
-    if (saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Uploading…'; }
+    var t = tenantOf(phc.tenantId);
+    if (!t || !phc.type){ errorEl.textContent = 'Something went wrong — close and try again.'; errorEl.hidden = false; return; }
+    if (!phc.items.length){ errorEl.textContent = 'Add at least one photo.'; errorEl.hidden = false; return; }
+    if (phc.busy) return;
+    errorEl.hidden = true;
+    phc.busy = true;
+    phcRender();
+    var queue = phc.items.filter(function(it){ return it.status !== 'done'; });
+    var workers = [];
+    for (var w = 0; w < Math.min(PHC_PARALLEL, queue.length); w++){
+      workers.push((async function(){ while (queue.length){ await phcUploadOne(queue.shift()); } })());
+    }
+    await Promise.all(workers);
+    var failed = phc.items.filter(function(it){ return it.status === 'error'; });
+    if (failed.length){
+      phc.busy = false;
+      phcRender();
+      errorEl.textContent = failed.length + ' photo' + (failed.length===1?'':'s') + ' couldn\'t upload (' + failed[0].error + '). Tap "Retry" or remove ' + (failed.length===1?'it':'them') + '.';
+      errorEl.hidden = false;
+      return;
+    }
     try {
-      var photoPaths = await storageService.uploadInspectionPhotos(files);
-      var created = await inspectionService.create(t.propertyId, t.roomId, t.id, inspectionSubmitType, photoPaths, note);
+      var note = document.getElementById('inspection-submit-note').value.trim();
+      var paths = phc.items.map(function(it){ return it.path; });
+      var created = await inspectionService.create(t.propertyId, t.roomId, t.id, phc.type, paths, note);
       inspectionSubmissions.push(created);
-      closeInspectionSubmitModal();
-      showToast('Photos submitted.', 'success');
+      phc.busy = false;
+      var n = paths.length, tenantId = t.id;
+      closeInspectionSubmitModal(true);
+      showToast(n + ' photo' + (n===1?'':'s') + ' uploaded.', 'success');
       await refreshOperationsReadModels();
-      render();
+      refreshInspectionViews(tenantId);
     } catch(err){
+      phc.busy = false;
+      phcRender();
       errorEl.textContent = friendlyErrorMessage(err);
       errorEl.hidden = false;
-    } finally {
-      if (saveBtn){ saveBtn.disabled = false; saveBtn.textContent = originalLabel; }
     }
   }
   window.saveInspectionSubmitForm = saveInspectionSubmitForm;
+
+  /** Re-draws wherever inspection photos are showing: the staff detail modal if it's open for
+   *  this tenant, and the page behind it. */
+  var inspectionDetailTenantId = null;
+  function refreshInspectionViews(tenantId){
+    var modal = document.getElementById('inspection-detail-modal');
+    if (modal && !modal.hidden && inspectionDetailTenantId && (!tenantId || tenantId === inspectionDetailTenantId)) openInspectionDetailModal(inspectionDetailTenantId);
+    renderPreservingScroll();
+  }
 
   /* ============ Users (Super Admin only) ============ */
   var ROLE_LABEL = { super_admin:'Super Admin', administrator:'Administrator', viewer:'Viewer (read-only)', tenant:'Tenant' };
@@ -17564,15 +17926,34 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    *  by a page's HTML string with its real signed-URL image — used for cleaning photos (and
    *  anywhere else a private-bucket thumbnail needs to show up in a plain list, not a modal).
    *  Clicking any of them opens the full lightbox (see below) instead of a new browser tab. */
+  // Grid tiles (img.ph-img) only fetch once they come near the screen — a move-out with 60 photos
+  // shouldn't sign and download 60 images up front. A tile with data-thumb loads the small
+  // thumbnail first and falls back to the full photo (older uploads have no thumbnail).
+  var lazyThumbObserver = ('IntersectionObserver' in window) ? new IntersectionObserver(function(entries){
+    entries.forEach(function(en){ if (en.isIntersecting){ lazyThumbObserver.unobserve(en.target); loadLazyThumb(en.target); } });
+  }, { rootMargin: '300px 0px' }) : null;
+  function loadLazyThumb(img){
+    var bucket = img.getAttribute('data-bucket');
+    var path = img.getAttribute('data-path');
+    var thumb = img.getAttribute('data-thumb');
+    if (!bucket || !path) return;
+    var full = function(){
+      img.onerror = null;
+      getCachedSignedUrl(bucket, path, 600).then(function(url){ img.src = url; }).catch(function(){ /* one broken thumbnail shouldn't break the rest of the page */ });
+    };
+    img.onload = function(){ img.classList.add('is-loaded'); };
+    if (!thumb){ full(); return; }
+    img.onerror = full;
+    getCachedSignedUrl(bucket, thumb, 600).then(function(url){ img.src = url; }).catch(full);
+  }
   function hydrateLazyThumbs(){
     document.querySelectorAll('img.lazy-thumb[data-path]').forEach(function(img){
-      var bucket = img.getAttribute('data-bucket');
-      var path = img.getAttribute('data-path');
-      if (!bucket || !path) return;
-      getCachedSignedUrl(bucket, path, 600).then(function(url){
-        img.src = url;
-      }).catch(function(){ /* one broken thumbnail shouldn't break the rest of the page */ });
-      img.onclick = function(){ openLightboxForThumb(img); };
+      if (img._hydrated) return;
+      img._hydrated = true;
+      if (!img.getAttribute('data-bucket')) return;
+      if (!img.hasAttribute('data-noclick')) img.onclick = function(){ openLightboxForThumb(img); };
+      if (lazyThumbObserver && img.classList.contains('ph-img')) lazyThumbObserver.observe(img);
+      else loadLazyThumb(img);
     });
   }
 
@@ -17602,7 +17983,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   function lightboxCollectGroup(groupId){
     var els = Array.prototype.slice.call(document.querySelectorAll('.lazy-thumb[data-group="'+cssEscape(groupId)+'"]'));
     els.sort(function(a,b){ return (parseInt(a.getAttribute('data-index'),10)||0) - (parseInt(b.getAttribute('data-index'),10)||0); });
-    return els.map(function(el){ return { bucket: el.getAttribute('data-bucket'), path: el.getAttribute('data-path') }; });
+    return els.map(function(el){ return { bucket: el.getAttribute('data-bucket'), path: el.getAttribute('data-path'), thumb: el.getAttribute('data-thumb') || null, caption: el.getAttribute('data-caption') || '' }; });
   }
   // Minimal CSS.escape fallback (older WebViews) — group ids are our own 'lbgN' strings, so this
   // only ever needs to handle plain alphanumerics, but stay defensive.
@@ -17624,9 +18005,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     lightboxReturnFocusTo = document.activeElement;
     var overlay = document.getElementById('lightbox-overlay');
     overlay.hidden = false;
+    overlay.classList.remove('chrome-hidden');
+    overlay.style.backgroundColor = '';
     document.body.style.overflow = 'hidden';
-    renderLightboxCurrent();
-    document.getElementById('lightbox-close').focus();
+    lbBindGestures();
+    lbBuildStrip();
+    renderLightboxCurrent(0);
+    overlay.animate && overlay.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
+    document.getElementById('lightbox-close').focus({ preventScroll: true });
     document.addEventListener('keydown', lightboxKeyHandler);
   }
   window.openLightbox = openLightbox;
@@ -17635,13 +18021,18 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var overlay = document.getElementById('lightbox-overlay');
     if (overlay.hidden) return;
     overlay.hidden = true;
+    overlay.style.backgroundColor = '';
     document.body.style.overflow = '';
     document.removeEventListener('keydown', lightboxKeyHandler);
     lightboxItems = [];
     lightboxIndex = 0;
     lightboxRequestToken++;
+    lbResetZoom(false);
+    lbPointers.clear(); lbGesture = null;
+    clearTimeout(lbTapTimer);
+    var strip = document.getElementById('lightbox-strip'); strip.innerHTML = ''; strip.hidden = true;
     if (lightboxReturnFocusTo && typeof lightboxReturnFocusTo.focus === 'function'){
-      try { lightboxReturnFocusTo.focus(); } catch(_e){ /* element may no longer be in the DOM */ }
+      try { lightboxReturnFocusTo.focus({ preventScroll: true }); } catch(_e){ /* element may no longer be in the DOM */ }
     }
     lightboxReturnFocusTo = null;
   }
@@ -17691,41 +18082,44 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   window.downloadStoredFiles = downloadStoredFiles;
   function lightboxDownload(){
     var item = lightboxItems[lightboxIndex];
-    if (item) downloadStoredFiles([item]);
+    if (item && item.path) downloadStoredFiles([item]);
   }
   window.lightboxDownload = lightboxDownload;
 
-  var LIGHTBOX_NON_CLOSING_IDS = ['lightbox-img','lightbox-close','lightbox-prev','lightbox-next','lightbox-counter','lightbox-download'];
-  var lightboxSuppressNextClick = false; // set right after a swipe/drag navigates, so the trailing click doesn't also close the viewer
+  /* The viewer works like the iPhone Photos app: drag sideways to flip (the photo follows your
+   * finger), pinch or double-tap to zoom, drag to pan while zoomed, drag down to dismiss, tap to
+   * hide/show the controls. Desktop: arrows, mouse wheel / trackpad pinch to zoom, click the dark
+   * area to close. All gestures run on Pointer Events (touch, mouse and pen share one path). */
   function closeLightboxOnBackdrop(e){
-    if (lightboxSuppressNextClick){ lightboxSuppressNextClick = false; return; }
-    // .lightbox-content covers the whole overlay (it's what centers the image), so a click on
-    // the dark area around the photo lands on #lightbox-content, #lightbox-overlay, the spinner
-    // or the error message — never on the image itself or one of the controls. Closing on
-    // anything but that short list is exactly "click outside the image".
-    var id = e.target && e.target.id;
-    if (LIGHTBOX_NON_CLOSING_IDS.indexOf(id) === -1) closeLightbox();
+    // Taps inside the stage are handled by the gesture code below (single tap = controls / close);
+    // here only a click straight on the overlay itself closes.
+    if (e.target && e.target.id === 'lightbox-overlay') closeLightbox();
   }
   window.closeLightboxOnBackdrop = closeLightboxOnBackdrop;
 
-  function lightboxPrev(){
+  function lightboxGo(delta){
     if (lightboxItems.length < 2) return;
-    lightboxIndex = (lightboxIndex - 1 + lightboxItems.length) % lightboxItems.length;
-    renderLightboxCurrent();
+    lightboxIndex = (lightboxIndex + delta + lightboxItems.length) % lightboxItems.length;
+    renderLightboxCurrent(delta);
   }
+  function lightboxPrev(){ lightboxGo(-1); }
   window.lightboxPrev = lightboxPrev;
-
-  function lightboxNext(){
-    if (lightboxItems.length < 2) return;
-    lightboxIndex = (lightboxIndex + 1) % lightboxItems.length;
-    renderLightboxCurrent();
-  }
+  function lightboxNext(){ lightboxGo(1); }
   window.lightboxNext = lightboxNext;
+  window.lightboxGoTo = function(i){
+    if (i === lightboxIndex || !lightboxItems[i]) return;
+    var d = i > lightboxIndex ? 1 : -1;
+    lightboxIndex = i;
+    renderLightboxCurrent(d);
+  };
 
   function lightboxKeyHandler(e){
-    if (e.key === 'Escape'){ e.preventDefault(); closeLightbox(); }
+    if (e.key === 'Escape'){ e.preventDefault(); if (lbz.s > 1.01) lbResetZoom(true); else closeLightbox(); }
     else if (e.key === 'ArrowLeft'){ e.preventDefault(); lightboxPrev(); }
     else if (e.key === 'ArrowRight'){ e.preventDefault(); lightboxNext(); }
+    else if (e.key === '+' || e.key === '='){ e.preventDefault(); lbZoomCenter(lbz.s * 1.5); }
+    else if (e.key === '-' || e.key === '_'){ e.preventDefault(); lbZoomCenter(lbz.s / 1.5); }
+    else if (e.key === '0'){ e.preventDefault(); lbResetZoom(true); }
     else if (e.key === 'Tab'){
       // Simple focus trap so Tab can't escape into the page hiding behind the overlay.
       var overlay = document.getElementById('lightbox-overlay');
@@ -17737,7 +18131,41 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     }
   }
 
-  function renderLightboxCurrent(){
+  function lbItemUrl(item){ return item.url ? Promise.resolve(item.url) : getCachedSignedUrl(item.bucket, item.path, 600); }
+
+  /** Thumbnail filmstrip along the bottom (like Photos' scrubber) — tap one to jump to it. */
+  function lbBuildStrip(){
+    var strip = document.getElementById('lightbox-strip');
+    if (lightboxItems.length < 2){ strip.innerHTML = ''; strip.hidden = true; return; }
+    strip.hidden = false;
+    strip.innerHTML = lightboxItems.map(function(_it, i){
+      return '<button type="button" class="lb-strip-item" data-i="'+i+'" aria-label="Photo '+(i+1)+'" onclick="event.stopPropagation();lightboxGoTo('+i+')"><img alt="" draggable="false" /></button>';
+    }).join('');
+    var imgs = strip.querySelectorAll('img');
+    lightboxItems.forEach(function(it, i){
+      var img = imgs[i];
+      if (it.url){ img.src = it.url; return; }
+      var full = function(){ img.onerror = null; getCachedSignedUrl(it.bucket, it.path, 600).then(function(u){ img.src = u; }).catch(function(){}); };
+      if (it.thumb){ img.onerror = full; getCachedSignedUrl(it.bucket, it.thumb, 600).then(function(u){ img.src = u; }).catch(full); }
+      else full();
+    });
+  }
+  function lbSyncStrip(){
+    var strip = document.getElementById('lightbox-strip');
+    if (strip.hidden) return;
+    var cur = null;
+    strip.querySelectorAll('.lb-strip-item').forEach(function(b){
+      var on = +b.getAttribute('data-i') === lightboxIndex;
+      b.classList.toggle('is-current', on);
+      if (on) cur = b;
+    });
+    if (cur){
+      var left = cur.offsetLeft - strip.clientWidth / 2 + cur.offsetWidth / 2;
+      strip.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
+    }
+  }
+
+  function renderLightboxCurrent(enterFrom){
     var item = lightboxItems[lightboxIndex];
     if (!item) return;
     var myToken = ++lightboxRequestToken;
@@ -17745,17 +18173,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var spinner = document.getElementById('lightbox-spinner');
     var errorEl = document.getElementById('lightbox-error');
     var counter = document.getElementById('lightbox-counter');
-    var prevBtn = document.getElementById('lightbox-prev');
-    var nextBtn = document.getElementById('lightbox-next');
+    var caption = document.getElementById('lightbox-caption');
     var multi = lightboxItems.length > 1;
-    counter.textContent = multi ? (lightboxIndex+1) + ' / ' + lightboxItems.length : '';
+    counter.textContent = multi ? (lightboxIndex+1) + ' of ' + lightboxItems.length : '';
     counter.hidden = !multi;
-    prevBtn.hidden = !multi;
-    nextBtn.hidden = !multi;
+    caption.textContent = item.caption || '';
+    caption.hidden = !item.caption;
+    document.getElementById('lightbox-prev').hidden = !multi;
+    document.getElementById('lightbox-next').hidden = !multi;
+    document.getElementById('lightbox-download').hidden = !item.path;
+    lbSyncStrip();
+    lbResetZoom(false);
     imgEl.hidden = true;
     errorEl.hidden = true;
     spinner.hidden = false;
-    getCachedSignedUrl(item.bucket, item.path, 600).then(function(url){
+    var show = function(url){
       if (myToken !== lightboxRequestToken) return; // navigated away (or closed) before this loaded
       var probe = new Image();
       probe.onload = function(){
@@ -17764,6 +18196,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         imgEl.src = url;
         imgEl.alt = 'Photo ' + (lightboxIndex+1) + ' of ' + lightboxItems.length;
         imgEl.hidden = false;
+        if (enterFrom && imgEl.animate){
+          imgEl.animate([{ transform: 'translate3d(' + (enterFrom * 70) + 'px,0,0)', opacity: 0.25 }, { transform: 'translate3d(0,0,0)', opacity: 1 }],
+            { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)' });
+        }
       };
       probe.onerror = function(){
         if (myToken !== lightboxRequestToken) return;
@@ -17771,39 +18207,224 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         errorEl.hidden = false;
       };
       probe.src = url;
-    }).catch(function(){
+    };
+    lbItemUrl(item).then(show).catch(function(){
       if (myToken !== lightboxRequestToken) return;
       spinner.hidden = true;
       errorEl.hidden = false;
     });
-    // Preload the neighbors so Previous/Next feel instant once the signed URL is already cached.
+    // Preload the neighbours so flipping feels instant.
     [1,-1].forEach(function(d){
       var n = lightboxItems[(lightboxIndex + d + lightboxItems.length) % lightboxItems.length];
-      if (n && n !== item) getCachedSignedUrl(n.bucket, n.path, 600).then(function(u){ var pre = new Image(); pre.src = u; }).catch(function(){});
+      if (n && n !== item) lbItemUrl(n).then(function(u){ var pre = new Image(); pre.src = u; }).catch(function(){});
     });
   }
 
-  // Pointer-based swipe/drag (covers touch, mouse and pen with one code path): a horizontal
-  // drag past the threshold navigates; anything smaller (or more vertical than horizontal, so a
-  // vertical scroll/flick doesn't get mistaken for a swipe) is ignored.
-  var lightboxPointerStartX = null, lightboxPointerStartY = null, lightboxPointerDown_ = false;
-  function lightboxPointerDown(e){
-    lightboxPointerDown_ = true;
-    lightboxPointerStartX = e.clientX;
-    lightboxPointerStartY = e.clientY;
+  /* ---------- zoom / pan state ----------
+   * The photo is laid out normally (contain-fit, centred); zoom and pan are a transform on top:
+   * translate(tx,ty) scale(s) around the image's own centre. */
+  var LB_MAX_ZOOM = 5;
+  var lbz = { s: 1, tx: 0, ty: 0 };
+  var lbPointers = new Map();
+  var lbGesture = null;
+  var lbLastTap = { t: 0, x: 0, y: 0 };
+  var lbTapTimer = null;
+  var lbBound = false;
+
+  function lbImg(){ return document.getElementById('lightbox-img'); }
+  function lbApply(animate){
+    var img = lbImg();
+    img.style.transition = animate ? 'transform .26s cubic-bezier(.2,.8,.2,1)' : 'none';
+    img.style.transform = 'translate3d(' + lbz.tx + 'px,' + lbz.ty + 'px,0) scale(' + lbz.s + ')';
+    document.getElementById('lightbox-overlay').classList.toggle('is-zoomed', lbz.s > 1.01);
   }
-  window.lightboxPointerDown = lightboxPointerDown;
-  function lightboxPointerUp(e){
-    if (!lightboxPointerDown_) return;
-    lightboxPointerDown_ = false;
-    var dx = e.clientX - lightboxPointerStartX;
-    var dy = e.clientY - lightboxPointerStartY;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5){
-      lightboxSuppressNextClick = true; // the browser still fires a trailing click after this pointerup
-      if (dx > 0) lightboxPrev(); else lightboxNext();
+  function lbResetZoom(animate){ lbz.s = 1; lbz.tx = 0; lbz.ty = 0; lbApply(animate); }
+  /** How far the photo may move at scale s before its edge leaves the screen edge. */
+  function lbLimits(s){
+    var img = lbImg();
+    var w = img.offsetWidth * s, h = img.offsetHeight * s;
+    return { x: Math.max(0, (w - window.innerWidth) / 2), y: Math.max(0, (h - window.innerHeight) / 2) };
+  }
+  function lbClamp(){
+    var lim = lbLimits(lbz.s);
+    lbz.tx = Math.max(-lim.x, Math.min(lim.x, lbz.tx));
+    lbz.ty = Math.max(-lim.y, Math.min(lim.y, lbz.ty));
+  }
+  /** Changes the scale keeping screen point (px,py) under the same spot of the photo. */
+  function lbZoomAt(newS, px, py){
+    var img = lbImg();
+    var r = img.getBoundingClientRect();
+    var cx = r.left + r.width / 2 - lbz.tx, cy = r.top + r.height / 2 - lbz.ty; // layout centre
+    var k = newS / lbz.s;
+    lbz.tx = (px - cx) - k * (px - cx - lbz.tx);
+    lbz.ty = (py - cy) - k * (py - cy - lbz.ty);
+    lbz.s = newS;
+  }
+  function lbZoomCenter(newS){
+    newS = Math.max(1, Math.min(LB_MAX_ZOOM, newS));
+    lbZoomAt(newS, window.innerWidth / 2, window.innerHeight / 2);
+    if (newS <= 1.01) lbResetZoom(true); else { lbClamp(); lbApply(true); }
+  }
+  function lbToggleChrome(){ document.getElementById('lightbox-overlay').classList.toggle('chrome-hidden'); }
+
+  function lbSingleTap(target){
+    if (target && target.id === 'lightbox-img') lbToggleChrome();
+    else if (lbz.s <= 1.01) closeLightbox(); // tap on the dark area around the photo
+  }
+  function lbDoubleTap(x, y){
+    if (lbz.s > 1.01){ lbResetZoom(true); return; }
+    lbZoomAt(2.5, x, y); lbClamp(); lbApply(true);
+  }
+
+  function lbPinchInfo(){
+    var pts = Array.from(lbPointers.values());
+    var a = pts[0], b = pts[1];
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+  }
+  function lbStartSingle(p){
+    lbGesture = { mode: null, sx: p.x, sy: p.y, t: performance.now(), tx0: lbz.tx, ty0: lbz.ty, target: p.target, moved: false };
+  }
+
+  function lbOnDown(e){
+    if (e.button !== undefined && e.button !== 0 && e.pointerType === 'mouse') return;
+    var stage = document.getElementById('lightbox-content');
+    try { stage.setPointerCapture(e.pointerId); } catch(_e){}
+    lbPointers.set(e.pointerId, { x: e.clientX, y: e.clientY, target: e.target });
+    if (lbPointers.size === 2){
+      var pi = lbPinchInfo();
+      lbGesture = { mode: 'pinch', d0: pi.dist, mx0: pi.mx, my0: pi.my, s0: lbz.s, tx0: lbz.tx, ty0: lbz.ty, moved: true };
+    } else if (lbPointers.size === 1){
+      lbStartSingle(lbPointers.get(e.pointerId));
     }
   }
-  window.lightboxPointerUp = lightboxPointerUp;
+  function lbOnMove(e){
+    if (!lbPointers.has(e.pointerId) || !lbGesture) return;
+    lbPointers.set(e.pointerId, { x: e.clientX, y: e.clientY, target: lbPointers.get(e.pointerId).target });
+    var g = lbGesture, overlay = document.getElementById('lightbox-overlay');
+    if (g.mode === 'pinch'){
+      if (lbPointers.size < 2) return;
+      var pi = lbPinchInfo();
+      var newS = g.s0 * pi.dist / g.d0;
+      newS = newS < 1 ? 1 - (1 - newS) * 0.4 : Math.min(LB_MAX_ZOOM * 1.15, newS); // rubber-band past the limits
+      lbz.s = g.s0; lbz.tx = g.tx0; lbz.ty = g.ty0;
+      lbZoomAt(newS, g.mx0, g.my0);
+      lbz.tx += pi.mx - g.mx0; lbz.ty += pi.my - g.my0;
+      lbApply(false);
+      return;
+    }
+    var dx = e.clientX - g.sx, dy = e.clientY - g.sy;
+    if (!g.mode){
+      if (Math.hypot(dx, dy) < 8) return;
+      g.moved = true;
+      if (lbz.s > 1.01) g.mode = 'pan';
+      else if (Math.abs(dx) > Math.abs(dy)) g.mode = 'swipe';
+      else if (dy > 0) g.mode = 'dismiss';
+      else g.mode = 'none';
+    }
+    if (g.mode === 'pan'){
+      var lim = lbLimits(lbz.s);
+      var rub = function(v, l){ return v > l ? l + (v - l) * 0.35 : v < -l ? -l + (v + l) * 0.35 : v; };
+      lbz.tx = rub(g.tx0 + dx, lim.x); lbz.ty = rub(g.ty0 + dy, lim.y);
+      lbApply(false);
+    } else if (g.mode === 'swipe'){
+      lbz.tx = lightboxItems.length > 1 ? dx : dx * 0.3;
+      lbApply(false);
+    } else if (g.mode === 'dismiss'){
+      var f = Math.min(1, Math.max(0, dy) / (window.innerHeight * 0.6));
+      lbz.tx = dx * 0.6; lbz.ty = Math.max(0, dy); lbz.s = 1 - f * 0.3;
+      lbApply(false);
+      overlay.style.backgroundColor = 'rgba(0,0,0,' + (0.96 * (1 - f)).toFixed(3) + ')';
+      overlay.classList.add('is-dismissing');
+    }
+  }
+  function lbOnUp(e){
+    if (!lbPointers.has(e.pointerId)) return;
+    var p = lbPointers.get(e.pointerId);
+    lbPointers.delete(e.pointerId);
+    var g = lbGesture, overlay = document.getElementById('lightbox-overlay');
+    if (!g) return;
+    if (g.mode === 'pinch'){
+      if (lbPointers.size === 1){
+        // One finger still down: settle the zoom, then let it pan from here.
+        if (lbz.s < 1) lbResetZoom(true); else { lbz.s = Math.min(LB_MAX_ZOOM, lbz.s); lbClamp(); lbApply(true); }
+        var rest = lbPointers.values().next().value;
+        lbStartSingle(rest); lbGesture.moved = true;
+        return;
+      }
+      lbGesture = null;
+      if (lbz.s <= 1.02) lbResetZoom(true);
+      else { lbz.s = Math.min(LB_MAX_ZOOM, lbz.s); lbClamp(); lbApply(true); }
+      return;
+    }
+    lbGesture = null;
+    var dx = e.clientX - g.sx, dy = e.clientY - g.sy;
+    var dt = Math.max(1, performance.now() - g.t);
+    if (!g.moved && e.type !== 'pointercancel'){
+      var now = performance.now();
+      if (now - lbLastTap.t < 300 && Math.hypot(e.clientX - lbLastTap.x, e.clientY - lbLastTap.y) < 40){
+        clearTimeout(lbTapTimer); lbLastTap.t = 0;
+        lbDoubleTap(e.clientX, e.clientY);
+      } else {
+        lbLastTap = { t: now, x: e.clientX, y: e.clientY };
+        var target = p.target;
+        clearTimeout(lbTapTimer);
+        lbTapTimer = setTimeout(function(){ lbSingleTap(target); }, 260);
+      }
+      return;
+    }
+    if (g.mode === 'pan'){ lbClamp(); lbApply(true); return; }
+    if (g.mode === 'swipe'){
+      var v = dx / dt;
+      if (lightboxItems.length > 1 && (Math.abs(dx) > window.innerWidth * 0.18 || Math.abs(v) > 0.45)){
+        var dir = dx < 0 ? 1 : -1;
+        lbz.tx = -dir * window.innerWidth; lbApply(true);
+        setTimeout(function(){ lightboxGo(dir); }, 170);
+      } else lbResetZoom(true);
+      return;
+    }
+    if (g.mode === 'dismiss'){
+      overlay.classList.remove('is-dismissing');
+      if (dy > 110 || dy / dt > 0.6){
+        lbz.ty = window.innerHeight; lbApply(true);
+        overlay.style.transition = 'background-color .2s'; overlay.style.backgroundColor = 'rgba(0,0,0,0)';
+        setTimeout(function(){ overlay.style.transition = ''; closeLightbox(); }, 200);
+      } else {
+        overlay.style.backgroundColor = '';
+        lbResetZoom(true);
+      }
+      return;
+    }
+    lbResetZoom(true);
+  }
+  function lbOnWheel(e){
+    if (document.getElementById('lightbox-overlay').hidden) return;
+    e.preventDefault();
+    if (!e.ctrlKey && lbz.s > 1.01 && Math.abs(e.deltaX) + Math.abs(e.deltaY) > 0 && e.deltaMode === 0 && !e.shiftKey && Math.abs(e.deltaY) < 40){
+      // Two-finger trackpad scroll while zoomed = pan.
+      lbz.tx -= e.deltaX; lbz.ty -= e.deltaY; lbClamp(); lbApply(false);
+      return;
+    }
+    var factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0025));
+    var newS = Math.max(1, Math.min(LB_MAX_ZOOM, lbz.s * factor));
+    lbZoomAt(newS, e.clientX, e.clientY);
+    if (newS <= 1.01) lbResetZoom(false); else { lbClamp(); lbApply(false); }
+  }
+  function lbBindGestures(){
+    if (lbBound) return;
+    lbBound = true;
+    var stage = document.getElementById('lightbox-content');
+    stage.addEventListener('pointerdown', lbOnDown);
+    stage.addEventListener('pointermove', lbOnMove);
+    stage.addEventListener('pointerup', lbOnUp);
+    stage.addEventListener('pointercancel', lbOnUp);
+    stage.addEventListener('wheel', lbOnWheel, { passive: false });
+    // iOS Safari's own page pinch-zoom would fight ours.
+    ['gesturestart','gesturechange'].forEach(function(ev){ stage.addEventListener(ev, function(e){ e.preventDefault(); }); });
+    stage.addEventListener('dragstart', function(e){ e.preventDefault(); });
+  }
+  // Kept so any old inline handler names still resolve harmlessly.
+  window.lightboxPointerDown = function(){};
+  window.lightboxPointerUp = function(){};
 
   /* ============ PDF viewer ============
    * A real toolbar-driven viewer built on pdf.js (loaded in index.html as the global
@@ -19780,6 +20401,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     [/^export|download/, 'download'], [/^open the full/, 'doc'],
     [/^import|bank statement/, 'bank'], [/csv/, 'upload'],
     [/^submit photos/, 'camera'],
+    [/^select all/, 'check'], [/^select$/, 'list'], [/^done$/, 'check'],
     [/attach|receipt|my transfer|^add document/, 'attach'],
     [/view as tenant|^switch tenant/, 'user'],
     [/^view|^show|^review/, 'eye'],

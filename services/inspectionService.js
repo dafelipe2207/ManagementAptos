@@ -34,6 +34,19 @@ export async function create(propertyId, roomId, tenantId, type, photoPaths, not
   return fromRow(data);
 }
 
+/** Replaces a submission's photo list (used when photos are removed from it). */
+export async function updatePhotos(id, photoPaths) {
+  const { data, error } = await supabase.from('inspection_submissions').update({ photo_paths: photoPaths || [] }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
+/** Deletes a whole submission row — staff only (RLS). Tenants empty it with updatePhotos instead. */
+export async function remove(id) {
+  const { error } = await supabase.from('inspection_submissions').delete().eq('id', id);
+  if (error) throw error;
+}
+
 /* ---------- Admin comments on a tenant's move-in/move-out photos (mirrors cleaningService's
    task comments, just keyed by tenant+type instead of a cleaning task id). ---------- */
 function commentFromRow(row) {

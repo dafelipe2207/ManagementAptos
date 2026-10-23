@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=333">
+<link rel="modulepreload" href="app.js?v=334">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
@@ -32,7 +32,7 @@
 <link rel="modulepreload" href="services/billService.js?v=9">
 <link rel="modulepreload" href="services/billAllocationService.js?v=4">
 <link rel="modulepreload" href="services/tenantDocumentService.js">
-<link rel="modulepreload" href="services/storageService.js?v=3">
+<link rel="modulepreload" href="services/storageService.js?v=4">
 <link rel="modulepreload" href="services/aiService.js?v=5">
 <link rel="modulepreload" href="services/billExtractionService.js?v=1">
 <link rel="modulepreload" href="services/profileService.js?v=7">
@@ -48,7 +48,7 @@
 <link rel="modulepreload" href="services/recurringBillService.js?v=3">
 <link rel="modulepreload" href="services/cleaningService.js?v=3">
 <link rel="modulepreload" href="services/trashService.js">
-<link rel="modulepreload" href="services/inspectionService.js">
+<link rel="modulepreload" href="services/inspectionService.js?v=2">
 <link rel="modulepreload" href="services/dutyService.js?v=1">
 <link rel="modulepreload" href="services/binOutTaskService.js?v=5">
 <link rel="modulepreload" href="services/moveOutSettlementService.js?v=2">
@@ -61,7 +61,7 @@
 <link rel="modulepreload" href="lib/tenantInvoice.js?v=1">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=149">
+<link rel="stylesheet" href="styles.css?v=150">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -1084,16 +1084,41 @@
     </div>
   </div>
 
+  <!-- Move-in / move-out photo composer (iPhone Photos-style): take photos or pick many from the
+       library, review them in a square grid, remove any, then upload them all with a progress ring
+       per photo. Built by openInspectionSubmitModal()/phc* in app.js. -->
   <div class="modal-overlay" id="inspection-submit-modal" hidden>
-    <div class="card modal-card" style="max-width:380px;">
-      <h2 class="modal-title" id="inspection-submit-title">Add photos</h2>
-      <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">Take photos or choose several from your gallery.</p>
-      <div class="form-row"><label for="inspection-submit-photos">Photos</label><input id="inspection-submit-photos" type="file" accept="image/*" multiple /></div>
-      <div class="form-row"><label for="inspection-submit-note">Note (optional)</label><textarea id="inspection-submit-note"></textarea></div>
+    <div class="card modal-card phc-card">
+      <div class="phc-head">
+        <h2 class="modal-title" id="inspection-submit-title" style="margin:0;">Add photos</h2>
+        <span class="phc-count" id="phc-count"></span>
+      </div>
+      <p class="phc-hint" id="phc-hint">Photograph every wall, the floor, windows, furniture and anything already damaged. You can add as many photos as you like.</p>
+      <div class="phc-pickers">
+        <button type="button" class="phc-pick" onclick="phcPick('camera')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg>
+          <span>Take photo</span>
+        </button>
+        <button type="button" class="phc-pick" onclick="phcPick('library')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/></svg>
+          <span>Photo library</span>
+        </button>
+      </div>
+      <input id="phc-input-camera" type="file" accept="image/*" capture="environment" hidden onchange="phcFilesChosen(this)" />
+      <input id="phc-input-library" type="file" accept="image/*" multiple hidden onchange="phcFilesChosen(this)" />
+      <div class="phc-drop" id="phc-drop">
+        <div class="phc-empty" id="phc-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/></svg>
+          <span>No photos yet</span>
+          <small class="phc-desktop-only">Drag photos here or paste them</small>
+        </div>
+        <div class="ph-grid phc-grid" id="phc-grid"></div>
+      </div>
+      <div class="form-row" style="margin-top:12px;"><label for="inspection-submit-note">Note (optional)</label><textarea id="inspection-submit-note" rows="2" placeholder="e.g. Bedroom — carpet stain near the window"></textarea></div>
       <p id="inspection-submit-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
-        <button class="mini-btn" onclick="closeInspectionSubmitModal()">Cancel</button>
-        <button class="mini-btn primary" onclick="saveInspectionSubmitForm()">Submit photos</button>
+        <button class="mini-btn" id="phc-cancel" onclick="closeInspectionSubmitModal()">Cancel</button>
+        <button class="mini-btn primary" id="phc-submit" onclick="saveInspectionSubmitForm()">Submit photos</button>
       </div>
     </div>
   </div>
@@ -1282,16 +1307,22 @@
   <!-- Image lightbox: one reusable overlay for every photo gallery (maintenance/cleaning/inspection).
        Opened via openLightboxForThumb()/openLightbox() in app.js — never rebuilt by render(). -->
   <div class="lightbox-overlay" id="lightbox-overlay" role="dialog" aria-modal="true" aria-label="Image viewer" hidden onclick="closeLightboxOnBackdrop(event)">
-    <button class="lightbox-close" id="lightbox-close" type="button" aria-label="Close" onclick="closeLightbox()">&times;</button>
-    <button class="lightbox-download" id="lightbox-download" type="button" aria-label="Download photo" title="Download photo" onclick="lightboxDownload()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></button>
-    <button class="lightbox-nav-btn lightbox-prev" id="lightbox-prev" type="button" aria-label="Previous image" onclick="lightboxPrev()">&#8249;</button>
-    <button class="lightbox-nav-btn lightbox-next" id="lightbox-next" type="button" aria-label="Next image" onclick="lightboxNext()">&#8250;</button>
-    <div class="lightbox-content" id="lightbox-content" onpointerdown="lightboxPointerDown(event)" onpointerup="lightboxPointerUp(event)">
+    <div class="lightbox-bar lb-chrome">
+      <div class="lightbox-titles">
+        <div class="lightbox-counter" id="lightbox-counter"></div>
+        <div class="lightbox-caption" id="lightbox-caption"></div>
+      </div>
+    </div>
+    <button class="lightbox-close lb-chrome" id="lightbox-close" type="button" aria-label="Close" onclick="closeLightbox()">&times;</button>
+    <button class="lightbox-download lb-chrome" id="lightbox-download" type="button" aria-label="Download photo" title="Download photo" onclick="lightboxDownload()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></button>
+    <button class="lightbox-nav-btn lightbox-prev lb-chrome" id="lightbox-prev" type="button" aria-label="Previous image" onclick="lightboxPrev()">&#8249;</button>
+    <button class="lightbox-nav-btn lightbox-next lb-chrome" id="lightbox-next" type="button" aria-label="Next image" onclick="lightboxNext()">&#8250;</button>
+    <div class="lightbox-content" id="lightbox-content">
       <div class="lightbox-spinner" id="lightbox-spinner" hidden></div>
       <p class="lightbox-error" id="lightbox-error" hidden>Couldn't load this image.</p>
-      <img class="lightbox-img" id="lightbox-img" alt="" hidden />
+      <img class="lightbox-img" id="lightbox-img" alt="" hidden draggable="false" />
     </div>
-    <div class="lightbox-counter" id="lightbox-counter"></div>
+    <div class="lightbox-strip lb-chrome" id="lightbox-strip" hidden></div>
   </div>
 
   <!-- PDF viewer: a real, professional viewer built on pdf.js (pagination, zoom, continuous
@@ -1353,6 +1384,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=333"></script>
+<script type="module" src="app.js?v=334"></script>
 </body>
 </html>
