@@ -14,6 +14,7 @@ function fromRow(row) {
     type: row.type, // 'move_in' | 'move_out'
     photoPaths: Array.isArray(row.photo_paths) ? row.photo_paths : [],
     note: row.note || '',
+    uploadedBy: row.user_id || null, // auth uid of whoever uploaded (the tenant or a staff member)
     createdAt: row.created_at
   };
 }

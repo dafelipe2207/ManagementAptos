@@ -33,7 +33,7 @@ import * as auditService from './services/auditService.js?v=3';
 import * as recurringBillService from './services/recurringBillService.js?v=3';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
-import * as inspectionService from './services/inspectionService.js?v=2';
+import * as inspectionService from './services/inspectionService.js?v=3';
 import { weeklyDutyService, binDutyService } from './services/dutyService.js?v=1';
 import * as binOutTaskService from './services/binOutTaskService.js?v=5';
 import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=2';
@@ -3526,7 +3526,13 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         (linkedReq ? '<div class="field-row"><span class="k" style="padding-left:12px;color:var(--text-faint);font-size:11.5px;">Evidence</span>'+
           '<span class="v"><button class="text-link" onclick="openMaintenanceModal(\''+linkedReq.id+'\')">Maintenance request: '+esc(linkedReq.title)+'</button></span></div>' : '');
     }).join('');
-    var candidateRowsHtml = (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Outstanding rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
+    var moDate = t.actualMoveOutDate || t.expectedMoveOutDate;
+    var creditRowsHtml = (candidates.creditLines || []).map(function(l){
+      return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' — already charged after move-out'+
+        '<br><span style="font-size:11px;color:var(--text-faint);">'+shortDate(l.from)+' – '+shortDate(l.to)+' · charged '+money(l.charged)+', fair share to '+shortDate(moDate)+' '+money(l.fair)+'</span></span>'+
+        '<span class="v" style="color:var(--status-paid);">+'+money(l.amount)+'</span></div>';
+    }).join('') + (candidates.rentCredit > 0 ? '<div class="field-row"><span class="k">Rent paid beyond '+shortDate(moDate)+'</span><span class="v" style="color:var(--status-paid);">+'+money(candidates.rentCredit)+'</span></div>' : '');
+    var candidateRowsHtml = (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Outstanding rent (until '+shortDate(moDate)+')</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill (Unpaid)</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('');
     var estimatedRowsHtml = (candidates.estimatedLines || []).map(function(l){
       return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill <span class="badge" style="font-size:11px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
@@ -3541,21 +3547,30 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '<p style="font-size:12px;color:var(--text-faint);">Move-Out in Progress. Bills remain Unpaid until you approve a settlement below.</p>'+
         '<h3 style="font-size:12.5px;">Candidate deductions (from unpaid bills/rent)</h3>'+(candidateRowsHtml||'<p style="font-size:12.5px;color:var(--text-dim);">Nothing unpaid.</p>')+
         (estimatedRowsHtml ? '<h3 style="font-size:12.5px;">Estimated bills (not billed yet)</h3>'+estimatedRowsHtml : '')+
+        (creditRowsHtml ? '<h3 style="font-size:12.5px;">Credits to the tenant</h3>'+creditRowsHtml : '')+
         '<h3 style="font-size:12.5px;">Other deductions</h3>'+(deductionRowsHtml||'<p style="font-size:12.5px;color:var(--text-dim);">None added yet.</p>')+
         '<button class="mini-btn" onclick="openMoveOutDeductionModal(\''+settlement.id+'\')">Add deduction</button>'+
         '<h3 style="font-size:12.5px;">Bond Summary (preview — not final)</h3>'+summaryHtml+
         '<button class="mini-btn primary" onclick="calculateMoveOutSettlement(\''+settlement.id+'\')">Calculate Move-Out Settlement</button></div>';
     }
     // pending_approval
+    // The proposal is frozen at Calculate time; if payments, bills or dates changed since, the live
+    // figure differs — say so and offer to recalculate instead of approving stale numbers.
+    var live = computeSettlementTotals(bond, settlement.manualDeductions, candidates);
+    var stale = Math.abs((live.totalDeductions || 0) - (settlement.totalDeductions || 0)) > 0.009;
     return '<div class="card"><h2>Move-Out Settlement — Pending Approval</h2>'+
+      (settlement.calculatedAt ? '<p style="font-size:11.5px;color:var(--text-faint);margin:-4px 0 8px;">Calculated '+fullDate(String(settlement.calculatedAt).slice(0,10))+'</p>' : '')+
+      (stale ? '<div class="mo-stale">Payments, bills or dates changed since this was calculated — with today\'s data the deductions would be <b>'+money(live.totalDeductions)+'</b>'+(live.bondRefund != null ? ' (refund '+money(live.bondRefund)+')' : '')+'. Recalculate before approving.</div>' : '')+
       '<h3 style="font-size:12.5px;">Deductions in this proposal</h3>'+
+      (settlement.billsSnapshot.length ? '' : '<p style="font-size:12.5px;color:var(--text-dim);margin:0 0 6px;">Nothing owed.</p>')+
       settlement.billsSnapshot.map(function(l){ return '<div class="field-row"><span class="k">'+esc(l.label)+
         (l.kind === 'estimated' ? ' <span class="badge" style="font-size:11px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>' : '')+
-        '</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
+        '</span><span class="v"'+(l.amount < 0 ? ' style="color:var(--status-paid);">+'+money(-l.amount) : '>'+money(l.amount))+'</span></div>'; }).join('')+
       deductionRowsHtml+
       '<h3 style="font-size:12.5px;">Bond Summary</h3>'+summaryHtml+
       '<div class="actions-row">'+
-      '<button class="mini-btn primary" onclick="confirmApproveMoveOutSettlement(\''+settlement.id+'\')">Approve Deduction & Finalise Bond</button>'+
+      '<button class="mini-btn'+(stale ? '' : ' primary')+'" onclick="confirmApproveMoveOutSettlement(\''+settlement.id+'\')">Approve Deduction & Finalise Bond</button>'+
+      '<button class="mini-btn'+(stale ? ' primary' : '')+'" onclick="calculateMoveOutSettlement(\''+settlement.id+'\')">Recalculate</button>'+
       '<button class="mini-btn danger" onclick="confirmRejectMoveOutSettlement(\''+settlement.id+'\')">Reject Settlement</button>'+
       '</div></div>';
   }
@@ -3947,11 +3962,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var houseDaily = days > 0 ? amt / days : 0;
     var propTenants = tenantsOfProperty(t.propertyId);
     var total = 0, n = 0, first = null, last = null;
+    // The leaving tenant is charged THROUGH their move-out day (leaving on the 3rd = billed to the
+    // 3rd), the same way their last rent period is prorated up to and including that day.
+    var present_ = function(x, d){ return x.id === t.id ? moveOutDayInclusive(t, d) : tenantOccupiesDay(x, d); };
     for (var d = gapStart; d <= moveOutDate; d = stepDateIso(d, 1)){
-      if (!tenantOccupiesDay(t, d)) continue;
+      if (!present_(t, d)) continue;
       n++; if (!first) first = d; last = d;
       if (houseDaily > 0){
-        var present = propTenants.filter(function(x){ return tenantOccupiesDay(x, d); });
+        var present = propTenants.filter(function(x){ return present_(x, d); });
         var totalFactor = present.reduce(function(s,x){ return s + (x.billOccupancyFactor || 1); }, 0) || 1;
         total += houseDaily * (t.billOccupancyFactor || 1) / totalFactor;
       } else {
@@ -3959,6 +3977,55 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       }
     }
     return { amount: total, days: n, dailyRate: n ? total / n : 0, from: first, to: last };
+  }
+  /** Like tenantOccupiesDay, but the move-out day itself counts (used for what a leaving tenant
+   *  is charged in their move-out settlement). */
+  function moveOutDayInclusive(t, dayIso){
+    if (dayIso < t.moveInDate) return false;
+    var moveOut = t.actualMoveOutDate || t.expectedMoveOutDate;
+    return !moveOut || dayIso <= moveOut;
+  }
+  /** Bill shares already charged to a leaving tenant for days AFTER they move out — e.g. a monthly
+   *  gas bill (20 Oct – 19 Nov) split while they were still expected to stay, for someone leaving on
+   *  3 Nov. Their fair share is recomputed with the bill's own split method, once as if they stayed
+   *  the whole period and once leaving on their move-out day (inclusive); the share is scaled by
+   *  that ratio, so any by-hand split on the bill is kept. Returns credit lines (money back). */
+  function moveOutOverchargedShares(t){
+    var moveOut = t && (t.actualMoveOutDate || t.expectedMoveOutDate);
+    if (!moveOut) return [];
+    var out = [];
+    bills.forEach(function(b){
+      if (!b.billingPeriodStart || !b.billingPeriodEnd || b.billingPeriodEnd <= moveOut) return;
+      (b.allocations || []).forEach(function(a){
+        if (a.tenantId !== t.id || !(a.amount > 0.004)) return;
+        var stay = moveOutShareFor(b, t, null);
+        var leave = moveOutShareFor(b, t, stepDateIso(moveOut, 1));
+        if (!(stay > 0.004)) return;
+        // Only when the share looks like it was split for the whole period (within 3% / 5c).
+        if (Math.abs(a.amount - stay) > Math.max(0.05, stay * 0.03)) return;
+        var fair = round2(a.amount * leave / stay);
+        var credit = round2(a.amount - fair);
+        if (credit < 0.01) return;
+        out.push({ billId: b.id, allocationId: a.id, billType: b.billType || 'other', amount: credit, charged: round2(a.amount), fair: fair,
+          from: stepDateIso(moveOut, 1), to: b.billingPeriodEnd, paid: !!a.paid, periodStart: b.billingPeriodStart });
+      });
+    });
+    return out;
+  }
+  /** This tenant's share of a bill with their move-out set to `exclusiveEnd` (null = staying for
+   *  the whole period). Temporarily swaps the tenant's dates — synchronous, restored right after. */
+  function moveOutShareFor(bill, t, exclusiveEnd){
+    var keepA = t.actualMoveOutDate, keepE = t.expectedMoveOutDate;
+    try {
+      if (exclusiveEnd){ t.actualMoveOutDate = exclusiveEnd; } else { delete t.actualMoveOutDate; delete t.expectedMoveOutDate; }
+      var rows = computeAllocationRows(bill, bill.allocationMethod || 'occupancy');
+      var row = (rows || []).find(function(r){ return r.tenantId === t.id; });
+      return row ? row.amount : 0;
+    } catch(_e){ return 0; }
+    finally {
+      if (keepA) t.actualMoveOutDate = keepA; else delete t.actualMoveOutDate;
+      if (keepE) t.expectedMoveOutDate = keepE; else delete t.expectedMoveOutDate;
+    }
   }
   /** "40 days · 5 Sep – 14 Oct" — the not-yet-billed days being charged for an estimated bill. */
   function gapDaysLabel(days, from, to){
@@ -4038,14 +4105,17 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     rentCredit = round2(Math.max(0, rentCredit - rentRemaining));
     // The full picture: bond paid, minus whatever's still owed on rent, minus whatever's still
     // owed on bills (real + estimated), minus any discount/deduction already applied to the bond.
-    var estimatedReturn = round2(bondPaid - outstandingRent + rentCredit - totalEstimatedOwed - bondDeduction - bondReturned);
+    // Bill shares already charged for days after the move-out date come back to the tenant.
+    var billCredits = moveOutOverchargedShares(t);
+    var billCreditTotal = round2(billCredits.reduce(function(s,c){ return s + c.amount; }, 0));
+    var estimatedReturn = round2(bondPaid - outstandingRent + rentCredit + billCreditTotal - totalEstimatedOwed - bondDeduction - bondReturned);
 
     return {
       moveOutDate: moveOutDate, isActual: !!t.actualMoveOutDate, hasBond: !!bond,
       bondPaid: bondPaid, bondDeduction: round2(bondDeduction), bondReturned: round2(bondReturned), lines: lines,
       totalUnpaid: round2(totalUnpaid), totalEstimatedGap: round2(totalEstimatedGap),
       totalEstimatedOwed: totalEstimatedOwed, estimatedReturn: estimatedReturn,
-      outstandingRent: outstandingRent, rentCredit: rentCredit
+      outstandingRent: outstandingRent, rentCredit: rentCredit, billCredits: billCredits, billCreditTotal: billCreditTotal
     };
   }
 
@@ -4064,6 +4134,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     if (est.bondDeduction > 0) out.push({ label: long ? 'Other bond deductions' : 'Other deductions', amount:est.bondDeduction });
     if (est.bondReturned > 0) out.push({ label:'Bond already returned', amount:est.bondReturned });
     if (est.rentCredit > 0) out.push({ label: long ? 'Rent paid in advance (credit)' : 'Rent paid in advance', amount:-est.rentCredit });
+    (est.billCredits || []).forEach(function(c){
+      out.push({ label: billTypeLabel(c.billType) + (long ? ' charged after move-out (' + shortDate(c.from) + ' – ' + shortDate(c.to) + ')' : ' after move-out'), amount: -c.amount });
+    });
     return out;
   }
   function moveOutEstimateBodyHtml(est, manual, who){
@@ -4143,9 +4216,17 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    *  Pure and read-only: never marks anything paid. Used both for the live "in_progress"
    *  preview and, frozen, as the bills_snapshot at Calculate time. */
   function computeCandidateDeductions(tenantId){
-    var rentAmount = round2(rentCharges
+    // Rent is counted THROUGH the move-out date (computeMoveOutEstimate regenerates the periods up
+    // to that day) — not only what's due as of today, which missed the last weeks when the proposal
+    // was calculated before the tenant's final payment date. Rent paid beyond the move-out date
+    // comes back as a credit.
+    var tt = tenantOf(tenantId);
+    var est0 = tt ? computeMoveOutEstimate(tt) : null;
+    var rentAmount = est0 ? round2(est0.outstandingRent) : round2(rentCharges
       .filter(function(c){ return c.tenantId === tenantId && c.remaining > 0.004; })
       .reduce(function(s, c){ return s + c.remaining; }, 0));
+    var rentCredit = est0 ? round2(est0.rentCredit) : 0;
+    var creditLines = tt ? moveOutOverchargedShares(tt) : [];
     var billLines = [];
     bills.forEach(function(b){
       (b.allocations || []).forEach(function(a){
@@ -4163,7 +4244,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       if (l.estimatedGapAmount > 0) estimatedLines.push({ billType: l.billType, amount: round2(l.estimatedGapAmount), gapDays: l.gapDays, gapFrom: l.gapFrom, gapTo: l.gapTo });
       else if (l.includedInRent) estimatedLines.push({ billType: l.billType, amount: 0, gapDays: l.gapDays, includedInRent: true });
     });
-    return { rentAmount: rentAmount, billLines: billLines, estimatedLines: estimatedLines };
+    return { rentAmount: rentAmount, billLines: billLines, estimatedLines: estimatedLines, rentCredit: rentCredit, creditLines: creditLines };
   }
 
   /** bondRefund is null (not 0) when there's no bond on file, so the UI can show "No bond on
@@ -4172,7 +4253,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var manualTotal = (manualDeductions || []).reduce(function(s, d){ return s + (d.amount || 0); }, 0);
     var billsTotal = candidates.billLines.reduce(function(s, l){ return s + l.amount; }, 0);
     var estimatedTotal = (candidates.estimatedLines || []).reduce(function(s, l){ return s + l.amount; }, 0);
-    var totalDeductions = round2(candidates.rentAmount + billsTotal + estimatedTotal + manualTotal);
+    var creditTotal = (candidates.creditLines || []).reduce(function(s, l){ return s + l.amount; }, 0) + (candidates.rentCredit || 0);
+    var totalDeductions = round2(candidates.rentAmount + billsTotal + estimatedTotal + manualTotal - creditTotal);
     // Account for anything already deducted from / returned out of this bond before this
     // settlement (e.g. an old-format single-number deduction, or a partial refund already paid).
     var existingDeduction = bond ? round2(bond.deduction || 0) : 0;
@@ -4577,7 +4659,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       };
       var fOwed = group(mine.filter(function(x){ return x.sourceType !== 'estimate'; }).map(function(x){
         return { label: x.sourceType === 'rent' ? 'Rent' : (x.sourceType === 'bill' ? String(x.label || 'Bill').replace(/ bill$/,'') + ' (charged)'
-          : isBondBalancePayment(x) ? 'Paid by you' + (x.paidDate ? ' ' + shortDate(x.paidDate) : '') : (x.label || 'Deduction')), amount: x.amount };
+          : x.sourceType === 'credit' ? (x.label || 'Credit') : isBondBalancePayment(x) ? 'Paid by you' + (x.paidDate ? ' ' + shortDate(x.paidDate) : '') : (x.label || 'Deduction')), amount: x.amount };
       }));
       var fEst = mine.filter(function(x){ return x.sourceType === 'estimate'; }).map(function(x){
         return { label: x.includedInRent ? String(x.label || 'Bill').replace(/ bill.*$/,'') + ' (in rent)' : String(x.label || 'Bill').replace(/ bill \(estimated\)$/,''),
@@ -5003,8 +5085,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     (candidates.estimatedLines || []).forEach(function(l){
       billsSnapshot.push({ kind:'estimated', label: l.includedInRent ? billTypeLabel(l.billType) + ' bill — included in rent' : billTypeLabel(l.billType) + ' bill (estimated, ' + gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo) + ')', amount: l.amount, billType: l.billType, gapDays: l.gapDays, gapFrom: l.gapFrom || null, gapTo: l.gapTo || null, includedInRent: !!l.includedInRent });
     });
+    (candidates.creditLines || []).forEach(function(l){
+      billsSnapshot.push({ kind:'credit', label: billTypeLabel(l.billType) + ' already charged after move-out (' + shortDate(l.from) + ' – ' + shortDate(l.to) + ')', amount: -l.amount, billId: l.billId, allocationId: l.allocationId, billType: l.billType, gapFrom: l.from, gapTo: l.to });
+    });
+    if (candidates.rentCredit > 0){
+      billsSnapshot.push({ kind:'credit', label: 'Rent paid beyond the move-out date', amount: -candidates.rentCredit, billType: 'rent' });
+    }
     if (candidates.rentAmount > 0){
-      billsSnapshot.unshift({ kind:'rent', label:'Outstanding rent', amount: candidates.rentAmount });
+      billsSnapshot.unshift({ kind:'rent', label:'Outstanding rent (until ' + shortDate(t.actualMoveOutDate || t.expectedMoveOutDate) + ')', amount: candidates.rentAmount });
     }
     var timelineEntries = [{
       at: new Date().toISOString(),
@@ -5047,7 +5135,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     for (var i = 0; i < settlement.billsSnapshot.length; i++){
       var line = settlement.billsSnapshot[i];
       if (line.kind === 'rent'){
-        var stillOwed = round2(rentCharges.filter(function(c){ return c.tenantId === t.id && c.remaining > 0.004; })
+        var estNow = computeMoveOutEstimate(t);
+        var stillOwed = estNow ? round2(estNow.outstandingRent) : round2(rentCharges.filter(function(c){ return c.tenantId === t.id && c.remaining > 0.004; })
           .reduce(function(s,c){ return s + c.remaining; }, 0));
         var rentToDeduct = Math.min(stillOwed, line.amount);
         // Retry recovery (Task9a): if an earlier, partially-failed attempt of THIS approval already
@@ -5077,6 +5166,13 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         if (rentDiscountTotal > 0.004){
           newDiscountLines.push({ label:'Outstanding Rent', amount:rentDiscountTotal, category:'rent', sourceType:'rent', sourceId:'rent', settlementId:settlement.id });
         }
+        continue;
+      }
+      if (line.kind === 'credit'){
+        // Money back to the tenant (bill days after they left / rent paid ahead). Stored as a
+        // negative bond line, so bond.deduction (the sum of the list) goes down by it.
+        newDiscountLines.push({ label: line.label, amount: line.amount, category:'credit', sourceType:'credit', sourceId:'credit-' + (line.allocationId || line.billType || 'x'), billId: line.billId || null, settlementId:settlement.id });
+        timelineEntries.push({ at:new Date().toISOString(), action: 'Credit to tenant: ' + line.label, amount: line.amount });
         continue;
       }
       if (line.kind === 'estimated'){
@@ -5168,7 +5264,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var refund = bond ? round2(bond.amountPaid - (bond.deduction || 0) - (bond.amountReturned || 0)) : null;
     var msg = 'Hi ' + t.fullName + ', your move-out settlement has been approved and your bond has been updated.';
     if (bond) msg += '\n\nBond paid: ' + money(bond.amountPaid);
-    lines.forEach(function(d){ msg += '\n- ' + d.label + ': -' + money(d.amount); });
+    lines.forEach(function(d){ msg += '\n- ' + d.label + ': ' + (d.amount < 0 ? '+' + money(-d.amount) : '-' + money(d.amount)); });
     if (bond && lines.length) msg += '\nTotal deducted: ' + money(deducted);
     if (refund != null) msg += refund >= 0 ? '\nBond refund: ' + money(refund) : '\nAmount still owed: ' + money(-refund);
     if (tenantPaymentRef(t)) msg += '\n\nReference: ' + tenantPaymentRef(t);
@@ -14114,13 +14210,27 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    * viewer runs through every photo of that move-in/out. Long sets collapse after 3 rows behind a
    * "+N" tile. "Select" turns taps into ticks with Download / Delete — tenants can delete only
    * what they uploaded in the last 24 h (move-in photos are bond evidence); staff can always. */
-  var INSPECTION_GRID_COLLAPSE = 12;
+  var INSPECTION_GRID_COLLAPSE = 9;
   var INSPECTION_TENANT_DELETE_MS = 24 * 3600 * 1000;
   function inspectionCanDeleteSubmission(s){
     if (isViewer()) return false;
     if (isStaff()) return true;
+    // A tenant can only remove their OWN photos, and only within 24 h — never the manager's.
+    var mine = currentProfile && s.uploadedBy && s.uploadedBy === currentProfile.authUserId;
     var t = Date.parse(s.createdAt || '');
-    return !isNaN(t) && (Date.now() - t) < INSPECTION_TENANT_DELETE_MS;
+    return !!mine && !isNaN(t) && (Date.now() - t) < INSPECTION_TENANT_DELETE_MS;
+  }
+  /** Who took a set of inspection photos, worded for whoever is looking: the tenant sees "You" or
+   *  "Property manager"; staff see the tenant's name or the staff member's. */
+  function inspectionUploader(s){
+    var t = tenantOf(s.tenantId);
+    var byTenant = !!(s.uploadedBy && t && t.authUserId && s.uploadedBy === t.authUserId);
+    if (!s.uploadedBy) return { byTenant: false, label: '' };
+    if (byTenant) return { byTenant: true, label: isStaff() ? (((t.fullName || '').split(' ')[0] || 'Tenant') + ' (tenant)') : 'You' };
+    var prof = isStaff() ? (allProfiles || []).find(function(p){ return p.authUserId === s.uploadedBy; }) : null;
+    var name = prof ? ((prof.firstName || '') + ' ' + (prof.lastName || '')).trim() : '';
+    if (currentProfile && s.uploadedBy === currentProfile.authUserId && isStaff()) name = 'You';
+    return { byTenant: false, label: name ? name + (name === 'You' ? '' : ' (manager)') : 'Property manager' };
   }
   function inspectionPhotoGridHtml(tenantId, type, subs){
     var ordered = subs.slice().sort(function(a,b){ return String(a.createdAt||'').localeCompare(String(b.createdAt||'')); });
@@ -14130,32 +14240,200 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var byDay = [];
     ordered.forEach(function(s){
       var day = (s.createdAt||'').slice(0,10);
-      var g = byDay.length && byDay[byDay.length-1].day === day ? byDay[byDay.length-1] : null;
-      if (!g){ g = { day: day, subs: [] }; byDay.push(g); }
+      var who = inspectionUploader(s);
+      var key = day + '|' + who.label;
+      var g = byDay.length && byDay[byDay.length-1].key === key ? byDay[byDay.length-1] : null;
+      if (!g){ g = { key: key, day: day, who: who, subs: [] }; byDay.push(g); }
       g.subs.push(s);
     });
     var idx = 0;
     return byDay.map(function(g){
       var notes = g.subs.filter(function(s){ return s.note; }).map(function(s){ return '<p class="ph-note">'+esc(s.note)+'</p>'; }).join('');
       var count = g.subs.reduce(function(n, s){ return n + (s.photoPaths||[]).length; }, 0);
-      var tiles = '';
+      var tiles = '', gi = 0;
       g.subs.forEach(function(s){
         var deletable = inspectionCanDeleteSubmission(s);
         (s.photoPaths||[]).forEach(function(path){
-          var i = idx++;
-          var hiddenCls = i >= INSPECTION_GRID_COLLAPSE ? ' ph-extra' : '';
-          var more = (i === INSPECTION_GRID_COLLAPSE - 1 && total > INSPECTION_GRID_COLLAPSE)
-            ? '<span class="ph-more" aria-hidden="true">+'+(total - INSPECTION_GRID_COLLAPSE)+'</span>' : '';
+          var i = idx++, j = gi++;
+          // Each group (day + who took them) shows its first rows; the rest sit behind "+N".
+          var hiddenCls = j >= INSPECTION_GRID_COLLAPSE ? ' ph-extra' : '';
+          var more = (j === INSPECTION_GRID_COLLAPSE - 1 && count > INSPECTION_GRID_COLLAPSE)
+            ? '<span class="ph-more" aria-hidden="true">+'+(count - INSPECTION_GRID_COLLAPSE)+'</span>' : '';
           tiles += '<button type="button" class="ph-tile'+hiddenCls+(more?' has-more':'')+(deletable?' can-delete':'')+'" data-sub="'+s.id+'" data-path="'+esc(path)+'" onclick="inspectionTileTap(this)" aria-label="'+esc(label)+' photo '+(i+1)+' of '+total+'">'+
-            '<img class="lazy-thumb ph-img" data-noclick="1" data-bucket="inspection-photos" data-path="'+esc(path)+'" data-thumb="'+esc(storageService.thumbPathFor(path))+'" data-group="'+groupId+'" data-index="'+i+'" data-caption="'+esc(label + ' · ' + fullDate(g.day))+'" alt="" draggable="false" />'+
+            '<img class="lazy-thumb ph-img" data-noclick="1" data-bucket="inspection-photos" data-path="'+esc(path)+'" data-thumb="'+esc(storageService.thumbPathFor(path))+'" data-group="'+groupId+'" data-index="'+i+'" data-caption="'+esc(label + ' · ' + fullDate(g.day) + (g.who.label ? ' · ' + g.who.label : ''))+'" alt="" draggable="false" />'+
             '<span class="ph-check" aria-hidden="true"></span>'+more+
           '</button>';
         });
       });
-      return '<div class="ph-day"><div class="ph-day-head"><span>'+fullDate(g.day)+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
+      var whoHtml = g.who.label ? '<span class="ph-who'+(g.who.byTenant ? ' is-tenant' : ' is-manager')+'">'+esc(g.who.label)+'</span>' : '';
+      return '<div class="ph-day"><div class="ph-day-head"><span>'+fullDate(g.day)+whoHtml+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
         '<div class="ph-grid">'+tiles+'</div></div>';
     }).join('');
   }
+
+  /* ---------- Evidence report: a move-in / move-out condition record as a PDF to share ----------
+   * Everything on one tenant's move-in (or move-out) record — every photo from both the tenant and
+   * the manager, who took it and when the app received it, the notes, and the manager's findings —
+   * laid out on A4 pages. On a phone it goes to the share sheet (WhatsApp, Mail, Files…);
+   * elsewhere it downloads. Built in the browser with jsPDF (already used for tenant invoices). */
+  var jsPdfPromise = null;
+  function loadJsPdf(){
+    if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+    if (!jsPdfPromise){
+      jsPdfPromise = new Promise(function(resolve, reject){
+        var sc = document.createElement('script');
+        sc.src = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
+        sc.async = true;
+        sc.onload = function(){ window.jspdf && window.jspdf.jsPDF ? resolve(window.jspdf.jsPDF) : (jsPdfPromise = null, reject(new Error('PDF library not available'))); };
+        sc.onerror = function(){ jsPdfPromise = null; sc.remove(); reject(new Error('Could not load the PDF library — check your connection.')); };
+        document.head.appendChild(sc);
+      });
+    }
+    return jsPdfPromise;
+  }
+  /** A stored photo → JPEG data URL no bigger than maxDim px (keeps the PDF a sensible size). */
+  async function evidencePhotoData(path, maxDim){
+    var url = await getCachedSignedUrl('inspection-photos', path, 600);
+    var res = await fetch(url);
+    if (!res.ok) throw new Error('photo ' + res.status);
+    var blob = await res.blob();
+    var bmp = null, img = null, w, h;
+    if (window.createImageBitmap){ try { bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' }); w = bmp.width; h = bmp.height; } catch(_e){ bmp = null; } }
+    if (!bmp){
+      var ou = URL.createObjectURL(blob);
+      img = await new Promise(function(r, j){ var i = new Image(); i.onload = function(){ r(i); }; i.onerror = j; i.src = ou; });
+      w = img.naturalWidth; h = img.naturalHeight;
+      setTimeout(function(){ URL.revokeObjectURL(ou); }, 1000);
+    }
+    var k = Math.min(1, maxDim / Math.max(w, h));
+    var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext('2d').drawImage(bmp || img, 0, 0, c.width, c.height);
+    if (bmp) try { bmp.close(); } catch(_e){}
+    return { data: c.toDataURL('image/jpeg', 0.82), w: c.width, h: c.height };
+  }
+  function evidenceStamp(iso){
+    var d = new Date(iso || '');
+    if (isNaN(d)) return '';
+    return d.toLocaleString('en-AU', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  }
+  /** Who took the photos, in neutral words for a document others will read (never "You"). */
+  function evidenceWho(s, t){
+    var who = inspectionUploader(s);
+    if (who.byTenant) return t.fullName + ' (tenant)';
+    if (!s.uploadedBy) return '—';
+    var prof = (allProfiles || []).find(function(p){ return p.authUserId === s.uploadedBy; });
+    var name = prof ? ((prof.firstName || '') + ' ' + (prof.lastName || '')).trim() : '';
+    return name ? name + ' (property manager)' : 'Property manager';
+  }
+  window.shareInspectionEvidence = async function(tenantId, type, btn){
+    var t = tenantOf(tenantId); if (!t) return;
+    var subs = inspectionSubmissionsFor(tenantId, type).filter(function(s){ return (s.photoPaths || []).length; })
+      .sort(function(a, b){ return String(a.createdAt || '').localeCompare(String(b.createdAt || '')); });
+    if (!subs.length){ showToast('No photos to share yet.', 'info'); return; }
+    var label = INSPECTION_TYPE_LABEL[type] || 'Inspection';
+    var items = [];
+    subs.forEach(function(s){ var who = inspectionUploader(s); (s.photoPaths || []).forEach(function(p){ items.push({ path: p, sub: s, who: who }); }); });
+    var keep = btn ? btn.innerHTML : '';
+    var setBtn = function(txt){ if (btn){ btn.disabled = true; btn.textContent = txt; } };
+    setBtn('Preparing…');
+    try {
+      var JsPDF = await loadJsPdf();
+      var doc = new JsPDF({ unit: 'mm', format: 'a4', compress: true });
+      var W = 210, H = 297, M = 14, y = M;
+      var prop = propertyOf(t.propertyId), room = t.roomId ? roomOf(t.roomId) : null;
+      var byTenant = items.filter(function(x){ return x.who.byTenant; }).length;
+      // ---- Cover ----
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+      doc.text(label + ' condition report', M, y + 6); y += 14;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(60);
+      var rows = [
+        ['Property', (prop ? prop.name : '') + (prop && prop.address ? ' — ' + prop.address : '')],
+        ['Room', room ? room.name : '—'],
+        ['Tenant', t.fullName + (tenantPaymentRef(t) ? ' (' + tenantPaymentRef(t) + ')' : '')],
+        ['Move-in date', t.moveInDate ? fullDate(t.moveInDate) : '—']
+      ];
+      var mo = t.actualMoveOutDate || t.expectedMoveOutDate;
+      if (mo) rows.push(['Move-out date', fullDate(mo)]);
+      rows.push(['Photos', items.length + ' (' + byTenant + ' by the tenant, ' + (items.length - byTenant) + ' by the property manager)']);
+      rows.push(['Taken between', evidenceStamp(subs[0].createdAt) + (subs.length > 1 ? '  and  ' + evidenceStamp(subs[subs.length - 1].createdAt) : '')]);
+      var genBy = isStaff() ? (currentProfile ? ((currentProfile.firstName || '') + ' ' + (currentProfile.lastName || '')).trim() : '') || 'Property manager' : t.fullName + ' (tenant)';
+      rows.push(['Report generated', evidenceStamp(new Date().toISOString()) + ' by ' + genBy]);
+      rows.forEach(function(r){
+        doc.setFont('helvetica', 'bold'); doc.text(r[0], M, y);
+        doc.setFont('helvetica', 'normal');
+        var lines = doc.splitTextToSize(String(r[1] || ''), W - M * 2 - 40);
+        doc.text(lines, M + 40, y); y += 6 * lines.length;
+      });
+      var notes = subs.filter(function(s){ return s.note; });
+      if (notes.length){
+        y += 4; doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20); doc.text('Notes', M, y); y += 6;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60);
+        notes.forEach(function(s){
+          var ln = doc.splitTextToSize('• ' + s.note + '  (' + evidenceWho(s, t) + ', ' + evidenceStamp(s.createdAt) + ')', W - M * 2);
+          if (y + ln.length * 5 > H - M){ doc.addPage(); y = M; }
+          doc.text(ln, M, y); y += ln.length * 5 + 1;
+        });
+      }
+      var findings = inspectionCommentsFor(tenantId, type);
+      if (findings.length){
+        y += 4; doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20);
+        if (y > H - 30){ doc.addPage(); y = M; }
+        doc.text('Findings / comments', M, y); y += 6;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60);
+        findings.forEach(function(c){
+          var sev = c.findingSeverity === 'failed' ? '[FAILED] ' : c.findingSeverity === 'attention' ? '[ATTENTION] ' : '';
+          var ln = doc.splitTextToSize('• ' + sev + c.comment + '  (' + evidenceStamp(c.createdAt) + ')', W - M * 2);
+          if (y + ln.length * 5 > H - M){ doc.addPage(); y = M; }
+          doc.text(ln, M, y); y += ln.length * 5 + 1;
+        });
+      }
+      // ---- Photos: two per page, each with its caption ----
+      var slotH = (H - M * 2 - 8) / 2, capH = 9;
+      for (var i = 0; i < items.length; i++){
+        setBtn('Adding photo ' + (i + 1) + ' of ' + items.length + '…');
+        if (i % 2 === 0){ doc.addPage(); }
+        var top = M + (i % 2) * (slotH + 8);
+        var it = items[i];
+        var boxW = W - M * 2, boxH = slotH - capH;
+        try {
+          var ph = await evidencePhotoData(it.path, 1600);
+          var k = Math.min(boxW / ph.w, boxH / ph.h);
+          var dw = ph.w * k, dh = ph.h * k;
+          doc.addImage(ph.data, 'JPEG', M + (boxW - dw) / 2, top, dw, dh);
+        } catch(_e){
+          doc.setDrawColor(200); doc.rect(M, top, boxW, boxH);
+          doc.setFontSize(10); doc.setTextColor(150); doc.text('Photo could not be loaded', M + boxW / 2, top + boxH / 2, { align: 'center' });
+        }
+        doc.setFontSize(9.5); doc.setTextColor(40); doc.setFont('helvetica', 'bold');
+        doc.text('Photo ' + (i + 1) + ' of ' + items.length, M, top + boxH + 5);
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(90);
+        var cap = 'Uploaded ' + evidenceStamp(it.sub.createdAt) + ' by ' + evidenceWho(it.sub, t) + (it.sub.note ? ' · ' + it.sub.note : '');
+        doc.text(doc.splitTextToSize(cap, boxW - 30)[0], M + 30, top + boxH + 5);
+      }
+      // ---- Footer on every page ----
+      var pages = doc.getNumberOfPages();
+      for (var pg = 1; pg <= pages; pg++){
+        doc.setPage(pg); doc.setFontSize(8); doc.setTextColor(140);
+        doc.text(label + ' condition report · ' + t.fullName + ' · ' + (prop ? prop.name : '') + (room ? ' / ' + room.name : ''), M, H - 6);
+        doc.text('Page ' + pg + ' of ' + pages, W - M, H - 6, { align: 'right' });
+      }
+      var fileName = (label + '-report-' + (t.fullName || 'tenant').split(' ')[0] + '-' + TODAY).toLowerCase().replace(/[^a-z0-9.-]+/g, '-') + '.pdf';
+      var file = new File([doc.output('blob')], fileName, { type: 'application/pdf' });
+      var shareText = label + ' condition report — ' + t.fullName + ' (' + items.length + ' photos).';
+      if (navigator.canShare && navigator.canShare({ files: [file] })){
+        try { await navigator.share({ files: [file], title: label + ' condition report', text: shareText }); return; }
+        catch(err){ if (err && err.name === 'AbortError') return; }
+      }
+      var a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+      showToast('Report downloaded.', 'success');
+    } catch(err){
+      showToast('Could not make the report. ' + friendlyErrorMessage(err), 'error');
+    } finally {
+      if (btn){ btn.disabled = false; btn.innerHTML = keep; }
+    }
+  };
   function inspectionSectionRoot(el){ return el && el.closest ? el.closest('.insp-photos') : null; }
   window.inspectionTileTap = function(tile){
     var root = inspectionSectionRoot(tile);
@@ -14192,7 +14470,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     if (del){
       var blocked = sel.some(function(t){ return !t.classList.contains('can-delete'); });
       del.disabled = !sel.length || blocked;
-      del.title = blocked ? 'Photos older than 24 hours can only be removed by your property manager.' : '';
+      del.title = blocked ? 'You can only remove photos you uploaded in the last 24 hours.' : '';
     }
   }
   window.inspectionSelectAll = function(btn){
@@ -14218,7 +14496,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var root = inspectionSectionRoot(btn); if (!root) return;
     var sel = inspectionSelectedTiles(root);
     if (!sel.length) return;
-    if (sel.some(function(t){ return !t.classList.contains('can-delete'); })){ showToast('Photos older than 24 hours can only be removed by your property manager.', 'info'); return; }
+    if (sel.some(function(t){ return !t.classList.contains('can-delete'); })){ showToast('You can only remove photos you uploaded in the last 24 hours.', 'info'); return; }
     var n = sel.length;
     var tenantId = root.getAttribute('data-tenant');
     openConfirmModal('Delete ' + n + ' photo' + (n===1?'':'s') + '?', 'They will be removed from this ' + (INSPECTION_TYPE_LABEL[root.getAttribute('data-type')]||'').toLowerCase() + ' record. This can\'t be undone.', async function(){
@@ -14323,6 +14601,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<div class="detail-head insp-photos-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;font-size:14px;">'+INSPECTION_TYPE_LABEL[type]+' photos'+(photoTotal ? ' <span class="ph-total">'+photoTotal+'</span>' : '')+'</h2>'+
         '<div class="insp-photos-actions">'+
+          (canSelect ? '<button class="mini-btn ph-btn-evidence" onclick="shareInspectionEvidence(\''+tenantId+'\',\''+type+'\', this)">Share evidence</button>' : '')+
           (canSelect ? '<button class="mini-btn ph-btn-select" onclick="inspectionToggleSelect(this)">Select</button><button class="mini-btn ph-btn-done" onclick="inspectionToggleSelect(this)">Done</button>' : '')+
           (canAdd && !isViewer() ? '<button class="mini-btn primary ph-btn-add" onclick="openInspectionSubmitModal(\''+tenantId+'\',\''+type+'\')">'+(subs.length?'Add more':'Add photos')+'</button>' : '')+
         '</div>'+
@@ -14339,7 +14618,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var t = myTenantRecord();
     if (!t) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
     if (!t.roomId) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
-    return pageHeaderIcon('Inspection', 'Photos of the room when you moved in, and again when you move out.', 'inspect', 'inspection') + realEstateInspectionBannerHtml(true) +
+    return pageHeaderIcon('Inspection', 'How the room was when you moved in and when you move out. You and your property manager can both add photos, and both see all of them.', 'inspect', 'inspection') + realEstateInspectionBannerHtml(true) +
       inspectionSectionHtml(t.id, 'move_in', true, false) +
       inspectionSectionHtml(t.id, 'move_out', true, false);
   }
@@ -20546,7 +20825,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     [/^export|download/, 'download'], [/^open the full/, 'doc'],
     [/^import|bank statement/, 'bank'], [/csv/, 'upload'],
     [/^submit photos/, 'camera'],
-    [/^select all/, 'check'], [/^select$/, 'list'], [/^done$/, 'check'],
+    [/^share evidence/, 'doc'], [/^select all/, 'check'], [/^select$/, 'list'], [/^done$/, 'check'],
     [/attach|receipt|my transfer|^add document/, 'attach'],
     [/view as tenant|^switch tenant/, 'user'],
     [/^view|^show|^review/, 'eye'],

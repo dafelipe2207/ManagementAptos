@@ -3018,3 +3018,10 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .tls-send .tls-wa .wa-icon{width:18px;height:18px;flex:0 0 auto;}
 .tls-send .mini-btn{white-space:nowrap;}
 @media (max-width:380px){ .tls-send{grid-template-columns:1fr;} }
+
+/* Move-out settlement: proposal calculated before something changed */
+.mo-stale{font-size:12.5px;line-height:1.4;color:var(--status-due);background:var(--status-due-bg);border-radius:12px;padding:8px 10px;margin:0 0 10px;}
+.ph-who{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:650;vertical-align:1px;}
+.ph-who.is-tenant{background:var(--status-upcoming-bg);color:var(--status-upcoming);}
+.ph-who.is-manager{background:var(--accent-bg);color:var(--accent);}
+.insp-photos.is-selecting .ph-btn-evidence{display:none !important;}
