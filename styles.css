@@ -3025,3 +3025,10 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .ph-who.is-tenant{background:var(--status-upcoming-bg);color:var(--status-upcoming);}
 .ph-who.is-manager{background:var(--accent-bg);color:var(--accent);}
 .insp-photos.is-selecting .ph-btn-evidence{display:none !important;}
+
+/* Bills not charged to the tenants yet */
+.bt-sub.warn{color:var(--status-due);font-weight:600;}
+.charge-banner{border:1px solid color-mix(in srgb, var(--status-due) 35%, transparent);background:color-mix(in srgb, var(--status-due) 8%, var(--bg-elevated));}
+.charge-banner-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:700;font-size:15px;color:var(--status-due);}
+.charge-banner-p{margin:6px 0 10px;font-size:13.5px;color:var(--text);}
+.charge-row .name .bc-chip{font-size:11px;margin-left:4px;vertical-align:middle;}

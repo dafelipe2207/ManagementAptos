@@ -1622,7 +1622,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     // Only inspections still to come; once one is over it drops off, unless the agency asked for
     // something after it (a linked Correos email still open) — then it stays as a follow-up.
     var reiHtml = realEstateInspectionBannerHtml(false) + dashboardInspectionFollowupsHtml();
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml;
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + dashboardNotChargedHtml() + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml;
   }
 
   /** Dashboard "Payments reported" card: every payment a tenant has reported and is waiting for
@@ -8758,6 +8758,77 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     if (PHONE_MQ.addEventListener) PHONE_MQ.addEventListener('change', onPhoneMq); else if (PHONE_MQ.addListener) PHONE_MQ.addListener(onPhoneMq); }
   /** "✓ Sent to group · today 10:12 by Daniel (2×)" — from the shared log; older sends (before the
    *  log existed) fall back to the bill's own "shared" date. */
+  /* ---------- Has each tenant been charged this bill? ----------
+   * A tenant's share counts as charged once the bill went to the property's WhatsApp group, the
+   * tenant got it in their own statement, or an admin marked it as charged another way. Anything
+   * else that's still unpaid is "not charged yet" — mainly bills the app made by itself from a
+   * recurring bill, which nobody sent. */
+  function billIsRecurring(b){ return /^Auto-generated recurring bill/i.test(b.notes || ''); }
+  function billUnchargedAllocs(b){
+    if (b.whatsappGroupSharedAt) return [];
+    if (waSends.some(function(x){ return (x.kind === 'group' || x.kind === 'manual') && x.billId === b.id && !x.tenantId; })) return [];
+    return (b.allocations || []).filter(function(a){
+      if (a.isAdmin || a.paid || !a.tenantId || !((a.amount || 0) > 0.004)) return false;
+      if (paymentReports.some(function(r){ return r.status === 'pending' && r.billId === b.id && r.tenantId === a.tenantId; })) return false; // they already said they paid
+      return !waSends.some(function(x){ return (x.kind === 'tenant' || x.kind === 'manual') && x.billId === b.id && x.tenantId === a.tenantId; });
+    });
+  }
+  function billChargeLineHtml(b){
+    var u = billUnchargedAllocs(b);
+    if (u.length){
+      var all = (b.allocations || []).filter(function(a){ return !a.isAdmin; }).length;
+      return '<div class="bt-sub warn">⚠️ Not charged yet'+(u.length < all ? ' · '+u.map(function(a){ var t = tenantOf(a.tenantId); return esc(tenantFirstName(t ? t.fullName : '')); }).join(', ') : '')+'</div>';
+    }
+    return billGroupSentHtml(b);
+  }
+  /** Bills (due in the last 6 months or later) with tenant shares nobody has been charged for. */
+  function billsNotCharged(){
+    var since = new Date(); since.setMonth(since.getMonth() - 6); since = toIsoLocal(since);
+    return bills.filter(function(b){ return String(b.dueDate || b.issueDate || TODAY) >= since && billUnchargedAllocs(b).length; })
+      .sort(function(a, b){ return String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')); });
+  }
+  window.markBillCharged = function(billId, btn){
+    var b = billOf(billId); if (!b) return;
+    if (btn) btn.disabled = true;
+    logWaSends([{ kind:'manual', billId: billId, tenantId: null }]);
+    showToast('Marked as charged — ' + (b.provider || billTypeLabel(b.billType)) + '.', 'success');
+  };
+  function billNotChargedBannerHtml(b){
+    if (isTenantRole() || isViewer()) return '';
+    var u = billUnchargedAllocs(b); if (!u.length) return '';
+    var p = propertyOf(b.propertyId);
+    var names = u.map(function(a){ var t = tenantOf(a.tenantId); return esc(tenantFirstName(t ? t.fullName : '')) + ' <b>' + money(a.amount) + '</b>'; }).join(' · ');
+    return '<div class="card charge-banner"><div class="charge-banner-h">⚠️ Not charged to the tenants yet'+(billIsRecurring(b) ? ' <span class="bc-chip">🔁 Made automatically (recurring)</span>' : '')+'</div>'+
+      '<p class="charge-banner-p">Nobody has sent this bill to: '+names+'.</p>'+
+      '<div class="actions-row" style="flex-wrap:wrap;">'+
+        (p && p.whatsappGroupLink ? '<button type="button" class="mini-btn primary" onclick="sendBillToWhatsAppGroup(\''+b.id+'\')">Send to the group</button>' : '')+
+        (u.length === 1 ? '<button type="button" class="mini-btn" onclick="sendTenantOwedStatement(\''+u[0].tenantId+'\')">Send to '+esc(tenantFirstName((tenantOf(u[0].tenantId) || {}).fullName))+'</button>' : '')+
+        '<button type="button" class="mini-btn" onclick="markBillCharged(\''+b.id+'\', this)">Already charged</button>'+
+      '</div></div>';
+  }
+  /** Dashboard: bills nobody has charged to the tenants yet. */
+  function dashboardNotChargedHtml(){
+    if (isTenantRole() || isViewer()) return '';
+    var list = billsNotCharged(); if (!list.length) return '';
+    var rows = list.slice(0, 6).map(function(b){
+      var p = propertyOf(b.propertyId), u = billUnchargedAllocs(b);
+      var ic = BILL_TYPE_ICON[b.billType] || BILL_TYPE_ICON.other;
+      var total = round2(u.reduce(function(s2, a){ return s2 + (a.amount || 0); }, 0));
+      return '<div class="row charge-row"><div class="who" onclick="location.hash=\'#/bills/'+b.id+'\'" style="cursor:pointer;">'+
+          '<div class="name"><span aria-hidden="true">'+ic[0]+'</span> '+esc(b.provider || billTypeLabel(b.billType))+(billIsRecurring(b) ? ' <span class="bc-chip">🔁 Recurring</span>' : '')+'</div>'+
+          '<div class="meta">'+esc(p ? p.name : '')+(b.dueDate ? ' · due '+esc(shortDate(b.dueDate)) : '')+' · '+u.length+' tenant'+(u.length === 1 ? '' : 's')+': '+
+            u.map(function(a){ var t = tenantOf(a.tenantId); return esc(tenantFirstName(t ? t.fullName : '')); }).join(', ')+'</div></div>'+
+        '<div class="amount">'+money(total)+'<br/>'+badge('due', 'Not charged')+'</div>'+
+        '<div class="act-row">'+
+          (p && p.whatsappGroupLink ? '<button type="button" class="mini-btn primary" onclick="sendBillToWhatsAppGroup(\''+b.id+'\')">Send to group</button>' : '')+
+          '<button type="button" class="mini-btn" onclick="location.hash=\'#/bills/'+b.id+'\'">Open</button>'+
+          '<button type="button" class="mini-btn" onclick="markBillCharged(\''+b.id+'\', this)">Already charged</button>'+
+        '</div></div>';
+    }).join('');
+    return '<div class="card needs-card charge-card"><h2>🧾 Bills not charged yet <span class="count-pill">'+list.length+'</span></h2>'+
+      '<p class="modal-hint" style="margin:-4px 0 8px;">Nobody has sent these to the tenants (group or their own statement).</p>'+rows+
+      (list.length > 6 ? '<button type="button" class="show-more-btn" onclick="location.hash=\'#/bills\'">See all '+list.length+' in Bills</button>' : '')+'</div>';
+  }
   function billGroupSentHtml(b){
     var list = waSendsWhere(function(x){ return x.kind === 'group' && x.billId === b.id; });
     if (list.length){
@@ -8815,7 +8886,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         : '<div class="bt-prog"><i style="width:'+pct+'%"></i></div>'+
           '<div class="bt-sub"><b>'+paidN+'/'+tA.length+'</b> paid · '+money(billPaidAmount(b))+'</div>'+
           billTenantLinesHtml(b, tA, true)+
-          (billPendingRank(b) === 3 ? '' : billGroupSentHtml(b));
+          (billPendingRank(b) === 3 ? '' : billChargeLineHtml(b));
       return groupRow + '<tr class="report-row-link" onclick="location.hash=\'#/bills/'+b.id+'\'">'+
         '<td><div class="bt-bill"><span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span><span>'+
           '<b>'+esc(b.provider || billTypeLabel(b.billType))+'</b>'+
@@ -8849,8 +8920,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         : '<span class="bc-chip'+(paidN===tAllocs.length?' ok':'')+'">👥 '+paidN+'/'+tAllocs.length+' paid · '+money(billPaidAmount(b))+'</span>';
       var provChip = b.adminPaid ? '<span class="bc-chip ok">🏦 Provider paid</span>'
         : (billReadyForAdminPayment(b) ? '<span class="bc-chip warn">🏦 Ready to pay</span>' : '<span class="bc-chip">🏦 Waiting on tenants</span>');
-      var waChip = !tAllocs.length ? ''
-        : (b.whatsappGroupSharedAt ? '<span class="bc-chip ok">💬 Sent</span>' : '<span class="bc-chip">💬 Not sent</span>');
+      var waChip = !tAllocs.length || paidN === tAllocs.length ? ''
+        : billUnchargedAllocs(b).length ? '<span class="bc-chip warn">⚠️ Not charged</span>' : '<span class="bc-chip ok">💬 Charged</span>';
       return '<a class="bill-card" href="#/bills/'+b.id+'">'+
         '<span class="bill-ic" style="background:'+ic[1]+';">'+ic[0]+'</span>'+
         '<span class="bill-card-body">'+
@@ -9704,6 +9775,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<div class="detail-head"><div><h1 class="page-title">'+esc(billTypeLabel(b.billType))+'</h1>'+
       '<p class="page-sub">'+esc(b.provider)+'</p></div>'+
       '<div class="occ"><div>'+money(b.amount)+'</div><div class="vacant">'+billStatusBadge(b)+'</div></div></div>'+
+      billNotChargedBannerHtml(b)+
       '<div class="card"><div class="field-list">'+
       '<div class="field-row"><span class="k">Property</span><span class="v"><a href="#/properties/'+(p?p.id:'')+'">'+esc(p?p.name:'—')+'</a></span></div>'+
       '<div class="field-row"><span class="k">Provider</span><span class="v">'+esc(b.provider)+'</span></div>'+
