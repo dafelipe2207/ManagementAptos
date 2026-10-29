@@ -1622,7 +1622,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     // Only inspections still to come; once one is over it drops off, unless the agency asked for
     // something after it (a linked Correos email still open) — then it stays as a follow-up.
     var reiHtml = realEstateInspectionBannerHtml(false) + dashboardInspectionFollowupsHtml();
-    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + dashboardNotChargedHtml() + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardMoveOutsHtml() + needsHtml;
+    return pageHeader('Dashboard', "Here's how things look across all your properties as of "+shortDate(TODAY)+'.') + dashboardNewEmailsHtml() + reiHtml + dashboardNotChargedHtml() + dashboardReportedPaymentsHtml() + dashboardDamageHtml() + dashboardOnboardingHtml() + dashboardMoveOutsHtml() + needsHtml;
   }
 
   /** Dashboard "Payments reported" card: every payment a tenant has reported and is waiting for
@@ -1759,6 +1759,64 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    *  most urgent first, then newest. Requests a tenant reported are marked as such. Tapping a row
    *  opens the request; nothing is shown when there's nothing open. */
   var DASH_DAMAGE_LIMIT = 5;
+  /* ============ New-tenant onboarding checklist ============
+   * Three steps every new tenant needs to finish: their first rent payment recorded, the bond
+   * paid in full, and move-in photos uploaded. Shown as a tag/card on both dashboards — the
+   * admin's (one row per tenant still missing something) and that tenant's own — and it keeps
+   * showing itself (never archived/dismissed) until all three are done; then it just disappears
+   * on its own, nothing to mark or close by hand. */
+  var ONBOARDING_STEPS_META = [
+    { key:'rent', icon:'💳', label:'First rent payment' },
+    { key:'bond', icon:'🔐', label:'Bond paid in full' },
+    { key:'photos', icon:'📸', label:'Move-in photos uploaded' }
+  ];
+  function tenantOnboardingSteps(t){
+    var bond = bondOf(t.id);
+    var rentDone = paymentRecords.some(function(p){ return p.tenantId === t.id; });
+    var bondDone = !!bond && bond.amountRequired > 0 && bond.amountPaid >= bond.amountRequired - 0.004;
+    var photosDone = inspectionSubmissionsFor(t.id, 'move_in').some(function(s){ return (s.photoPaths||[]).length > 0; });
+    var done = { rent:rentDone, bond:bondDone, photos:photosDone };
+    return ONBOARDING_STEPS_META.map(function(m){ return { key:m.key, icon:m.icon, label:m.label, done: done[m.key] }; });
+  }
+  function tenantOnboardingDone(t){ return tenantOnboardingSteps(t).every(function(s){ return s.done; }); }
+
+  /** Admin dashboard: one row per current tenant who hasn't finished onboarding yet, newest
+   *  move-in first. Each step is its own chip — tapping the row goes to that tenant's page. */
+  function dashboardOnboardingHtml(){
+    var pending = tenants.filter(function(t){ return t.rentAmount > 0 && !tenantHasMovedOut(t) && !tenantOnboardingDone(t); })
+      .sort(function(a,b){ return (b.moveInDate||'').localeCompare(a.moveInDate||''); });
+    if (!pending.length) return '';
+    var rows = pending.map(function(t){
+      var p = propertyOf(t.propertyId), r = t.roomId ? roomOf(t.roomId) : null;
+      var steps = tenantOnboardingSteps(t);
+      var chips = steps.map(function(s){
+        return '<span class="onb-chip'+(s.done?' done':'')+'"><i>'+(s.done?'✓':s.icon)+'</i>'+esc(s.label)+'</span>';
+      }).join('');
+      return '<div class="row" style="cursor:pointer;" onclick="location.hash=\'#/tenants/'+t.id+'\'">'+
+        '<div class="who"><div class="name">'+esc(t.fullName)+'</div>'+
+        '<div class="meta">'+esc(p ? p.name : '')+(r ? ' • '+esc(r.name) : '')+(t.moveInDate ? ' · Moved in '+shortDate(t.moveInDate) : '')+'</div>'+
+        '<div class="onb-chips">'+chips+'</div></div></div>';
+    }).join('');
+    return '<div class="card needs-card"><h2>📋 New tenants — getting set up <span class="count-pill">'+pending.length+'</span></h2>'+
+      '<p class="modal-hint" style="margin:-4px 0 8px;">Stays here until rent, bond and move-in photos are all done.</p>'+rows+'</div>';
+  }
+
+  /** Tenant dashboard: the same three steps, as a card with no close/dismiss button — it leaves on
+   *  its own, the moment all three are checked. */
+  function tenantOnboardingCardHtml(t){
+    var steps = tenantOnboardingSteps(t);
+    if (steps.every(function(s){ return s.done; })) return '';
+    var left = steps.filter(function(s){ return !s.done; }).length;
+    return '<div class="card onb-card">'+
+      '<div class="onb-head"><span class="onb-ic" aria-hidden="true">📋</span><div class="onb-titles"><b>Getting set up</b>'+
+      '<small>'+left+' step'+(left===1?'':'s')+' left to finish moving in</small></div></div>'+
+      '<ul class="onb-list">'+steps.map(function(s){
+        var link = s.key === 'rent' ? '#/payments' : s.key === 'photos' ? '#/inspection' : '';
+        return '<li class="'+(s.done?'done':'')+'"><span class="onb-li-ic" aria-hidden="true">'+(s.done?'✅':s.icon)+'</span>'+
+          '<span>'+esc(s.label)+'</span>'+(!s.done && link ? '<a class="onb-link" href="'+link+'">Go ›</a>' : '')+'</li>';
+      }).join('')+'</ul></div>';
+  }
+
   function dashboardDamageHtml(){
     var open = maintenanceRequests.filter(function(m){ return MAINTENANCE_DONE_STATUSES.indexOf(m.status) === -1; });
     if (!open.length) return '';
@@ -4700,12 +4758,12 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var b = function(s){ return wa ? '*' + s + '*' : s; };
     var first = ((t && t.fullName) || '').split(' ')[0];
     var lines = [];
-    if (wa) lines.push('Hi ' + (first || 'there') + ',', '');
-    if (date) lines.push('Your move-out date is ' + b(fullDate(date)) + ' — check-out by ' + CHECKOUT_TIME + '.', '');
-    lines.push(b('Tenant Check-out Requirements'), CHECKOUT_INTRO, '');
-    CHECKOUT_REQUIREMENTS.forEach(function(r){ lines.push('• ' + b(r.title + ':') + ' ' + r.text); });
-    lines.push('', b('Important:') + ' ' + CHECKOUT_IMPORTANT, CHECKOUT_CLOSING);
-    if (wa) lines.push('', 'You can also see this list in the app, on your dashboard. Thank you!');
+    if (wa) lines.push('👋 Hi ' + (first || 'there') + '!', '');
+    if (date) lines.push('📅 Your move-out date: ' + b(fullDate(date)) + '\n⏰ Check-out by ' + b(CHECKOUT_TIME), '');
+    lines.push(b('📦 Tenant Check-out Requirements'), CHECKOUT_INTRO, '');
+    CHECKOUT_REQUIREMENTS.forEach(function(r){ lines.push(r.icon + ' ' + b(r.title + ':') + ' ' + r.text, ''); });
+    lines.push('⚠️ ' + b('Important:') + ' ' + CHECKOUT_IMPORTANT, CHECKOUT_CLOSING);
+    if (wa) lines.push('', '✅ You can also tick this list off in the app, on your dashboard.', '🙏 Thank you!');
     return lines.join('\n');
   }
   /** In-app notification with the steps — once per tenant per move-out date. */
@@ -16389,6 +16447,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
       '</div>'+
+      tenantOnboardingCardHtml(t) +
       tenantCheckoutStepsCardHtml(t) +
       tenantMoveOutEstimateHtml(t) +
       wifiCardHtml(p) +

@@ -3057,3 +3057,28 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .co-important{margin:6px 16px 16px;padding:12px 14px;border-radius:12px;font-size:12.8px;line-height:1.5;color:var(--text);
   background:var(--status-due-bg);border:1px solid color-mix(in srgb, var(--status-due) 30%, transparent);}
 .co-important b{color:var(--status-due);}
+
+/* ---------- New-tenant onboarding checklist ---------- */
+.onb-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+.onb-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;
+  padding:4px 9px;border-radius:999px;color:var(--status-due);background:var(--status-due-bg);
+  border:1px solid color-mix(in srgb, var(--status-due) 30%, transparent);}
+.onb-chip i{font-style:normal;font-size:12px;}
+.onb-chip.done{color:var(--status-paid);background:var(--status-paid-bg);
+  border-color:color-mix(in srgb, var(--status-paid) 30%, transparent);}
+
+.onb-card{padding:16px;}
+.onb-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
+.onb-ic{flex:none;width:38px;height:38px;border-radius:12px;display:grid;place-items:center;font-size:19px;
+  background:var(--status-due-bg);}
+.onb-titles{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3;}
+.onb-titles b{font-size:15px;font-weight:650;}
+.onb-titles small{font-size:12.5px;color:var(--text-dim);}
+.onb-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.onb-list li{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);
+  font-size:13.5px;color:var(--text);}
+.onb-list li:first-child{border-top:none;}
+.onb-list li.done{color:var(--text-faint);text-decoration:line-through;}
+.onb-li-ic{flex:none;width:22px;text-align:center;font-size:16px;}
+.onb-list li > span:nth-child(2){flex:1;min-width:0;}
+.onb-link{flex:none;font-size:12.5px;font-weight:600;color:var(--accent);text-decoration:none;white-space:nowrap;}
