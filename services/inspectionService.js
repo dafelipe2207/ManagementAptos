@@ -12,6 +12,7 @@ function fromRow(row) {
     roomId: row.room_id,
     tenantId: row.tenant_id,
     type: row.type, // 'move_in' | 'move_out'
+    area: row.area || null, // 'bedroom' | 'bathroom' | 'kitchen' | 'common' | null (older rows)
     photoPaths: Array.isArray(row.photo_paths) ? row.photo_paths : [],
     note: row.note || '',
     uploadedBy: row.user_id || null, // auth uid of whoever uploaded (the tenant or a staff member)
@@ -25,11 +26,11 @@ export async function getAll() {
   return data.map(fromRow);
 }
 
-export async function create(propertyId, roomId, tenantId, type, photoPaths, note) {
+export async function create(propertyId, roomId, tenantId, type, photoPaths, note, area) {
   const userId = await getCurrentUserId();
   const { data, error } = await supabase.from('inspection_submissions').insert({
     user_id: userId, property_id: propertyId, room_id: roomId, tenant_id: tenantId,
-    type: type, photo_paths: photoPaths || [], note: note || null
+    type: type, photo_paths: photoPaths || [], note: note || null, area: area || null
   }).select().single();
   if (error) throw error;
   return fromRow(data);

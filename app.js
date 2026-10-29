@@ -33,7 +33,7 @@ import * as auditService from './services/auditService.js?v=3';
 import * as recurringBillService from './services/recurringBillService.js?v=3';
 import * as cleaningService from './services/cleaningService.js?v=3';
 import * as trashService from './services/trashService.js';
-import * as inspectionService from './services/inspectionService.js?v=3';
+import * as inspectionService from './services/inspectionService.js?v=4';
 import { weeklyDutyService, binDutyService } from './services/dutyService.js?v=1';
 import * as binOutTaskService from './services/binOutTaskService.js?v=5';
 import * as moveOutSettlementService from './services/moveOutSettlementService.js?v=2';
@@ -1768,13 +1768,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   var ONBOARDING_STEPS_META = [
     { key:'rent', icon:'💳', label:'First rent payment' },
     { key:'bond', icon:'🔐', label:'Bond paid in full' },
-    { key:'photos', icon:'📸', label:'Move-in photos uploaded' }
+    { key:'photos', icon:'📸', label:'Move-in photos — all areas' }
   ];
   function tenantOnboardingSteps(t){
     var bond = bondOf(t.id);
     var rentDone = paymentRecords.some(function(p){ return p.tenantId === t.id; });
     var bondDone = !!bond && bond.amountRequired > 0 && bond.amountPaid >= bond.amountRequired - 0.004;
-    var photosDone = inspectionSubmissionsFor(t.id, 'move_in').some(function(s){ return (s.photoPaths||[]).length > 0; });
+    var moveInPhotos = inspectionSubmissionsFor(t.id, 'move_in');
+    var photosDone = INSPECTION_AREAS.every(function(a){ return moveInPhotos.some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
     var done = { rent:rentDone, bond:bondDone, photos:photosDone };
     return ONBOARDING_STEPS_META.map(function(m){ return { key:m.key, icon:m.icon, label:m.label, done: done[m.key] }; });
   }
@@ -9755,6 +9756,22 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       if (tenants[cs].rentAmount > 0) await notifyCheckoutSteps(tenants[cs]);
     }
 
+    // Move-in photos reminder: once, when 2 days or fewer are left in the 5-day window and they
+    // haven't finished all four areas yet.
+    for (var mp=0; mp<tenants.length; mp++){
+      var mpt = tenants[mp];
+      if (mpt.rentAmount <= 0 || !mpt.authUserId || !mpt.moveInDate) continue;
+      var mpDaysLeft = moveInPhotosDaysLeft(mpt);
+      if (mpDaysLeft == null || mpDaysLeft < 0 || mpDaysLeft > 2) continue;
+      var mpDone = INSPECTION_AREAS.every(function(a){ return inspectionSubmissionsFor(mpt.id, 'move_in').some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
+      if (mpDone) continue;
+      await notificationService.notifyOnce(mpt.authUserId, 'moveinphotos-reminder:' + mpt.id,
+        'Your move-in photos window is closing',
+        (mpDaysLeft === 0 ? 'Today is your last day' : mpDaysLeft + ' day' + (mpDaysLeft===1?'':'s') + ' left') +
+          ' to upload your move-in photos (bedroom, bathroom, kitchen and the dining/common area). Go to Inspection in the app.',
+        'tenants', mpt.id, { category:'check_in', propertyId:mpt.propertyId, tenantId:mpt.id, createdByProfileId: createdByProfileId });
+    }
+
     // Check-out: 7 days before the move-out date, for tenants who haven't moved out yet.
     for (var i=0; i<tenants.length; i++){
       var t = tenants[i];
@@ -14354,6 +14371,31 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
 
   /* ============ Inspection: move-in / move-out condition photos ============ */
   var INSPECTION_TYPE_LABEL = { move_in:'Move-in', move_out:'Move-out' };
+  /** The four areas every tenant (and staff) photographs, move-in and move-out alike — shown as
+   *  their own module on the Inspection page, each with its own "Add photos" button. `hint`
+   *  fills the composer's instruction line (#phc-hint) for that area. Older rows saved before
+   *  this existed have area=null and still show, grouped as "General". */
+  var INSPECTION_AREAS = [
+    { key:'bedroom', icon:'🛏️', label:'Bedroom', hint:'Photograph every wall, the floor, the window, the bed, wardrobe and desk — and close-ups of any marks, stains or damage.' },
+    { key:'bathroom', icon:'🚿', label:'Bathroom', hint:'Shower/bath, toilet, sink, walls and floor — and close-ups of any marks or damage. Skip this one if your room doesn\'t have a private bathroom.' },
+    { key:'kitchen', icon:'🍳', label:'Kitchen', hint:'Your fridge shelf, your drawers and cupboard space, and the general state of the kitchen.' },
+    { key:'common', icon:'🍽️', label:'Dining / common area', hint:'The dining table, lounge and any other area you share with housemates.' }
+  ];
+  function inspectionAreaMeta(key){ return INSPECTION_AREAS.filter(function(a){ return a.key===key; })[0] || null; }
+  function inspectionAreaLabel(key){ var m = inspectionAreaMeta(key); return m ? m.icon+' '+m.label : (key ? key : ''); }
+  /** Move-in photos only: tenants get MOVE_IN_PHOTOS_WINDOW_DAYS from their move-in date to
+   *  upload them. Staff have no deadline — they may need to add evidence any time. */
+  var MOVE_IN_PHOTOS_WINDOW_DAYS = 5;
+  function moveInPhotosDeadline(t){ return t && t.moveInDate ? stepDateIso(t.moveInDate, MOVE_IN_PHOTOS_WINDOW_DAYS) : null; }
+  function moveInPhotosDaysLeft(t){ var d = moveInPhotosDeadline(t); return d ? daysBetween(TODAY, d) : null; }
+  function moveInPhotosWindowClosed(t){ var d = moveInPhotosDaysLeft(t); return d != null && d < 0; }
+  /** Whether `role` (staff or a tenant looking at their own record) may still add move-in
+   *  photos right now — staff always can; a tenant only within the 5-day window. */
+  function canAddInspectionPhotosNow(t, type){
+    if (isStaff()) return true;
+    if (type !== 'move_in') return true;
+    return !moveInPhotosWindowClosed(t);
+  }
   function inspectionSubmissionsFor(tenantId, type){
     return inspectionSubmissions.filter(function(s){ return s.tenantId===tenantId && s.type===type; });
   }
@@ -14518,9 +14560,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     ordered.forEach(function(s){
       var day = (s.createdAt||'').slice(0,10);
       var who = inspectionUploader(s);
-      var key = day + '|' + who.label;
+      var area = s.area || null;
+      var key = day + '|' + who.label + '|' + (area || '');
       var g = byDay.length && byDay[byDay.length-1].key === key ? byDay[byDay.length-1] : null;
-      if (!g){ g = { key: key, day: day, who: who, subs: [] }; byDay.push(g); }
+      if (!g){ g = { key: key, day: day, who: who, area: area, subs: [] }; byDay.push(g); }
       g.subs.push(s);
     });
     var idx = 0;
@@ -14537,13 +14580,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           var more = (j === INSPECTION_GRID_COLLAPSE - 1 && count > INSPECTION_GRID_COLLAPSE)
             ? '<span class="ph-more" aria-hidden="true">+'+(count - INSPECTION_GRID_COLLAPSE)+'</span>' : '';
           tiles += '<button type="button" class="ph-tile'+hiddenCls+(more?' has-more':'')+(deletable?' can-delete':'')+'" data-sub="'+s.id+'" data-path="'+esc(path)+'" onclick="inspectionTileTap(this)" aria-label="'+esc(label)+' photo '+(i+1)+' of '+total+'">'+
-            '<img class="lazy-thumb ph-img" data-noclick="1" data-bucket="inspection-photos" data-path="'+esc(path)+'" data-thumb="'+esc(storageService.thumbPathFor(path))+'" data-group="'+groupId+'" data-index="'+i+'" data-caption="'+esc(label + ' · ' + fullDate(g.day) + (g.who.label ? ' · ' + g.who.label : ''))+'" alt="" draggable="false" />'+
+            '<img class="lazy-thumb ph-img" data-noclick="1" data-bucket="inspection-photos" data-path="'+esc(path)+'" data-thumb="'+esc(storageService.thumbPathFor(path))+'" data-group="'+groupId+'" data-index="'+i+'" data-caption="'+esc(label + (g.area ? ' · ' + inspectionAreaLabel(g.area).replace(/^\S+\s/,'') : '') + ' · ' + fullDate(g.day) + (g.who.label ? ' · ' + g.who.label : ''))+'" alt="" draggable="false" />'+
             '<span class="ph-check" aria-hidden="true"></span>'+more+
           '</button>';
         });
       });
       var whoHtml = g.who.label ? '<span class="ph-who'+(g.who.byTenant ? ' is-tenant' : ' is-manager')+'">'+esc(g.who.label)+'</span>' : '';
-      return '<div class="ph-day"><div class="ph-day-head"><span>'+fullDate(g.day)+whoHtml+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
+      var areaHtml = g.area ? '<span class="ph-area">'+inspectionAreaLabel(g.area)+'</span>' : '';
+      return '<div class="ph-day"><div class="ph-day-head"><span>'+areaHtml+fullDate(g.day)+whoHtml+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
         '<div class="ph-grid">'+tiles+'</div></div>';
     }).join('');
   }
@@ -14874,15 +14918,34 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '</div>'+
       '<button class="mini-btn" onclick="saveInspectionComment(\''+tenantId+'\',\''+type+'\')">Add comment</button>';
     var canSelect = photoTotal > 0;
+    var t = tenantOf(tenantId);
+    var allowAdd = canAdd && !isViewer() && canAddInspectionPhotosNow(t, type);
+    // Tenant-facing deadline note: only on move-in, only for the tenant themselves, only while
+    // they still have (or just lost) the window — staff never see it, they have no deadline.
+    var deadlineHtml = '';
+    if (type === 'move_in' && !isStaff() && t && t.moveInDate){
+      var daysLeft = moveInPhotosDaysLeft(t);
+      if (daysLeft != null){
+        deadlineHtml = daysLeft < 0
+          ? '<p class="insp-deadline closed">⌛ The '+MOVE_IN_PHOTOS_WINDOW_DAYS+'-day window to upload move-in photos has closed. Contact your administrator if you still need to add some.</p>'
+          : '<p class="insp-deadline'+(daysLeft<=1?' urgent':'')+'">⏳ '+(daysLeft===0?'Today is your last day':'You have '+daysLeft+' day'+(daysLeft===1?'':'s')+' left')+' to upload move-in photos.</p>';
+      }
+    }
+    var areasHtml = '<div class="insp-areas">'+INSPECTION_AREAS.map(function(a){
+      var done = subs.some(function(s){ return s.area === a.key; });
+      var go = "openInspectionSubmitModal('"+tenantId+"','"+type+"','"+a.key+"')";
+      return '<button type="button" class="area-chip'+(done?' done':'')+(allowAdd?'':' no-add')+'" '+(allowAdd?'onclick="'+go+'"':'disabled')+' title="'+esc(a.hint)+'">'+
+        '<i>'+(done?'✓':a.icon)+'</i>'+esc(a.label)+(allowAdd?(done?' · Add more':' · Add'):'')+'</button>';
+    }).join('')+'</div>';
     return '<div class="card insp-photos" style="margin-bottom:10px;" data-tenant="'+tenantId+'" data-type="'+type+'">'+
       '<div class="detail-head insp-photos-head" style="margin-top:0;align-items:center;">'+
         '<h2 style="margin:0;font-size:14px;">'+INSPECTION_TYPE_LABEL[type]+' photos'+(photoTotal ? ' <span class="ph-total">'+photoTotal+'</span>' : '')+'</h2>'+
         '<div class="insp-photos-actions">'+
           (canSelect ? '<button class="mini-btn ph-btn-evidence" onclick="shareInspectionEvidence(\''+tenantId+'\',\''+type+'\', this)">Share evidence</button>' : '')+
           (canSelect ? '<button class="mini-btn ph-btn-select" onclick="inspectionToggleSelect(this)">Select</button><button class="mini-btn ph-btn-done" onclick="inspectionToggleSelect(this)">Done</button>' : '')+
-          (canAdd && !isViewer() ? '<button class="mini-btn primary ph-btn-add" onclick="openInspectionSubmitModal(\''+tenantId+'\',\''+type+'\')">'+(subs.length?'Add more':'Add photos')+'</button>' : '')+
         '</div>'+
       '</div>'+
+      deadlineHtml+(canAdd ? areasHtml : '')+
       (canSelect ? '<div class="ph-selbar"><span class="ph-selcount">Tap photos to select them</span>'+
         '<button class="mini-btn ph-sel-all" onclick="inspectionSelectAll(this)">Select all</button>'+
         '<button class="mini-btn ph-sel-download" disabled onclick="inspectionDownloadSelected(this)">Download</button>'+
@@ -15287,7 +15350,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    * ~30 KB thumbnail for grids, then up to 3 upload in parallel with a progress ring per tile.
    * A failed photo keeps its tile with a retry badge; the ones that made it are never re-sent. */
   var PHC_MAX_DIM = 2560, PHC_THUMB_DIM = 480, PHC_PARALLEL = 3, PHC_MAX_FILES = 80;
-  var phc = { tenantId:null, type:null, items:[], seq:0, busy:false, dropBound:false };
+  var phc = { tenantId:null, type:null, area:null, items:[], seq:0, busy:false, dropBound:false };
   // Kept under the old names too — other screens (welcome guide) call openInspectionSubmitModal.
   var inspectionSubmitTenantId = null, inspectionSubmitType = null;
 
@@ -15335,11 +15398,19 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     } finally { decoded.close(); }
   }
 
-  function openInspectionSubmitModal(tenantId, type){
+  function openInspectionSubmitModal(tenantId, type, area){
+    var t = tenantOf(tenantId);
+    if (!canAddInspectionPhotosNow(t, type)){
+      showToast('The '+MOVE_IN_PHOTOS_WINDOW_DAYS+'-day window to upload move-in photos has closed. Contact your administrator.', 'error');
+      return;
+    }
     phcReset();
     phc.tenantId = inspectionSubmitTenantId = tenantId;
     phc.type = inspectionSubmitType = type;
-    document.getElementById('inspection-submit-title').textContent = (INSPECTION_TYPE_LABEL[type]||'') + ' photos';
+    phc.area = area || null;
+    var areaMeta = inspectionAreaMeta(phc.area);
+    document.getElementById('inspection-submit-title').textContent = (INSPECTION_TYPE_LABEL[type]||'') + ' photos' + (areaMeta ? ' — ' + areaMeta.label : '');
+    document.getElementById('phc-hint').textContent = areaMeta ? areaMeta.hint : 'Photograph every wall, the floor, windows, furniture and anything already damaged. You can add as many photos as you like.';
     document.getElementById('inspection-submit-note').value = '';
     document.getElementById('inspection-submit-modal-error').hidden = true;
     phcBindDrop();
@@ -15363,7 +15434,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     }
     document.getElementById('inspection-submit-modal').hidden = true;
     phcReset();
-    phc.tenantId = phc.type = inspectionSubmitTenantId = inspectionSubmitType = null;
+    phc.tenantId = phc.type = phc.area = inspectionSubmitTenantId = inspectionSubmitType = null;
   }
   window.closeInspectionSubmitModal = closeInspectionSubmitModal;
 
@@ -15506,7 +15577,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     try {
       var note = document.getElementById('inspection-submit-note').value.trim();
       var paths = phc.items.map(function(it){ return it.path; });
-      var created = await inspectionService.create(t.propertyId, t.roomId, t.id, phc.type, paths, note);
+      var created = await inspectionService.create(t.propertyId, t.roomId, t.id, phc.type, paths, note, phc.area);
       inspectionSubmissions.push(created);
       phc.busy = false;
       var n = paths.length, tenantId = t.id;
@@ -16355,16 +16426,18 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     }
     var photos = inspectionSubmissionsFor(t.id, 'move_in');
     var nPhotos = photos.reduce(function(n, sub){ return n + ((sub.photoPaths || []).length); }, 0);
+    var areasDone = INSPECTION_AREAS.filter(function(a){ return photos.some(function(s){ return s.area===a.key; }); }).length;
+    var daysLeft = moveInPhotosDaysLeft(t);
     return '<div class="wg-hero">📸</div><h2 class="wg-title">Move-in photos</h2>'+
       '<p class="wg-lead">Photos of your room as you found it protect your bond: anything already there won\'t be charged to you when you move out.</p>'+
       '<ol class="wg-steps">'+
-        '<li>Tap <b>Upload move-in photos</b> below (or go to <b>More › Inspection</b>).</li>'+
-        '<li>Take clear photos of <b>each wall, the floor, the window, the bed, wardrobe and desk</b> — and close-ups of any marks, stains or damage.</li>'+
+        '<li>Tap <b>Go to Inspection</b> below (or <b>More › Inspection</b>).</li>'+
+        '<li>Upload photos for each of the four areas: '+INSPECTION_AREAS.map(function(a){ return a.icon+' '+a.label; }).join(', ')+'.</li>'+
         '<li>Add a short note if something needs explaining, then tap <b>Submit</b>.</li>'+
-        '<li>Try to do it in your <b>first few days</b> — you can add more photos later.</li>'+
+        '<li>You have <b>'+MOVE_IN_PHOTOS_WINDOW_DAYS+' days from your move-in date</b> to do this — '+(daysLeft==null?'': daysLeft<0 ? 'that window has closed, contact your administrator' : daysLeft===0 ? 'today is your last day' : daysLeft+' day'+(daysLeft===1?'':'s')+' left')+'.</li>'+
       '</ol>'+
-      (nPhotos ? '<div class="wg-done">✅ You\'ve already uploaded '+nPhotos+' photo'+(nPhotos===1?'':'s')+'. You can add more any time.</div>' : '')+
-      (t.roomId ? '<button type="button" class="wg-cta primary" onclick="welcomeUploadPhotos()">📷 Upload move-in photos'+(nPhotos?' (add more)':'')+'</button>' : '');
+      '<div class="wg-note">'+areasDone+' of '+INSPECTION_AREAS.length+' areas done'+(nPhotos?' · '+nPhotos+' photo'+(nPhotos===1?'':'s')+' uploaded':'')+'.</div>'+
+      (t.roomId ? '<button type="button" class="wg-cta primary" onclick="welcomeUploadPhotos()">📷 Go to Inspection</button>' : '');
   }
   function renderWelcomeGuide(){
     var t = myTenantRecord(); var box = document.getElementById('welcome-modal-body'); if (!t || !box) return;
@@ -16403,7 +16476,6 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var t = myTenantRecord(); if (!t) return;
     closeWelcomeGuide(true);
     location.hash = '#/inspection';
-    setTimeout(function(){ openInspectionSubmitModal(t.id, 'move_in'); }, 350);
   };
   /** Dashboard: pop the guide once per session for a tenant who hasn't seen it yet. */
   function maybeAutoOpenWelcome(t){

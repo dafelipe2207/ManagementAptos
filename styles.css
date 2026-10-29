@@ -3082,3 +3082,20 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .onb-li-ic{flex:none;width:22px;text-align:center;font-size:16px;}
 .onb-list li > span:nth-child(2){flex:1;min-width:0;}
 .onb-link{flex:none;font-size:12.5px;font-weight:600;color:var(--accent);text-decoration:none;white-space:nowrap;}
+
+/* ---------- Inspection: area modules (move-in/move-out photos by bedroom/bathroom/kitchen/common) ---------- */
+.insp-areas{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 12px;}
+.area-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;
+  padding:7px 12px;border-radius:999px;cursor:pointer;color:var(--status-due);background:var(--status-due-bg);
+  border:1px solid color-mix(in srgb, var(--status-due) 30%, transparent);}
+.area-chip i{font-style:normal;font-size:13px;}
+.area-chip.done{color:var(--status-paid);background:var(--status-paid-bg);
+  border-color:color-mix(in srgb, var(--status-paid) 30%, transparent);}
+.area-chip.no-add{cursor:default;opacity:.85;}
+.area-chip:disabled{cursor:not-allowed;}
+.insp-deadline{margin:0 0 10px;font-size:12.5px;font-weight:600;color:var(--status-due);
+  background:var(--status-due-bg);border-radius:10px;padding:8px 12px;}
+.insp-deadline.urgent{color:var(--status-overdue);background:var(--status-overdue-bg);}
+.insp-deadline.closed{color:var(--text-dim);background:var(--bg-elevated);border:1px solid var(--border);}
+.ph-area{display:inline-block;margin-right:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:650;
+  background:var(--accent-bg);color:var(--accent);vertical-align:1px;}
