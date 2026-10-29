@@ -4410,6 +4410,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           var saved = await tenantService.update(tenantId, Object.assign({}, tenantToDraft(t), { actualMoveOutDate: dateInput }));
           Object.assign(t, saved);
         }
+        var staffSetDate = !isTenantRole();
       } catch(err){
         showToast('Could not save the move-out date. ' + friendlyErrorMessage(err), 'error');
         return;
@@ -4421,6 +4422,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       moveOutSettlements.push(row);
       showToast('Move-out process started.', 'success');
       render();
+      if (typeof staffSetDate !== 'undefined' && staffSetDate) afterStaffSetMoveOutDate(t);
     } catch(err){
       // 23505 = unique violation on move_out_settlements_one_active_per_tenant: someone else
       // (staff or the tenant) started one between our in-memory check above and this insert.
@@ -4467,6 +4469,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       recomputeRentCharges();
       showToast('Move-out date changed to ' + fullDate(dateInput) + '.', 'success');
       render();
+      afterStaffSetMoveOutDate(t);
     } catch(err){
       showToast('Could not change the move-out date. ' + friendlyErrorMessage(err), 'error');
     }
@@ -4674,6 +4677,91 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   window.roomAdCopy = roomAdCopy;
   window.roomAdShare = roomAdShare;
 
+  /* ============ Check-out requirements ("move-out steps") ============
+   * Sent to the tenant as soon as a move-out date exists — whoever set it: in the app (a
+   * notification; the database function sends it when the tenant gives notice themselves) and,
+   * from the admin side, by WhatsApp. The same list also shows on the tenant's dashboard. */
+  var CHECKOUT_TIME = '12:00 PM';
+  var CHECKOUT_INTRO = 'When moving out, tenants must ensure that the room and all assigned areas are left clean and tidy, in the same condition as they were provided.';
+  var CHECKOUT_REQUIREMENTS = [
+    { icon:'🛏️', title:'Bedroom', text:'The room must be thoroughly cleaned before departure.' },
+    { icon:'🍳', title:'Kitchen', text:'All assigned drawers and the tenant’s designated space in the fridge must be cleaned and left empty.' },
+    { icon:'🚿', title:'Private bathroom', text:'If the room includes a private bathroom, it must be thoroughly cleaned and left in the same condition as when the tenant moved in.' },
+    { icon:'🧺', title:'Bed linen', text:'All provided bed linen must be washed before departure.' },
+    { icon:'📸', title:'Move-out photos', text:'Once the room is clean, take photos of the room and your assigned areas and upload them in the app (Inspection → Move-out photos) before you leave.' },
+    { icon:'🔑', title:'Keys', text:'All keys must be left on the bedside table.' },
+    { icon:'💳', title:'Rent and bills', text:'All outstanding rent and utility bills must be paid in full before moving out.' }
+  ];
+  var CHECKOUT_IMPORTANT = 'If any of these requirements are not met, an additional cleaning or service charge may apply, where appropriate and permitted under the applicable agreement and tenancy laws. Any applicable charge will depend on the work required to address the issue.';
+  var CHECKOUT_CLOSING = 'Please ensure that all requirements are completed before vacating the property to avoid additional charges.';
+  function tenantMoveOutDate(t){ return t ? (t.actualMoveOutDate || t.expectedMoveOutDate || null) : null; }
+  /** The requirements as text. `wa`: WhatsApp formatting (*bold*) and a greeting. */
+  function checkoutStepsText(t, date, wa){
+    var b = function(s){ return wa ? '*' + s + '*' : s; };
+    var first = ((t && t.fullName) || '').split(' ')[0];
+    var lines = [];
+    if (wa) lines.push('Hi ' + (first || 'there') + ',', '');
+    if (date) lines.push('Your move-out date is ' + b(fullDate(date)) + ' — check-out by ' + CHECKOUT_TIME + '.', '');
+    lines.push(b('Tenant Check-out Requirements'), CHECKOUT_INTRO, '');
+    CHECKOUT_REQUIREMENTS.forEach(function(r){ lines.push('• ' + b(r.title + ':') + ' ' + r.text); });
+    lines.push('', b('Important:') + ' ' + CHECKOUT_IMPORTANT, CHECKOUT_CLOSING);
+    if (wa) lines.push('', 'You can also see this list in the app, on your dashboard. Thank you!');
+    return lines.join('\n');
+  }
+  /** In-app notification with the steps — once per tenant per move-out date. */
+  function notifyCheckoutSteps(t){
+    var date = tenantMoveOutDate(t);
+    if (!t || !t.authUserId || !date || date < TODAY || tenantHasMovedOut(t)) return Promise.resolve();
+    return notificationService.notifyOnce(t.authUserId, 'checkout-steps:' + t.id + ':' + date,
+      'Your move-out steps', checkoutStepsText(t, date, false), 'tenants', t.id,
+      { category:'check_out', propertyId:t.propertyId, tenantId:t.id, createdByProfileId: currentProfile ? currentProfile.id : null })
+      .catch(function(e){ console.error('checkout steps notification', e); });
+  }
+  /** Staff: open the tenant's WhatsApp chat with the steps typed in (or copy them without a phone). */
+  function sendCheckoutStepsWhatsApp(tenantId){
+    var t = tenantOf(tenantId); if (!t) return;
+    var date = tenantMoveOutDate(t);
+    if (!date){ showToast('Set a move-out date first.', 'error'); return; }
+    notifyCheckoutSteps(t);
+    var message = checkoutStepsText(t, date, true);
+    var url = waChatUrl(t.phone, message);
+    if (url){ openWhatsApp(url); return; }
+    copyTextReliably(message).then(function(ok){
+      showToast(ok ? 'No phone number on file — the check-out steps were copied, paste them in a chat.' : 'No phone number on file for this tenant.', ok ? 'info' : 'error');
+    });
+  }
+  window.sendCheckoutStepsWhatsApp = sendCheckoutStepsWhatsApp;
+  /** After staff set or change a move-out date: tell the tenant in the app, then offer WhatsApp. */
+  function afterStaffSetMoveOutDate(t){
+    if (!t || isTenantRole()) return;
+    notifyCheckoutSteps(t);
+    var date = tenantMoveOutDate(t);
+    if (!date || date < TODAY) return;
+    setTimeout(function(){
+      if (anyModalOpen()) return;
+      openConfirmModal('Send the check-out steps to ' + t.fullName + '?',
+        (t.authUserId ? 'They also got them in the app. ' : '') + 'This opens WhatsApp with the message ready:\n\n' + checkoutStepsText(t, date, false),
+        function(){ sendCheckoutStepsWhatsApp(t.id); },
+        { confirmLabel: phoneDigitsForWhatsApp(t.phone) ? 'Send by WhatsApp' : 'Copy message' });
+    }, 80);
+  }
+  /** Tenant dashboard: the checklist, from the moment there's a move-out date. */
+  function tenantCheckoutStepsCardHtml(t){
+    var date = tenantMoveOutDate(t);
+    if (!date || date < TODAY || tenantHasMovedOut(t)) return '';
+    var d = daysBetween(TODAY, date);
+    return '<details class="card co-card"'+(d <= 14 ? ' open' : '')+'><summary class="co-head">'+
+      '<span class="co-ic" aria-hidden="true">📦</span><span class="co-titles"><b>Your move-out checklist</b>'+
+      '<small>Leaving '+fullDate(date)+' · check-out by '+CHECKOUT_TIME+'</small></span><span class="co-chev" aria-hidden="true">›</span></summary>'+
+      '<p class="co-intro">'+esc(CHECKOUT_INTRO)+'</p>'+
+      '<ul class="co-list">'+CHECKOUT_REQUIREMENTS.map(function(r){
+        var photo = r.title === 'Move-out photos';
+        return '<li><span class="co-li-ic" aria-hidden="true">'+r.icon+'</span><span><b>'+esc(r.title)+'</b>'+esc(r.text)+
+          (photo ? ' <a class="co-link" href="#/inspection">Upload photos ›</a>' : '')+'</span></li>';
+      }).join('')+'</ul>'+
+      '<div class="co-important"><b>Important:</b> '+esc(CHECKOUT_IMPORTANT)+'<br>'+esc(CHECKOUT_CLOSING)+'</div></details>';
+  }
+
   function moveOutAdminActionsHtml(t, stop){
     var s = moveOutSettlementOf(t.id);
     if (isTenantRole()) return '';
@@ -4691,6 +4779,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<button type="button" class="mini-btn" title="Write the ad to find the next tenant for this room" onclick="'+st+'openRoomAdModal(\''+t.id+'\')">Room ad</button>'+
       '<button type="button" class="mini-btn" title="Change move-out date" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Date</button>'+
       '<button type="button" class="mini-btn soft-danger" title="Cancel move-out" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel</button>'+
+      ((t.actualMoveOutDate || t.expectedMoveOutDate)
+        ? '<button type="button" class="mini-btn" title="Send the check-out requirements by WhatsApp" onclick="'+st+'sendCheckoutStepsWhatsApp(\''+t.id+'\')">📋 Steps</button>' : '')+
       ((!s || s.status === 'in_progress') && (t.actualMoveOutDate || t.expectedMoveOutDate)
         ? '<button type="button" class="mini-btn icon-label-btn" title="Send the move-out estimate/settlement" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Estimate</button>' : '')+
       '</div>';
@@ -9602,6 +9692,11 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       );
     }
 
+    // Check-out requirements: as soon as a tenant has an upcoming move-out date (once per date).
+    for (var cs=0; cs<tenants.length; cs++){
+      if (tenants[cs].rentAmount > 0) await notifyCheckoutSteps(tenants[cs]);
+    }
+
     // Check-out: 7 days before the move-out date, for tenants who haven't moved out yet.
     for (var i=0; i<tenants.length; i++){
       var t = tenants[i];
@@ -11523,7 +11618,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         return '<div class="notif-row'+(n.isRead?' read':'')+'"'+clickAttr+' style="padding:8px 0;'+(clickAttr?'cursor:pointer;':'')+'">'+
           '<span style="min-width:0;flex:1;"><div style="font-weight:600;font-size:13.5px;">'+meta.emoji+' '+esc(n.title)+'</div>'+
           '<div class="meta" style="font-size:11px;color:var(--text-faint);">'+meta.label+'</div>'+
-          (n.body ? '<div class="meta" style="font-size:12px;color:var(--text-dim);">'+esc(n.body)+'</div>' : '')+
+          (n.body ? '<div class="meta" style="font-size:12px;color:var(--text-dim);white-space:pre-line;">'+esc(n.body)+'</div>' : '')+
           '<div class="meta" style="font-size:11px;color:var(--text-faint);">'+shortDate((n.createdAt||'').slice(0,10))+'</div></span>'+
           (n.isRead ? '' : '<button class="notif-dot-btn" title="Mark as read" onclick="event.stopPropagation();markDbNotifRead(\''+n.id+'\')"><span class="notif-dot unread"></span></button>')+
           '</div>';
@@ -16294,6 +16389,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<div class="field-row"><span class="k">Outstanding bill balance</span><span class="v">'+money(outstanding)+'</span></div>'+
       outstandingBreakdown+
       '</div>'+
+      tenantCheckoutStepsCardHtml(t) +
       tenantMoveOutEstimateHtml(t) +
       wifiCardHtml(p) +
       welcomeGuideCardHtml(t) +
@@ -17724,8 +17820,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     try {
       var tenantObj;
       var isNewTenant = !tenantModalEditId;
+      var prevMoveOut = null;
       if (tenantModalEditId){
         tenantObj = tenantOf(tenantModalEditId);
+        prevMoveOut = tenantMoveOutDate(tenantObj);
         var saved = await tenantService.update(tenantModalEditId, draft);
         // wipe optional fields the reference app deletes when cleared, then reapply what came back
         delete tenantObj.phone; delete tenantObj.email; delete tenantObj.expectedMoveOutDate;
@@ -17778,6 +17876,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       render();
       // A brand-new tenant without a login: go straight to creating and sending it.
       if (isNewTenant && !tenantObj.authUserId && canManageTenantLogins()) openTenantLoginSheet(tenantObj.id, { afterSave: true });
+      else if (!isNewTenant && tenantMoveOutDate(tenantObj) && tenantMoveOutDate(tenantObj) !== prevMoveOut) afterStaffSetMoveOutDate(tenantObj);
     } catch(err){
       errorEl.textContent = 'Could not save this tenant. ' + friendlyErrorMessage(err);
       errorEl.hidden = false;

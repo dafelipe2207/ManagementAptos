@@ -3033,3 +3033,27 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .charge-banner-p{margin:6px 0 10px;font-size:13.5px;color:var(--text);}
 .charge-row .name .bc-chip{font-size:11px;margin-left:4px;vertical-align:middle;}
 #bond-deposit-modal{z-index:1100;}
+
+/* ---------- Tenant: move-out checklist ---------- */
+.nt-body{white-space:pre-line;}
+#confirm-modal-body{max-height:55vh;overflow-y:auto;}
+.co-card{padding:0;overflow:hidden;}
+.co-card > summary{list-style:none;}
+.co-card > summary::-webkit-details-marker{display:none;}
+.co-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;}
+.co-ic{flex:none;width:38px;height:38px;border-radius:12px;display:grid;place-items:center;font-size:19px;
+  background:var(--status-move-bg);}
+.co-titles{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3;}
+.co-titles b{font-size:15px;font-weight:650;}
+.co-titles small{font-size:12.5px;color:var(--text-dim);}
+.co-chev{flex:none;font-size:20px;color:var(--text-faint);transition:transform .15s ease;}
+.co-card[open] .co-chev{transform:rotate(90deg);}
+.co-intro{margin:0 16px 10px;font-size:13.5px;color:var(--text-dim);line-height:1.45;}
+.co-list{list-style:none;margin:0;padding:0 16px;display:flex;flex-direction:column;}
+.co-list li{display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--border);font-size:13.5px;line-height:1.45;color:var(--text-dim);}
+.co-list li b{display:block;color:var(--text);font-weight:620;font-size:14px;}
+.co-li-ic{flex:none;width:26px;text-align:center;font-size:17px;line-height:1.4;}
+.co-link{font-weight:600;color:var(--accent);text-decoration:none;white-space:nowrap;}
+.co-important{margin:6px 16px 16px;padding:12px 14px;border-radius:12px;font-size:12.8px;line-height:1.5;color:var(--text);
+  background:var(--status-due-bg);border:1px solid color-mix(in srgb, var(--status-due) 30%, transparent);}
+.co-important b{color:var(--status-due);}
