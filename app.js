@@ -3346,7 +3346,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    *  rent) to keep the room, and the rest when moving in. Each payment keeps its date, how it was
    *  paid (transfer / cash), a note and an optional receipt; the bond's "paid" is their sum. */
   var bondDepositCtx = null;
-  function openBondDepositModal(tenantId, depositId){
+  function openBondDepositModal(tenantId, depositId, opts){
     var t = tenantOf(tenantId); if (!t) return;
     var bond = bondOf(tenantId);
     var dep = depositId && bond ? (bond.deposits || []).find(function(d){ return d.id === depositId; }) : null;
@@ -3364,10 +3364,18 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       document.body.appendChild(m);
     }
     var needRequired = !bond || !bond.amountRequired;
+    var presetRequired = opts && opts.required > 0 ? round2(opts.required) : null;
+    // A bond saved before payments were itemised (only a total): ask what to do with that total.
+    var legacyTotal = !dep && bond && !(bond.deposits || []).length && bond.amountPaid > 0.004 ? round2(bond.amountPaid) : 0;
+    if (legacyTotal){ amount = weekly || ''; note = 'Holding deposit'; }
     m.innerHTML = '<div class="card modal-card" style="max-width:420px;">'+
       '<h2 class="modal-title">'+(dep ? 'Edit bond payment' : 'Bond payment')+'</h2>'+
       '<p class="modal-sub">'+esc(t.fullName)+(bond && bond.amountRequired ? ' · bond '+money(bond.amountRequired)+' · paid '+money(paidSoFar)+(left > 0 ? ' · missing '+money(left) : '') : '')+'</p>'+
-      (needRequired ? '<div class="form-row"><label for="bd-dep-required">Total bond to pay</label><input id="bd-dep-required" type="number" min="0" step="0.01" inputmode="decimal" value="'+(weekly ? round2(weekly * 4) : '')+'" /></div>' : '')+
+      (needRequired ? '<div class="form-row"><label for="bd-dep-required">Total bond to pay</label><input id="bd-dep-required" type="number" min="0" step="0.01" inputmode="decimal" value="'+(presetRequired || (weekly ? round2(weekly * 4) : ''))+'" /></div>' : '')+
+      (legacyTotal ? '<div class="form-row"><label>'+money(legacyTotal)+' already recorded as a total</label><div class="seg" id="bd-dep-legacy">'+
+        '<button type="button" class="on" data-v="replace" onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\');});this.classList.add(\'on\');">Replace with payments</button>'+
+        '<button type="button" data-v="keep" onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\');});this.classList.add(\'on\');">Keep as earlier payment</button>'+
+        '</div><p class="modal-hint" style="font-size:11.5px;margin:4px 0 0;">Replace: the bond paid becomes the sum of the payments you record one by one.</p></div>' : '')+
       '<div class="form-row"><label for="bd-dep-amount">Amount paid</label><input id="bd-dep-amount" type="number" min="0" step="0.01" inputmode="decimal" value="'+amount+'" /></div>'+
       '<div class="form-row"><label for="bd-dep-date">Date paid</label><input id="bd-dep-date" type="date" value="'+(dep ? (dep.date || '') : TODAY)+'" /></div>'+
       '<div class="form-row"><label>How</label><div class="seg" id="bd-dep-method">'+
@@ -3375,7 +3383,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           return '<button type="button" class="'+(on ? 'on' : '')+'" data-v="'+k+'" onclick="this.parentNode.querySelectorAll(\'button\').forEach(function(b){b.classList.remove(\'on\');});this.classList.add(\'on\');">'+(k === 'cash' ? '💵 Cash' : '🏦 Transfer')+'</button>'; }).join('')+
       '</div></div>'+
       '<div class="form-row"><label for="bd-dep-note">What for</label><input id="bd-dep-note" type="text" maxlength="80" value="'+esc(note)+'" placeholder="e.g. Holding deposit" /></div>'+
-      '<div class="form-row"><label for="bd-dep-file">Receipt (optional)</label><input id="bd-dep-file" type="file" accept="image/*,application/pdf" /></div>'+
+      '<div class="form-row"><label for="bd-dep-file">Photo of the transfer / receipt (optional)</label><input id="bd-dep-file" type="file" accept="image/*,application/pdf" />'+
+        (dep && dep.receiptPath ? '<p class="modal-hint" style="font-size:11.5px;margin:4px 0 0;">📎 Photo attached — <button type="button" class="text-link" style="display:inline;font-size:11.5px;" onclick="viewReceipt(\'receipts\',\''+dep.receiptPath+'\')">view it</button>. Pick a new one to replace it.</p>' : '')+'</div>'+
       '<p class="form-error" id="bd-dep-error" hidden></p>'+
       '<div class="actions-row">'+
         (dep ? '<button type="button" class="mini-btn danger" onclick="deleteBondDeposit()">Delete</button>' : '')+
@@ -3421,7 +3430,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var receiptPath = file ? await storageService.uploadReceipt(refPrefix(t) + 'bond', file) : undefined;
       var deps = (bond && bond.deposits || []).slice();
       // A bond recorded before payments were itemised: keep what was already paid as one line.
-      if (bond && !deps.length && bond.amountPaid > 0.004 && !ctx.depositId)
+      var legSel = document.querySelector('#bd-dep-legacy .on');
+      var keepLegacy = !legSel || legSel.getAttribute('data-v') === 'keep';
+      if (bond && !deps.length && bond.amountPaid > 0.004 && !ctx.depositId && keepLegacy)
         deps.push({ id: 'dep-prev', amount: round2(bond.amountPaid), date: null, method: bond.heldAs || 'transfer', note: 'Paid before (recorded as a total)' });
       if (ctx.depositId){
         deps = deps.map(function(d){ return d.id === ctx.depositId ? Object.assign({}, d, { amount: amount, date: date, method: method, note: note }, receiptPath ? { receiptPath: receiptPath } : {}) : d; });
@@ -3436,6 +3447,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       document.getElementById('bond-deposit-modal').hidden = true;
       var b2 = bondOf(ctx.tenantId), miss = b2 ? round2((b2.amountRequired || 0) - (b2.amountPaid || 0)) : 0;
       showToast('Bond payment saved — ' + (miss > 0.004 ? money(miss) + ' still missing.' : 'bond complete.'), 'success');
+      refreshBondModalPayments();
       render();
     } catch(e){ err.textContent = friendlyErrorMessage(e); err.hidden = false; }
     finally { if (btn){ btn.disabled = false; btn.textContent = 'Save'; } }
@@ -3445,10 +3457,50 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var bond = bondOf(ctx.tenantId); if (!bond) return;
     document.getElementById('bond-deposit-modal').hidden = true;
     openConfirmModal('Delete bond payment', 'Remove this payment from the bond? The bond paid total goes down by its amount.', async function(){
-      try { await writeBondDeposits(ctx.tenantId, (bond.deposits || []).filter(function(d){ return d.id !== ctx.depositId; })); showToast('Bond payment deleted.', 'success'); render(); }
+      try { await writeBondDeposits(ctx.tenantId, (bond.deposits || []).filter(function(d){ return d.id !== ctx.depositId; })); showToast('Bond payment deleted.', 'success'); refreshBondModalPayments(); render(); }
       catch(e){ return { blocked: true, message: friendlyErrorMessage(e) }; }
     }, { danger: true, confirmLabel: 'Delete' });
   }
+  /** "Bond payments" list inside the Edit bond modal: every part the tenant paid (holding deposit,
+   *  balance…) with its date, how, and the photo of the transfer. Amount paid = their sum. */
+  function bondModalPaymentsHtml(tenantId){
+    var bond = bondOf(tenantId);
+    var deps = (bond && bond.deposits || []).slice().sort(function(a,b){ return (a.date || '').localeCompare(b.date || ''); });
+    if (!deps.length){
+      return '<p style="font-size:11.5px;color:var(--text-faint);margin:4px 0 0;">'+
+        (bond && bond.amountPaid > 0.004 ? money(bond.amountPaid)+' recorded as a total, without dates. Add each payment with its date and photo.' : 'No payments recorded yet. Add each one with its date and a photo of the transfer.')+'</p>';
+    }
+    return deps.map(function(d){
+      var rc = d.receiptPath
+        ? '<button type="button" class="rcpt-btn has" style="width:28px;height:28px;" title="View photo" aria-label="View photo" onclick="viewReceipt(\'receipts\',\''+d.receiptPath+'\')">'+RECEIPT_VIEW_ICON+'</button>'
+        : '<span style="font-size:11px;color:var(--text-faint);">No photo</span>';
+      var ed = isViewer() ? '' : '<button type="button" class="text-link bd-x" title="Edit" aria-label="Edit payment" onclick="openBondDepositModal(\''+tenantId+'\',\''+esc(d.id)+'\')">✎</button>';
+      return '<div class="bd-item"><span>'+(d.date ? fullDate(d.date) : 'Date not recorded')+
+        '<small>'+(d.method === 'cash' ? '💵 Cash' : '🏦 Transfer')+(d.note ? ' · '+esc(d.note) : '')+'</small></span>'+
+        '<span class="bd-item-v"><span class="bd-amt pos">+'+money(d.amount || 0)+'</span>'+rc+ed+'</span></div>';
+    }).join('');
+  }
+  /** Keeps the open Edit bond modal in step after a payment is added, changed or deleted. */
+  function refreshBondModalPayments(){
+    var m = document.getElementById('bond-modal');
+    if (!m || m.hidden || !bondModalTenantId) return;
+    var box = document.getElementById('bond-deposit-rows');
+    if (box) box.innerHTML = bondModalPaymentsHtml(bondModalTenantId);
+    var b = bondOf(bondModalTenantId); if (!b) return;
+    var hasDeps = !!(b.deposits && b.deposits.length);
+    var paidEl = document.getElementById('bond-paid');
+    if (hasDeps){ paidEl.value = b.amountPaid; paidEl.readOnly = true; paidEl.title = 'The sum of the bond payments below'; }
+    var reqEl = document.getElementById('bond-required');
+    if (b.amountRequired && !(parseFloat(reqEl.value) > 0)) reqEl.value = b.amountRequired;
+    document.getElementById('bond-status').value = b.status;
+    document.getElementById('bond-modal-title').textContent = 'Edit bond';
+  }
+  function addBondPaymentFromModal(){
+    if (!bondModalTenantId) return;
+    var req = parseFloat(document.getElementById('bond-required').value);
+    openBondDepositModal(bondModalTenantId, null, { required: isFinite(req) ? req : 0 });
+  }
+  window.addBondPaymentFromModal = addBondPaymentFromModal;
   window.openBondDepositModal = openBondDepositModal;
   window.saveBondDeposit = saveBondDeposit;
   window.deleteBondDeposit = deleteBondDeposit;
@@ -17881,7 +17933,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     document.getElementById('bond-required').value = b ? b.amountRequired : '';
     document.getElementById('bond-paid').value = b ? b.amountPaid : 0;
     var paidEl = document.getElementById('bond-paid'), hasDeps = !!(b && b.deposits && b.deposits.length);
-    paidEl.readOnly = hasDeps; paidEl.title = hasDeps ? 'The sum of the bond payments — add or change them from the Bond card' : '';
+    paidEl.readOnly = hasDeps; paidEl.title = hasDeps ? 'The sum of the bond payments below' : '';
+    document.getElementById('bond-deposit-rows').innerHTML = bondModalPaymentsHtml(tenantId);
+    var addPayBtn = document.querySelector('#bond-modal [onclick="addBondPaymentFromModal()"]');
+    if (addPayBtn) addPayBtn.hidden = isViewer();
     document.getElementById('bond-returned').value = b ? b.amountReturned : 0;
     document.getElementById('bond-status').value = b ? b.status : 'pending';
     document.getElementById('bond-held-by').value = b ? (b.heldBy || '') : '';

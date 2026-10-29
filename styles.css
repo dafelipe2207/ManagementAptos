@@ -3032,3 +3032,4 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .charge-banner-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:700;font-size:15px;color:var(--status-due);}
 .charge-banner-p{margin:6px 0 10px;font-size:13.5px;color:var(--text);}
 .charge-row .name .bc-chip{font-size:11px;margin-left:4px;vertical-align:middle;}
+#bond-deposit-modal{z-index:1100;}
