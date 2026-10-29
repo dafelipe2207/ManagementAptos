@@ -1781,10 +1781,19 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   function tenantOnboardingDone(t){ return tenantOnboardingSteps(t).every(function(s){ return s.done; }); }
 
-  /** Admin dashboard: one row per current tenant who hasn't finished onboarding yet, newest
-   *  move-in first. Each step is its own chip — tapping the row goes to that tenant's page. */
+  /** A tenant counts as "new" on the admin dashboard for their first week: moved in less than 7 days ago. */
+  var NEW_TENANT_DAYS = 7;
+  function tenantIsNew(t){
+    if (!t.moveInDate) return false;
+    var days = daysBetween(t.moveInDate, TODAY);
+    return days >= 0 && days < NEW_TENANT_DAYS;
+  }
+
+  /** Admin dashboard: one row per tenant who moved in less than a week ago and hasn't finished
+   *  onboarding yet, newest move-in first. Each step is its own chip — tapping the row goes to that
+   *  tenant's page. */
   function dashboardOnboardingHtml(){
-    var pending = tenants.filter(function(t){ return t.rentAmount > 0 && !tenantHasMovedOut(t) && !tenantOnboardingDone(t); })
+    var pending = tenants.filter(function(t){ return t.rentAmount > 0 && !tenantHasMovedOut(t) && tenantIsNew(t) && !tenantOnboardingDone(t); })
       .sort(function(a,b){ return (b.moveInDate||'').localeCompare(a.moveInDate||''); });
     if (!pending.length) return '';
     var rows = pending.map(function(t){
@@ -1799,7 +1808,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '<div class="onb-chips">'+chips+'</div></div></div>';
     }).join('');
     return '<div class="card needs-card"><h2>📋 New tenants — getting set up <span class="count-pill">'+pending.length+'</span></h2>'+
-      '<p class="modal-hint" style="margin:-4px 0 8px;">Stays here until rent, bond and move-in photos are all done.</p>'+rows+'</div>';
+      '<p class="modal-hint" style="margin:-4px 0 8px;">Moved in within the last week and still missing rent, bond or move-in photos.</p>'+rows+'</div>';
   }
 
   /** Tenant dashboard: the same three steps, as a card with no close/dismiss button — it leaves on
