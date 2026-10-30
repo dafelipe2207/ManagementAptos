@@ -12389,8 +12389,11 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     realEstateInspections.filter(function(i){ return i.propertyId === pid; })
       .sort(function(a, b){ return String(b.date).localeCompare(String(a.date)); })
       .forEach(function(i){ opts.push(['real_estate_inspections:' + i.id, '🏢 Inspección ' + shortDate(i.date), 'Inspecciones']); });
+    // Bills are only offered when the email itself is about an invoice (or already linked to one,
+    // so the current selection never disappears) — otherwise the list is just noise.
+    var c = agencyCaseOf(n), linkedBillId = c && c.billId ? c.billId : null, isBillEmail = agencyEmailIsBill(n);
     var since = new Date(); since.setMonth(since.getMonth() - 6); since = toIsoLocal(since);
-    bills.filter(function(b){ return b.propertyId === pid && String(b.issueDate || b.dueDate || '') >= since; })
+    bills.filter(function(b){ return b.propertyId === pid && (b.id === linkedBillId || (isBillEmail && String(b.issueDate || b.dueDate || '') >= since)); })
       .sort(function(a, b){ return String(b.issueDate || b.dueDate).localeCompare(String(a.issueDate || a.dueDate)); })
       .forEach(function(b){ opts.push(['bills:' + b.id, '🧾 ' + (b.provider || 'Factura') + (b.invoiceNumber ? ' #' + b.invoiceNumber : '') + ' · ' + money(b.amount), 'Facturas']); });
     return opts;
