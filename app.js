@@ -12391,7 +12391,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       .forEach(function(i){ opts.push(['real_estate_inspections:' + i.id, '🏢 Inspección ' + shortDate(i.date), 'Inspecciones']); });
     // Bills are only offered when the email itself is about an invoice (or already linked to one,
     // so the current selection never disappears) — otherwise the list is just noise.
-    var c = agencyCaseOf(n), linkedBillId = c && c.billId ? c.billId : null, isBillEmail = agencyEmailIsBill(n);
+    // "Is it an invoice?" is decided by the email's subject (title), not by the case classification.
+    var c = agencyCaseOf(n), linkedBillId = c && c.billId ? c.billId : null, subject = n.title || '';
+    var isBillEmail = !/\(informativo\)|recibo|receipt/i.test(subject) && /factura|invoice|\bbill\b|cuenta de|deuda|arrears/i.test(subject);
     var since = new Date(); since.setMonth(since.getMonth() - 6); since = toIsoLocal(since);
     bills.filter(function(b){ return b.propertyId === pid && (b.id === linkedBillId || (isBillEmail && String(b.issueDate || b.dueDate || '') >= since)); })
       .sort(function(a, b){ return String(b.issueDate || b.dueDate).localeCompare(String(a.issueDate || a.dueDate)); })
