@@ -9775,7 +9775,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       if (mpDaysLeft == null || mpDaysLeft < 0 || mpDaysLeft > 2) continue;
       var mpDone = INSPECTION_AREAS.every(function(a){ return inspectionSubmissionsFor(mpt.id, 'move_in').some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
       if (mpDone) continue;
-      await notificationService.notifyOnce(mpt.authUserId, 'moveinphotos-reminder:' + mpt.id,
+      await notificationService.notifyOnce(mpt.authUserId, 'moveinphotos-reminder:' + mpt.id + (mpt.moveInPhotosExtendedUntil ? ':' + mpt.moveInPhotosExtendedUntil : ''),
         'Your move-in photos window is closing',
         (mpDaysLeft === 0 ? 'Today is your last day' : mpDaysLeft + ' day' + (mpDaysLeft===1?'':'s') + ' left') +
           ' to upload your move-in photos (bedroom, bathroom, kitchen and the dining/common area). Go to Inspection in the app.',
@@ -14401,13 +14401,26 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   /** Move-in photos only: tenants get MOVE_IN_PHOTOS_WINDOW_DAYS from their move-in date to
    *  upload them. Staff have no deadline — they may need to add evidence any time. */
   var MOVE_IN_PHOTOS_WINDOW_DAYS = 5;
-  function moveInPhotosDeadline(t){ return t && t.moveInDate ? stepDateIso(t.moveInDate, MOVE_IN_PHOTOS_WINDOW_DAYS) : null; }
+  /** Staff can give a tenant more time (t.moveInPhotosExtendedUntil = last day they may upload); the
+   *  deadline is whichever is later, the normal window or the extension. */
+  function moveInPhotosDeadline(t){
+    if (!t || !t.moveInDate) return null;
+    var base = stepDateIso(t.moveInDate, MOVE_IN_PHOTOS_WINDOW_DAYS);
+    return t.moveInPhotosExtendedUntil && t.moveInPhotosExtendedUntil > base ? t.moveInPhotosExtendedUntil : base;
+  }
   function moveInPhotosDaysLeft(t){ var d = moveInPhotosDeadline(t); return d ? daysBetween(TODAY, d) : null; }
   function moveInPhotosWindowClosed(t){ var d = moveInPhotosDaysLeft(t); return d != null && d < 0; }
-  /** Whether `role` (staff or a tenant looking at their own record) may still add move-in
-   *  photos right now — staff always can; a tenant only within the 5-day window. */
+  function moveInPhotosAllAreasDone(tenantId){
+    var subs = inspectionSubmissionsFor(tenantId, 'move_in');
+    return INSPECTION_AREAS.every(function(a){ return subs.some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
+  }
+  /** Whether the current user may add photos of this type right now — staff always can. A tenant can
+   *  add move-in photos only inside the window (5 days from move-in, plus any extension staff gave
+   *  them), and move-out photos only once they've given a move-out date (they haven't left yet
+   *  otherwise, so there's nothing to photograph). */
   function canAddInspectionPhotosNow(t, type){
     if (isStaff()) return true;
+    if (type === 'move_out') return !!tenantMoveOutDate(t);
     if (type !== 'move_in') return true;
     return !moveInPhotosWindowClosed(t);
   }
@@ -14941,10 +14954,30 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     if (type === 'move_in' && !isStaff() && t && t.moveInDate){
       var daysLeft = moveInPhotosDaysLeft(t);
       if (daysLeft != null){
-        deadlineHtml = daysLeft < 0
-          ? '<p class="insp-deadline closed">⌛ The '+MOVE_IN_PHOTOS_WINDOW_DAYS+'-day window to upload move-in photos has closed. Contact your administrator if you still need to add some.</p>'
-          : '<p class="insp-deadline'+(daysLeft<=1?' urgent':'')+'">⏳ '+(daysLeft===0?'Today is your last day':'You have '+daysLeft+' day'+(daysLeft===1?'':'s')+' left')+' to upload move-in photos.</p>';
+        if (daysLeft < 0){
+          // Window closed: the tenant can't upload any more and has to ask for more days.
+          var asked = !!t.moveInPhotosExtensionRequestedAt;
+          deadlineHtml = '<p class="insp-deadline closed">⌛ The time to upload move-in photos has ended. '+
+            (asked ? 'You\'ve asked for more days — your administrator will let you know when they\'re enabled.' : 'To add photos you need to ask your administrator to enable more days.')+'</p>'+
+            (asked ? '' : '<button type="button" class="mini-btn primary" style="margin:0 0 10px;" onclick="requestMoveInPhotosExtension()">📩 Request more days</button>');
+        } else {
+          deadlineHtml = '<p class="insp-deadline'+(daysLeft<=1?' urgent':'')+'">⏳ '+(daysLeft===0?'Today is your last day':'You have '+daysLeft+' day'+(daysLeft===1?'':'s')+' left')+' to upload move-in photos.</p>';
+        }
       }
+    }
+    // Staff: see the tenant's window and give them more days when they haven't uploaded everything.
+    if (type === 'move_in' && isStaff() && t && t.moveInDate && t.rentAmount > 0 && !tenantHasMovedOut(t) && (!moveInPhotosAllAreasDone(t.id) || t.moveInPhotosExtensionRequestedAt)){
+      var sLeft = moveInPhotosDaysLeft(t), sUntil = moveInPhotosDeadline(t), sAsked = !!t.moveInPhotosExtensionRequestedAt;
+      deadlineHtml = '<div class="insp-deadline'+(sLeft < 0 || sAsked ? ' urgent' : '')+'" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">'+
+        '<span>'+(sLeft < 0 ? '⌛ Tenant\'s upload window closed '+shortDate(sUntil) : '⏳ Tenant can upload until '+shortDate(sUntil)+' ('+sLeft+' day'+(sLeft===1?'':'s')+' left)')+
+          (sAsked ? ' · <b>asked for more days</b>' : '')+'</span>'+
+        (isViewer() ? '' : '<select id="insp-ext-days-'+t.id+'" class="mail-assign" aria-label="Days to add">'+[1,2,3,5,7].map(function(d){ return '<option value="'+d+'"'+(d===3?' selected':'')+'>'+d+' day'+(d===1?'':'s')+'</option>'; }).join('')+'</select>'+
+          '<button type="button" class="mini-btn primary" onclick="extendMoveInPhotos(\''+t.id+'\')">➕ Add days</button>')+
+      '</div>';
+    }
+    // Tenant, move-out photos: locked until they've given a move-out date (they haven't left yet).
+    if (type === 'move_out' && !isStaff() && t && !tenantMoveOutDate(t)){
+      deadlineHtml = '<p class="insp-deadline">🔒 Move-out photos open once you give your move-out notice — you\'re not leaving yet.</p>';
     }
     var areasHtml = '<div class="insp-areas">'+INSPECTION_AREAS.map(function(a){
       var done = subs.some(function(s){ return s.area === a.key; });
@@ -15413,10 +15446,46 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     } finally { decoded.close(); }
   }
 
+  /** Staff: give a tenant more days to upload their move-in photos (counted from today, or from the
+   *  current deadline if it hasn't passed yet). The tenant is told in the app. */
+  window.extendMoveInPhotos = async function(tenantId){
+    var t = tenantOf(tenantId); if (!t || !isStaff() || isViewer()) return;
+    var sel = document.getElementById('insp-ext-days-' + tenantId);
+    var days = parseInt(sel && sel.value, 10) || 3;
+    var cur = moveInPhotosDeadline(t);
+    var until = stepDateIso(cur && cur > TODAY ? cur : TODAY, days);
+    try {
+      var saved = await tenantService.setMoveInPhotosExtension(tenantId, until);
+      Object.assign(t, saved);
+    } catch(err){
+      showToast('Could not add the days. ' + friendlyErrorMessage(err), 'error');
+      return;
+    }
+    notificationService.notify(t.authUserId, 'More time for your move-in photos',
+      'Your administrator gave you ' + days + ' more day' + (days === 1 ? '' : 's') + ' — you can upload your move-in photos until ' + fullDate(until) + '. Go to Inspection in the app.',
+      'tenants', t.id, { category:'check_in', propertyId:t.propertyId, tenantId:t.id, createdByProfileId: currentProfile ? currentProfile.id : null });
+    showToast(days + ' more day' + (days === 1 ? '' : 's') + ' given — until ' + shortDate(until) + '.', 'success');
+    render();
+  };
+  /** Tenant: the move-in photos window has closed — ask the administrators to enable more days. */
+  window.requestMoveInPhotosExtension = async function(){
+    var t = myTenantRecord(); if (!t || t.moveInPhotosExtensionRequestedAt) return;
+    try {
+      await tenantService.requestMoveInPhotosExtension();
+      t.moveInPhotosExtensionRequestedAt = new Date().toISOString();
+      showToast('Request sent — your administrator will let you know.', 'success');
+      render();
+    } catch(err){
+      showToast('Could not send your request. ' + friendlyErrorMessage(err), 'error');
+    }
+  };
+
   function openInspectionSubmitModal(tenantId, type, area){
     var t = tenantOf(tenantId);
     if (!canAddInspectionPhotosNow(t, type)){
-      showToast('The '+MOVE_IN_PHOTOS_WINDOW_DAYS+'-day window to upload move-in photos has closed. Contact your administrator.', 'error');
+      showToast(type === 'move_out'
+        ? 'Move-out photos open once you give your move-out notice.'
+        : 'The time to upload move-in photos has ended. Ask your administrator for more days.', 'error');
       return;
     }
     phcReset();
@@ -16449,7 +16518,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '<li>Tap <b>Go to Inspection</b> below (or <b>More › Inspection</b>).</li>'+
         '<li>Upload photos for each of the four areas: '+INSPECTION_AREAS.map(function(a){ return a.icon+' '+a.label; }).join(', ')+'.</li>'+
         '<li>Add a short note if something needs explaining, then tap <b>Submit</b>.</li>'+
-        '<li>You have <b>'+MOVE_IN_PHOTOS_WINDOW_DAYS+' days from your move-in date</b> to do this — '+(daysLeft==null?'': daysLeft<0 ? 'that window has closed, contact your administrator' : daysLeft===0 ? 'today is your last day' : daysLeft+' day'+(daysLeft===1?'':'s')+' left')+'.</li>'+
+        '<li>You have <b>'+MOVE_IN_PHOTOS_WINDOW_DAYS+' days from your move-in date</b> to do this — '+(daysLeft==null?'': daysLeft<0 ? 'that window has closed — request more days from the Inspection page' : daysLeft===0 ? 'today is your last day' : daysLeft+' day'+(daysLeft===1?'':'s')+' left')+'.</li>'+
       '</ol>'+
       '<div class="wg-note">'+areasDone+' of '+INSPECTION_AREAS.length+' areas done'+(nPhotos?' · '+nPhotos+' photo'+(nPhotos===1?'':'s')+' uploaded':'')+'.</div>'+
       (t.roomId ? '<button type="button" class="wg-cta primary" onclick="welcomeUploadPhotos()">📷 Go to Inspection</button>' : '');

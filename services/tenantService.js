@@ -38,6 +38,10 @@ function fromRow(row) {
   t.moveOutSettledAt = row.move_out_settled_at || null;
   t.authUserId = row.auth_user_id || null;
   t.welcomeSeenAt = row.welcome_seen_at || null; // null = show the new-tenant welcome guide
+  // Move-in photos window: staff can extend it (last day the tenant may upload); once it has closed
+  // the tenant asks for more days. Not part of toRow — only the two functions below write these.
+  t.moveInPhotosExtendedUntil = row.move_in_photos_extended_until || null;
+  t.moveInPhotosExtensionRequestedAt = row.move_in_photos_extension_requested_at || null;
   return t;
 }
 
@@ -92,6 +96,22 @@ export async function remove(id) {
 // touches that one column on the caller's own row (current_tenant_id()).
 export async function setOwnActualMoveOutDate(date) {
   const { error } = await supabase.rpc('set_own_actual_move_out_date', { p_date: date });
+  if (error) throw error;
+}
+
+// Staff: let a tenant upload move-in photos until `untilDate` (YYYY-MM-DD); clears their pending request.
+export async function setMoveInPhotosExtension(id, untilDate) {
+  const { data, error } = await supabase.from('tenants')
+    .update({ move_in_photos_extended_until: untilDate, move_in_photos_extension_requested_at: null })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
+// Tenant: ask for more days once the move-in photos window has closed (SECURITY DEFINER RPC — tenants
+// have no UPDATE grant on `tenants`); it also notifies the property's administrators.
+export async function requestMoveInPhotosExtension() {
+  const { error } = await supabase.rpc('request_move_in_photos_extension');
   if (error) throw error;
 }
 
