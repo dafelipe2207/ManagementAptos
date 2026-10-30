@@ -2139,6 +2139,37 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     return header + sections;
   }
 
+  /** Average bills cost per person per week at a property. For each service (electricity, water, gas…)
+   *  the house's daily cost comes from its last 3 bills (total ÷ days they cover) — the same basis as the
+   *  move-out estimate — ×7, split among the people living there now by occupancy factor (a couple counts
+   *  as 2; anyone excluded from a service doesn't pay it). Null when there are no bills with a period yet. */
+  function propertyBillsPerPerson(p){
+    var present = tenants.filter(function(t){ return t.propertyId===p.id && t.rentAmount>0 && !tenantHasMovedOut(t) && t.moveInDate <= TODAY; });
+    if (!present.length) return null;
+    var byType = {};
+    bills.forEach(function(b){
+      if (b.propertyId !== p.id || !(b.amount > 0) || !b.billingPeriodStart || !b.billingPeriodEnd) return;
+      (byType[b.billType || 'other'] = byType[b.billType || 'other'] || []).push(b);
+    });
+    var people = present.reduce(function(s,t){ return s + (t.billOccupancyFactor || 1); }, 0);
+    var houseWeekly = 0, paidByTenants = 0;
+    Object.keys(byType).forEach(function(bt){
+      var recent = byType[bt].sort(function(a,b){ return b.billingPeriodEnd.localeCompare(a.billingPeriodEnd); }).slice(0, 3);
+      var amt = 0, days = 0;
+      recent.forEach(function(b){ amt += b.amount; days += daysBetween(b.billingPeriodStart, b.billingPeriodEnd) + 1; });
+      if (days <= 0) return;
+      var weekly = amt / days * 7;
+      var payers = present.filter(function(t){ return !isTenantExcludedFromBillType(t, bt); });
+      if (!payers.length) return;
+      var payerFactor = payers.reduce(function(s,t){ return s + (t.billOccupancyFactor || 1); }, 0);
+      houseWeekly += weekly;
+      // A tenant excluded from a service doesn't pay their share (it goes to the admin instead).
+      paidByTenants += weekly * payerFactor / people;
+    });
+    if (!houseWeekly || !people) return null;
+    return { perPerson: round2(paidByTenants / people), houseWeekly: round2(houseWeekly), people: people };
+  }
+
   /** The key numbers for a property at a glance (Properties list): weekly rent coming in, what
    *  the lease costs, the margin, what tenants owe right now, plus status chips — next payment to
    *  the real estate, next inspection, move-outs coming, Wi-Fi. */
@@ -2168,10 +2199,13 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     }
     function chip(cls, text, go){ return '<button type="button" class="bc-chip'+(cls?' '+cls:'')+'" onclick="'+go+'">'+text+'</button>'; }
     var pid = '\''+p.id+'\'';
+    var bpp = propertyBillsPerPerson(p);
     var tiles = tile('Rent / week', money(income), '', 'goPropertyInfo('+pid+',\'payments\')') +
       (lease ? tile('Lease / week', money(lease), '', 'goPropertyInfo('+pid+',\'lease\')') +
         tile('Profit / week', (margin<0?'-':'')+money(Math.abs(margin)), margin<0?'bad':'good', 'goPropertyInfo('+pid+',\'profits\')',
           includedWeekly>0 ? 'after '+money(includedWeekly)+' included bills' : '') : '') +
+      (bpp ? tile('Bills / person', money(bpp.perPerson), '', 'goPropertyInfo('+pid+',\'billsAll\')',
+        'per week · avg of '+bpp.people+' '+(bpp.people===1?'person':'people')) : '') +
       tile('Owed now', money(owed), owed>0.004?'bad':'good', 'goPropertyInfo('+pid+',\'payments\')',
         billsLater>0 ? '+'+money(billsLater)+' not due yet' : '');
     var chips = [];
