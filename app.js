@@ -12216,13 +12216,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     return notificationsList.filter(function(n){ return n.relatedTable === 'agency_email' && n.authUserId === me; })
       .sort(function(a, b){ return String(agencyEmailActivityAt(b)).localeCompare(String(agencyEmailActivityAt(a))); });
   }
-  /** Informative emails (status "Sin acción") leave the inbox the day after they arrive — or after
-   *  their last Update — and wait under "Archivados". Changing the status to one that needs action
-   *  brings it back; so does a new Update (it moves the activity date to today). */
+  /** Informative emails (status "Sin acción") leave the inbox AGENCY_EMAIL_AUTO_ARCHIVE_DAYS days after
+   *  they arrive — or after their last Update — unless an admin archives them sooner, and wait under
+   *  "Archivados". Changing the status to one that needs action brings it back; so does a new Update
+   *  (it moves the activity date to today). */
+  var AGENCY_EMAIL_AUTO_ARCHIVE_DAYS = 3;
   function agencyEmailAutoArchived(n){
-    return !n.archivedAt && agencyEmailStatus(n) === 'sin_accion' && toIsoLocal(new Date(agencyEmailActivityAt(n))) < TODAY;
+    return !n.archivedAt && agencyEmailStatus(n) === 'sin_accion' &&
+      daysBetween(toIsoLocal(new Date(agencyEmailActivityAt(n))), TODAY) >= AGENCY_EMAIL_AUTO_ARCHIVE_DAYS;
   }
-  function agencyEmailIsArchived(n){ return !!n.archivedAt || agencyEmailAutoArchived(n); }
+  /** An email an admin archived comes back to the inbox when the agency sends a follow-up (Update)
+   *  after that — otherwise the update would arrive on a card nobody is looking at. */
+  function agencyEmailUpdatedSinceArchive(n){
+    return !!n.archivedAt && agencyUpdatesOf(n).some(function(u){ return String(u.receivedAt) > String(n.archivedAt); });
+  }
+  function agencyEmailIsArchived(n){ return (!!n.archivedAt && !agencyEmailUpdatedSinceArchive(n)) || agencyEmailAutoArchived(n); }
   function myAgencyEmails(){ return myAgencyEmailsAll().filter(function(n){ return !agencyEmailIsArchived(n); }); }
   function myArchivedAgencyEmails(){ return myAgencyEmailsAll().filter(agencyEmailIsArchived); }
   function agencyCaseOf(n){ return n.dedupKey ? agencyCases.find(function(c){ return c.dedupKey === n.dedupKey; }) || null : null; }
@@ -12530,7 +12538,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       return dayHtml + '<details class="mail-card'+(n.isRead ? '' : ' unread')+(pp.urgent ? ' urgent' : pp.action ? ' action' : '')+'" id="mail-'+n.id+'"'+(open ? ' open' : '')+' ontoggle="onMailToggle(this, \''+n.id+'\')">'+
         '<summary><span class="mail-ic" aria-hidden="true">'+pp.emoji+'</span>'+
           '<span class="mail-main"><span class="mail-title">'+esc(pp.title)+'</span>'+
-          '<span class="mail-meta">'+agencyStatusTag(st)+tag+updTag+billTag+linkTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span></span>'+
+          '<span class="mail-meta">'+agencyStatusTag(st)+tag+updTag+billTag+linkTag+whoTag+'<span>'+(p ? esc(p.name)+' · ' : '')+'actualizado '+esc(agoEs(upd))+'</span></span>'+
+          // A recent follow-up is readable without opening the card (it used to be inside it only).
+          (ups.length && daysBetween(toIsoLocal(new Date(ups[0].receivedAt)), TODAY) < AGENCY_EMAIL_AUTO_ARCHIVE_DAYS
+            ? '<span class="mail-upd-last"><b>🔄 Update · '+esc(agoEs(ups[0].receivedAt))+':</b> '+esc(ups[0].summary)+'</span>' : '')+'</span>'+
           '<span class="mail-side">'+(n.isRead ? '' : '<i class="mail-dot" aria-label="Sin leer"></i>')+'<span class="mail-chev">'+svg('chevron')+'</span></span>'+
         '</summary>'+
         '<div class="mail-body">'+
@@ -12543,7 +12554,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           '<div class="mail-actions">'+
             (pp.url ? '<button type="button" class="mini-btn primary" onclick="openAgencyEmail(\''+n.id+'\')">Abrir correo</button>' : '')+
             (p ? '<button type="button" class="mini-btn" onclick="location.hash=\'#/properties/'+p.id+'\'">View property</button>' : '')+
-            (n.archivedAt ? '<button type="button" class="mini-btn" onclick="unarchiveAgencyEmail(\''+n.id+'\')">Volver a la bandeja</button>'
+            (n.archivedAt && agencyEmailIsArchived(n) ? '<button type="button" class="mini-btn" onclick="unarchiveAgencyEmail(\''+n.id+'\')">Volver a la bandeja</button>'
               : agencyEmailAutoArchived(n) ? '<span class="mail-fact-sub">Archivado solo (informativo). Para traerlo de vuelta, cámbiale el estado.</span>'
               : '<button type="button" class="mini-btn" onclick="archiveNotification(\''+n.id+'\')">Archivar</button>')+
           '</div>'+
@@ -12554,12 +12565,12 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var lastLine = lastAt ? '<p class="mail-lastcheck">'+svg('refresh')+'<span>Última revisión: <b>'+esc(whenEs(lastAt))+'</b> ('+esc(agoEs(lastAt))+')'+
       (agencyLastCheck ? ' · '+(agencyLastCheck.notified ? agencyLastCheck.notified+' correo'+(agencyLastCheck.notified === 1 ? '' : 's')+' nuevo'+(agencyLastCheck.notified === 1 ? '' : 's') : 'sin correos nuevos') : '')+'</span></p>' : '';
     var empty = '<div class="card" style="text-align:center;padding:28px 18px;"><div style="font-size:34px;">📭</div>'+
-      '<p style="margin:8px 0 0;font-size:14px;color:var(--text-dim);">'+(inArchive ? 'No hay correos archivados.' : all.length ? 'Nada con este filtro.' : 'Bandeja al día. Los informativos pasan a Archivados al día siguiente.')+'</p></div>';
+      '<p style="margin:8px 0 0;font-size:14px;color:var(--text-dim);">'+(inArchive ? 'No hay correos archivados.' : all.length ? 'Nada con este filtro.' : 'Bandeja al día. Los informativos pasan a Archivados a los '+AGENCY_EMAIL_AUTO_ARCHIVE_DAYS+' días.')+'</p></div>';
     var inboxN = myAgencyEmails().length;
     var tabsHtml = '<div class="filter-chips" style="margin-bottom:10px;">'+
       '<button type="button" class="chip'+(inArchive ? '' : ' active')+'" onclick="setEmailsTab(\'inbox\')">Bandeja'+(inboxN ? ' <span class="chip-count">'+inboxN+'</span>' : '')+'</button>'+
       '<button type="button" class="chip'+(inArchive ? ' active' : '')+'" onclick="setEmailsTab(\'archived\')">🗄️ Archivados'+(archivedList.length ? ' <span class="chip-count">'+archivedList.length+'</span>' : '')+'</button></div>';
-    return pageHeaderIcon('E-mail', 'Lo que mandan las agencias, revisado cada hora. Los informativos pasan a Archivados al día siguiente. Toca uno para verlo completo, asignar un responsable y abrir el correo.', 'mail', 'documents') +
+    return pageHeaderIcon('E-mail', 'Lo que mandan las agencias, revisado cada hora. Los informativos pasan a Archivados a los '+AGENCY_EMAIL_AUTO_ARCHIVE_DAYS+' días (o antes, si los archivas). Toca uno para verlo completo, asignar un responsable y abrir el correo.', 'mail', 'documents') +
       lastLine + tabsHtml +
       (list.length ? '<div class="mail-list">'+cards+'</div>' : empty);
   }

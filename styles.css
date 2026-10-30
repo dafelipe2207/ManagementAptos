@@ -2822,6 +2822,9 @@ button.owe-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 /* Correos — "Updates": follow-up emails filed under the original case */
 .mail-upd-tag{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;
   background:color-mix(in srgb, var(--accent) 14%, transparent);color:var(--accent);white-space:nowrap;}
+.mail-upd-last{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;margin-top:6px;
+  font-size:12.5px;line-height:1.45;color:var(--text);}
+.mail-upd-last b{color:var(--accent);}
 .mail-latest{margin:-4px 0 12px;padding:8px 12px;border-radius:12px;font-size:13.5px;line-height:1.5;
   background:var(--status-due-bg, rgba(255,149,0,.12));color:var(--text);}
 .mail-updates{margin:0 0 12px;}
