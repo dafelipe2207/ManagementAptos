@@ -10,7 +10,7 @@ import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './li
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
 import * as propertyService from './services/propertyService.js?v=5';
 import * as roomService from './services/roomService.js?v=3';
-import * as tenantService from './services/tenantService.js?v=10';
+import * as tenantService from './services/tenantService.js?v=11';
 import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
