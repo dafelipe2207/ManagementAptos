@@ -4426,7 +4426,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     input.min = earliest;
     input.value = opts.current || (tenant ? earliest : TODAY);
     document.getElementById('move-out-date-note').textContent = opts.note || (tenant
-      ? 'Please give at least two weeks\' notice — the earliest move-out date is ' + shortDate(earliest) + '. Your administrator will be notified.'
+      ? 'Please give at least two weeks\' notice — the earliest move-out date is ' + shortDate(earliest) + '. Your administrator will be notified, and property inspections will start from the moment your notice is received.'
       : 'The day this tenant leaves (or left) the room.');
     document.getElementById('move-out-date-error').hidden = true;
     document.getElementById('move-out-date-modal').hidden = false;
@@ -4758,7 +4758,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     { icon:'🧺', title:'Bed linen', text:'All provided bed linen must be washed before departure.' },
     { icon:'📸', title:'Move-out photos', text:'Once the room is clean, take photos of the room and your assigned areas and upload them in the app (Inspection → Move-out photos) before you leave.' },
     { icon:'🔑', title:'Keys', text:'All keys must be left on the bedside table.' },
-    { icon:'💳', title:'Rent and bills', text:'All outstanding rent and utility bills must be paid in full before moving out.' }
+    { icon:'💳', title:'Rent and bills', text:'All outstanding rent and utility bills must be paid in full before moving out.' },
+    { icon:'🔍', title:'Inspections', text:'Property inspections will start from the moment your move-out notice is received, so please keep your room and assigned areas ready for inspection from now on.' }
   ];
   var CHECKOUT_IMPORTANT = 'If any of these requirements are not met, an additional cleaning or service charge may apply, where appropriate and permitted under the applicable agreement and tenancy laws. Any applicable charge will depend on the work required to address the issue.';
   var CHECKOUT_CLOSING = 'Please ensure that all requirements are completed before vacating the property to avoid additional charges.';
