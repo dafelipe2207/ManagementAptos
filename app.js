@@ -3731,7 +3731,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '</span><span class="v"'+(l.amount < 0 ? ' style="color:var(--status-paid);">+'+money(-l.amount) : '>'+money(l.amount))+'</span></div>'; }).join('')+
       deductionRowsHtml+prevHtml+
       '<h3 style="font-size:12.5px;">Bond Summary</h3>'+summaryHtml+
-      '<div class="actions-row">'+
+      '<div class="actions-row mo-approve-row">'+
       '<button class="mini-btn'+(stale ? '' : ' primary')+'" onclick="confirmApproveMoveOutSettlement(\''+settlement.id+'\')">Approve Deduction & Finalise Bond</button>'+
       '<button class="mini-btn'+(stale ? ' primary' : '')+'" onclick="calculateMoveOutSettlement(\''+settlement.id+'\')">Recalculate</button>'+
       '<button class="mini-btn danger" onclick="confirmRejectMoveOutSettlement(\''+settlement.id+'\')">Reject Settlement</button>'+
@@ -4880,19 +4880,19 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var st = stop ? 'event.stopPropagation();event.preventDefault();' : '';
     // Settlement approved: dates can't change any more, but the final figures can still be sent.
     if (s && s.status === 'completed' && bondOf(t.id)){
-      return '<div class="act-row">'+
+      return '<div class="act-row mo-actions">'+
         '<button type="button" class="mini-btn" title="Write the ad to find the next tenant for this room" onclick="'+st+'openRoomAdModal(\''+t.id+'\')">Room ad</button>'+
         '<button type="button" class="mini-btn" title="Record a payment the tenant made (rent, bills…)" onclick="'+st+'openBondBalancePaymentModal(\''+t.id+'\')">Record payment</button>'+
         '<button type="button" class="mini-btn icon-label-btn" title="Send the move-out estimate/settlement" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Settlement</button></div>';
     }
     if (tenantHasMovedOut(t) || (s && s.status === 'completed')) return '';
     if (!s && !t.actualMoveOutDate && !t.expectedMoveOutDate) return '';
-    return '<div class="act-row">'+
+    return '<div class="act-row mo-actions">'+
       '<button type="button" class="mini-btn" title="Write the ad to find the next tenant for this room" onclick="'+st+'openRoomAdModal(\''+t.id+'\')">Room ad</button>'+
       '<button type="button" class="mini-btn" title="Change move-out date" onclick="'+st+'changeMoveOutDate(\''+t.id+'\')">Date</button>'+
       '<button type="button" class="mini-btn soft-danger" title="Cancel move-out" onclick="'+st+'cancelMoveOut(\''+t.id+'\')">Cancel</button>'+
       ((t.actualMoveOutDate || t.expectedMoveOutDate)
-        ? '<button type="button" class="mini-btn" title="Send the check-out requirements by WhatsApp" onclick="'+st+'sendCheckoutStepsWhatsApp(\''+t.id+'\')">📋 Steps</button>' : '')+
+        ? '<button type="button" class="mini-btn" title="Send the check-out requirements by WhatsApp" onclick="'+st+'sendCheckoutStepsWhatsApp(\''+t.id+'\')">Steps</button>' : '')+
       ((!s || s.status === 'in_progress') && (t.actualMoveOutDate || t.expectedMoveOutDate)
         ? '<button type="button" class="mini-btn icon-label-btn" title="Send the move-out estimate/settlement" onclick="'+st+'sendMoveOutEstimate(\''+t.id+'\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ACTION_ICONS.share+'</svg>Estimate</button>' : '')+
       '</div>';
@@ -21337,6 +21337,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     [/^export|download/, 'download'], [/^open the full/, 'doc'],
     [/^import|bank statement/, 'bank'], [/csv/, 'upload'],
     [/^submit photos/, 'camera'],
+    [/^(steps|room ad)/, 'doc'],
     [/^share evidence/, 'doc'], [/^select all/, 'check'], [/^select$/, 'list'], [/^done$/, 'check'],
     [/attach|receipt|my transfer|^add document/, 'attach'],
     [/view as tenant|^switch tenant/, 'user'],

@@ -3107,10 +3107,19 @@ button.bt-tenant-row:hover{background:var(--bg);}
   background:var(--status-due-bg);border-radius:10px;padding:8px 12px;}
 .insp-deadline-staff{display:flex;flex-direction:column;gap:8px;}
 .insp-deadline-text{margin:0;}
-.insp-deadline-ctrl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.2fr);gap:8px;align-items:stretch;}
+.insp-deadline-ctrl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:stretch;}
+.insp-deadline-ctrl .mail-assign{grid-column:1 / -1;}
 .insp-deadline-ctrl .mail-assign,.insp-deadline-ctrl .mini-btn{width:100%;margin:0;min-height:40px;box-sizing:border-box;}
 .insp-deadline-ctrl .mini-btn{white-space:nowrap;padding-left:8px;padding-right:8px;}
 .insp-deadline.urgent{color:var(--status-overdue);background:var(--status-overdue-bg);}
 .insp-deadline.closed{color:var(--text-dim);background:var(--bg-elevated);border:1px solid var(--border);}
 .ph-area{display:inline-block;margin-right:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:650;
   background:var(--accent-bg);color:var(--accent);vertical-align:1px;}
+
+/* Move-out settlement buttons: tidy two-column grids instead of ragged wrapping rows. */
+.mo-actions{display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px;}
+.mo-actions .mini-btn{width:100%;margin:0;min-height:40px;box-sizing:border-box;white-space:nowrap;}
+.mo-actions .mini-btn:last-child:nth-child(odd){grid-column:1 / -1;}
+.mo-approve-row{display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px;}
+.mo-approve-row .mini-btn{width:100%;margin:0 !important;min-height:42px;box-sizing:border-box;}
+.mo-approve-row .mini-btn:first-child{grid-column:1 / -1;}
