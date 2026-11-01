@@ -3098,6 +3098,11 @@ button.bt-tenant-row:hover{background:var(--bg);}
 .area-chip:disabled{cursor:not-allowed;}
 .insp-deadline{margin:0 0 10px;font-size:12.5px;font-weight:600;color:var(--status-due);
   background:var(--status-due-bg);border-radius:10px;padding:8px 12px;}
+.insp-deadline-staff{display:flex;flex-direction:column;gap:8px;}
+.insp-deadline-text{margin:0;}
+.insp-deadline-ctrl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.2fr);gap:8px;align-items:stretch;}
+.insp-deadline-ctrl .mail-assign,.insp-deadline-ctrl .mini-btn{width:100%;margin:0;min-height:40px;box-sizing:border-box;}
+.insp-deadline-ctrl .mini-btn{white-space:nowrap;padding-left:8px;padding-right:8px;}
 .insp-deadline.urgent{color:var(--status-overdue);background:var(--status-overdue-bg);}
 .insp-deadline.closed{color:var(--text-dim);background:var(--bg-elevated);border:1px solid var(--border);}
 .ph-area{display:inline-block;margin-right:8px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:650;

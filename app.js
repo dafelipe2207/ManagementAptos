@@ -15014,12 +15014,12 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     // Staff: see the tenant's window and give them more days when they haven't uploaded everything.
     if (type === 'move_in' && isStaff() && t && t.moveInDate && t.rentAmount > 0 && !tenantHasMovedOut(t)){
       var sLeft = moveInPhotosDaysLeft(t), sUntil = moveInPhotosDeadline(t), sAsked = !!t.moveInPhotosExtensionRequestedAt;
-      deadlineHtml = '<div class="insp-deadline'+(sLeft < 0 || sAsked ? ' urgent' : '')+'" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">'+
-        '<span>'+(sLeft < 0 ? '⌛ Tenant\'s upload window closed '+shortDate(sUntil) : '⏳ Tenant can upload until '+shortDate(sUntil)+' ('+sLeft+' day'+(sLeft===1?'':'s')+' left)')+
-          (sAsked ? ' · <b>asked for more days</b>' : '')+'</span>'+
-        (isViewer() ? '' : '<select id="insp-ext-days-'+t.id+'" class="mail-assign" aria-label="Days to add">'+[1,2,3,5,7].map(function(d){ return '<option value="'+d+'"'+(d===3?' selected':'')+'>'+d+' day'+(d===1?'':'s')+'</option>'; }).join('')+'</select>'+
+      deadlineHtml = '<div class="insp-deadline insp-deadline-staff'+(sLeft < 0 || sAsked ? ' urgent' : '')+'">'+
+        '<p class="insp-deadline-text">'+(sLeft < 0 ? '⌛ Tenant\'s upload window closed '+shortDate(sUntil) : '⏳ Tenant can upload until '+shortDate(sUntil)+' ('+sLeft+' day'+(sLeft===1?'':'s')+' left)')+
+          (sAsked ? ' · <b>asked for more days</b>' : '')+'</p>'+
+        (isViewer() ? '' : '<div class="insp-deadline-ctrl"><select id="insp-ext-days-'+t.id+'" class="mail-assign" aria-label="Days to add or remove">'+[1,2,3,5,7].map(function(d){ return '<option value="'+d+'"'+(d===3?' selected':'')+'>'+d+' day'+(d===1?'':'s')+'</option>'; }).join('')+'</select>'+
           '<button type="button" class="mini-btn primary" onclick="extendMoveInPhotos(\''+t.id+'\',1)">➕ Add days</button>'+
-          '<button type="button" class="mini-btn" onclick="extendMoveInPhotos(\''+t.id+'\',-1)">➖ Remove days</button>')+
+          '<button type="button" class="mini-btn" onclick="extendMoveInPhotos(\''+t.id+'\',-1)">➖ Remove days</button></div>')+
       '</div>';
     }
     // Tenant, move-out photos: locked until they've given a move-out date (they haven't left yet).
@@ -21265,6 +21265,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
+    minus: '<path d="M5 12h14"/>',
     send: '<path d="M21 3 10 14"/><path d="m21 3-7 18-4-7-7-4z"/>',
     eye: '<path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
     attach: '<path d="M20.5 11.5 12.4 19.6a5 5 0 0 1-7-7l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5"/>',
@@ -21313,6 +21314,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     [/^(cancel|close|discard|skip)\b/, 'x'],
     [/mark as unpaid|mark not completed/, 'undo'],
     [/^reject/, 'reject'],
+    [/^(remove|subtract) days/, 'minus'],
     [/^(delete|remove)\b|^− remove/, 'trash'], [/^archive/, 'box'],
     [/^approve|^accept/, 'check'],
     [/^mark .*(paid|completed)|^confirm|^i paid|^i made this payment|^mark read|^pay$/, 'check'],
