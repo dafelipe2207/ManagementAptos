@@ -9,8 +9,8 @@ import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './li
   // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
 import * as propertyService from './services/propertyService.js?v=5';
-import * as roomService from './services/roomService.js?v=3';
-import * as tenantService from './services/tenantService.js?v=12';
+import * as roomService from './services/roomService.js?v=4';
+import * as tenantService from './services/tenantService.js?v=13';
 import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
@@ -3788,6 +3788,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       tenantRentHistoryHtml(t.id) +
       bondCard +
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
+      roomItemsCardHtml(t) +
       inspectionSectionHtml(t.id, 'move_in', !isViewer()) +
       inspectionSectionHtml(t.id, 'move_out', !isViewer()) +
       moveOutSettlementCardHtml(t) +
@@ -15076,7 +15077,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var t = myTenantRecord();
     if (!t) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
     if (!t.roomId) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
-    return pageHeaderIcon('Inspection', 'How the room was when you moved in and when you move out. You and your property manager can both add photos, and both see all of them.', 'inspect', 'inspection') + realEstateInspectionBannerHtml(true) +
+    return pageHeaderIcon('Inspection', 'How the room was when you moved in and when you move out. You and your property manager can both add photos, and both see all of them.', 'inspect', 'inspection') + realEstateInspectionBannerHtml(true) + roomItemsCardHtml(t) +
       inspectionSectionHtml(t.id, 'move_in', true, false) +
       inspectionSectionHtml(t.id, 'move_out', true, false);
   }
@@ -17818,6 +17819,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     roomModalPropertyId = propertyId;
     roomModalEditId = roomId || null;
     var r = roomId ? rooms.find(function(x){ return x.id===roomId; }) : null;
+    roomItemsDraft = ((r && r.items) || []).map(function(x){ return { id:x.id, name:x.name, qty:x.qty || 1 }; });
+    renderRoomItemsEditor();
     document.getElementById('room-modal-title').textContent = r ? 'Edit room' : 'Add room';
     document.getElementById('room-name').value = r ? r.name : '';
     document.getElementById('room-modal-error').hidden = true;
@@ -17829,6 +17832,115 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     roomModalEl.style.zIndex = tenantModalOpen ? '60' : '';
     roomModalEl.hidden = false;
   }
+
+  /* ---------- Room items: what the room comes with, handed to the tenant and returned at the end ---------- */
+  var roomItemsDraft = [];
+  var roomItemSeq = 0;
+  var ROOM_ITEMS_STARTER = [
+    ['Bed frame',1], ['Mattress',1], ['Mattress protector',1], ['Bedside tables',2], ['Pillows',2], ['Pillowcases',2],
+    ['Sheet set (fitted + flat)',1], ['Blanket / duvet',1], ['Wardrobe',1], ['Desk',1], ['Chair',1], ['Lamp',1], ['Room key',1]
+  ];
+  function newRoomItemId(){ return 'i' + Date.now().toString(36) + (++roomItemSeq); }
+  function cleanRoomItems(list){
+    return (list || []).filter(function(x){ return (x.name || '').trim(); })
+      .map(function(x){ return { id:x.id || newRoomItemId(), name:x.name.trim(), qty:Math.max(1, parseInt(x.qty, 10) || 1) }; });
+  }
+  function renderRoomItemsEditor(focusLast){
+    var box = document.getElementById('room-items-editor'); if (!box) return;
+    var rows = roomItemsDraft.map(function(x, i){
+      return '<div class="ri-row">'+
+        '<input class="ri-name" type="text" value="'+esc(x.name)+'" placeholder="e.g. Pillows" aria-label="Item name" oninput="roomItemSet('+i+',this.value)" />'+
+        '<div class="ri-qty" role="group" aria-label="Quantity">'+
+          '<button type="button" aria-label="Less" onclick="roomItemQty('+i+',-1)">−</button><b>'+(x.qty || 1)+'</b>'+
+          '<button type="button" aria-label="More" onclick="roomItemQty('+i+',1)">+</button></div>'+
+        '<button type="button" class="icon-mini-btn danger" title="Remove item" aria-label="Remove item" onclick="roomItemRemove('+i+')">✕</button></div>';
+    }).join('');
+    box.innerHTML = '<div class="ri-editor"><label class="ri-title">Items included in the room</label>'+
+      '<p class="ri-hint">Handed to the tenant at move-in and returned at move-out — you tick each one on the tenant\'s page.</p>'+
+      (rows || '<p class="ri-empty">No items yet.</p>')+
+      '<div class="ri-actions"><button type="button" class="mini-btn" onclick="roomItemAdd()">Add item</button>'+
+      (roomItemsDraft.length ? '' : '<button type="button" class="mini-btn" onclick="roomItemsStarter()">Use starter set</button>')+'</div></div>';
+    if (focusLast){ var ins = box.querySelectorAll('.ri-name'); if (ins.length) ins[ins.length-1].focus(); }
+  }
+  window.roomItemSet = function(i, v){ if (roomItemsDraft[i]) roomItemsDraft[i].name = v; };
+  window.roomItemQty = function(i, d){ if (!roomItemsDraft[i]) return; roomItemsDraft[i].qty = Math.max(1, (roomItemsDraft[i].qty || 1) + d); renderRoomItemsEditor(); };
+  window.roomItemRemove = function(i){ roomItemsDraft.splice(i, 1); renderRoomItemsEditor(); };
+  window.roomItemAdd = function(){ roomItemsDraft.push({ id:newRoomItemId(), name:'', qty:1 }); renderRoomItemsEditor(true); };
+  window.roomItemsStarter = function(){ roomItemsDraft = ROOM_ITEMS_STARTER.map(function(x){ return { id:newRoomItemId(), name:x[0], qty:x[1] }; }); renderRoomItemsEditor(); };
+
+  /* The checklist itself, per tenant: staff tick "Delivered" at move-in and "Returned" at move-out;
+   * the tenant sees the same list read-only. Stored on tenants.room_items_check = { itemId: { d, r } }. */
+  function roomItemsFor(t){
+    var room = t && t.roomId ? roomOf(t.roomId) : null;
+    var chk = (t && t.roomItemsCheck) || {};
+    return ((room && room.items) || []).map(function(x){
+      var c = chk[x.id] || {};
+      return { id:x.id, name:x.name, qty:x.qty || 1, delivered:c.d || null, returned:c.r || null };
+    });
+  }
+  function roomItemsCardHtml(t){
+    if (!t) return '';
+    var staff = isStaff(), editable = staff && !isViewer();
+    var items = roomItemsFor(t);
+    if (!items.length){
+      if (!editable || !t.roomId) return '';
+      var r0 = roomOf(t.roomId);
+      return '<div class="card"><h2>Room items</h2><p class="ri-hint" style="margin:0 0 10px;">Nothing listed for this room yet — add the bed, bedside tables, pillows, sheets… so you can tick them off at move-in and move-out.</p>'+
+        '<button type="button" class="mini-btn primary" onclick="openRoomModal(\''+(r0 ? r0.propertyId : t.propertyId)+'\',\''+t.roomId+'\')">Set up room items</button></div>';
+    }
+    var nd = items.filter(function(x){ return x.delivered; }).length, nr = items.filter(function(x){ return x.returned; }).length;
+    var leaving = !!(t.actualMoveOutDate || t.expectedMoveOutDate);
+    var rows = items.map(function(x){
+      var dBtn, rBtn;
+      if (editable){
+        dBtn = '<button type="button" class="ri-chip'+(x.delivered ? ' on' : '')+'" aria-pressed="'+(x.delivered ? 'true' : 'false')+'" onclick="toggleRoomItem(\''+t.id+'\',\''+x.id+'\',\'d\')">'+(x.delivered ? '✓ ' : '')+'Delivered</button>';
+        rBtn = '<button type="button" class="ri-chip ret'+(x.returned ? ' on' : '')+'" aria-pressed="'+(x.returned ? 'true' : 'false')+'" onclick="toggleRoomItem(\''+t.id+'\',\''+x.id+'\',\'r\')">'+(x.returned ? '✓ ' : '')+'Returned</button>';
+      } else {
+        dBtn = '<span class="ri-state'+(x.delivered ? ' on' : '')+'">'+(x.delivered ? '✓ Delivered' : 'Pending')+'</span>';
+        rBtn = (x.returned ? '<span class="ri-state on">✓ Returned</span>' : '');
+      }
+      var dates = (x.delivered ? 'Delivered '+shortDate(x.delivered) : '') + (x.returned ? ' · Returned '+shortDate(x.returned) : '');
+      return '<div class="ri-check-row"><div class="ri-check-main"><span class="ri-check-name">'+esc(x.name)+(x.qty > 1 ? ' <i>×'+x.qty+'</i>' : '')+'</span>'+
+        (dates && editable ? '<span class="ri-check-date">'+dates+'</span>' : '')+'</div><div class="ri-check-btns">'+dBtn+rBtn+'</div></div>';
+    }).join('');
+    var summary = nd+' of '+items.length+' delivered'+(nr ? ' · '+nr+' returned' : '');
+    var allBtns = editable ? '<div class="ri-bulk"><button type="button" class="mini-btn" onclick="markAllRoomItems(\''+t.id+'\',\'d\')">Mark all delivered</button>'+
+      '<button type="button" class="mini-btn" onclick="markAllRoomItems(\''+t.id+'\',\'r\')">Mark all returned</button></div>' : '';
+    var note = staff ? '' : '<p class="ri-hint" style="margin:0 0 10px;">Your administrator ticks each item when it is handed to you. Please return everything in the same condition when you leave'+(leaving ? '.' : ' — the list comes back here for the check-out.')+'</p>';
+    return '<div class="card ri-card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">'+(staff ? 'Room items' : 'Items in your room')+'</h2>'+
+      '<span class="ri-sum'+(nd === items.length ? ' ok' : '')+'">'+summary+'</span></div>'+note+rows+allBtns+'</div>';
+  }
+  async function saveRoomItemsCheck(t, check){
+    try {
+      var saved = await tenantService.setRoomItemsCheck(t.id, check);
+      t.roomItemsCheck = saved.roomItemsCheck;
+      renderPreservingScroll();
+    } catch(err){
+      showToast('Could not save. ' + friendlyErrorMessage(err), 'error');
+    }
+  }
+  window.toggleRoomItem = function(tenantId, itemId, field){
+    var t = tenantOf(tenantId); if (!t || !isStaff() || isViewer()) return;
+    var check = JSON.parse(JSON.stringify(t.roomItemsCheck || {}));
+    var c = check[itemId] || { d:null, r:null };
+    if (field === 'r' && !c.d && !c.r){ showToast('Mark it as delivered first.', 'info'); return; }
+    c[field] = c[field] ? null : TODAY;
+    if (field === 'd' && !c.d) c.r = null; // un-delivering also clears a return
+    check[itemId] = c;
+    saveRoomItemsCheck(t, check);
+  };
+  window.markAllRoomItems = function(tenantId, field){
+    var t = tenantOf(tenantId); if (!t || !isStaff() || isViewer()) return;
+    var check = JSON.parse(JSON.stringify(t.roomItemsCheck || {}));
+    roomItemsFor(t).forEach(function(x){
+      var c = check[x.id] || { d:null, r:null };
+      if (field === 'd'){ if (!c.d) c.d = TODAY; }
+      else { if (!c.d) c.d = TODAY; if (!c.r) c.r = TODAY; }
+      check[x.id] = c;
+    });
+    saveRoomItemsCheck(t, check);
+  };
+
   function closeRoomModal(){
     var roomModalEl = document.getElementById('room-modal');
     roomModalEl.hidden = true;
@@ -17850,10 +17962,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     try {
       if (roomModalEditId){
         var r = rooms.find(function(x){ return x.id===roomModalEditId; });
-        var saved = await roomService.update(roomModalEditId, { name:name });
+        var saved = await roomService.update(roomModalEditId, { name:name, items:cleanRoomItems(roomItemsDraft) });
         if (r) Object.assign(r, saved);
       } else {
-        var created = await roomService.create({ propertyId: roomModalPropertyId, name: name });
+        var created = await roomService.create({ propertyId: roomModalPropertyId, name: name, items:cleanRoomItems(roomItemsDraft) });
         rooms.push(created);
       }
       closeRoomModal();
@@ -21364,6 +21476,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     [/^import|bank statement/, 'bank'], [/csv/, 'upload'],
     [/^submit photos/, 'camera'],
     [/^(steps|room ad)/, 'doc'],
+    [/^mark all/, 'check'], [/^set up room items/, 'plus'], [/^use starter set/, 'sparkle'],
     [/^share evidence/, 'doc'], [/^select all/, 'check'], [/^select$/, 'list'], [/^done$/, 'check'],
     [/attach|receipt|my transfer|^add document/, 'attach'],
     [/view as tenant|^switch tenant/, 'user'],

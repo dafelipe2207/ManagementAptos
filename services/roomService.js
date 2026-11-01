@@ -4,7 +4,11 @@ import { removeById } from '../lib/db.js';
 import { getCurrentUserId } from '../lib/auth.js';
 
 function fromRow(row) {
-  return { id: row.id, propertyId: row.property_id, name: row.name };
+  return {
+    id: row.id, propertyId: row.property_id, name: row.name,
+    // What the room comes with, handed to the tenant at move-in and returned at move-out: [{ id, name, qty }]
+    items: Array.isArray(row.items) ? row.items : []
+  };
 }
 
 export async function getAll() {
@@ -18,14 +22,17 @@ export async function create(r) {
   const { data, error } = await supabase.from('rooms').insert({
     user_id: userId,
     property_id: r.propertyId,
-    name: r.name
+    name: r.name,
+    items: Array.isArray(r.items) ? r.items : []
   }).select().single();
   if (error) throw error;
   return fromRow(data);
 }
 
 export async function update(id, r) {
-  const { data, error } = await supabase.from('rooms').update({ name: r.name }).eq('id', id).select().single();
+  const patch = { name: r.name };
+  if (Array.isArray(r.items)) patch.items = r.items;
+  const { data, error } = await supabase.from('rooms').update(patch).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }

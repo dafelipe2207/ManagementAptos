@@ -42,6 +42,8 @@ function fromRow(row) {
   // the tenant asks for more days. Not part of toRow — only the two functions below write these.
   t.moveInPhotosExtendedUntil = row.move_in_photos_extended_until || null;
   t.moveInPhotosExtensionRequestedAt = row.move_in_photos_extension_requested_at || null;
+  // Room items checklist: { itemId: { d: delivered date, r: returned date } } — staff write it, see setRoomItemsCheck.
+  t.roomItemsCheck = (row.room_items_check && typeof row.room_items_check === 'object') ? row.room_items_check : {};
   return t;
 }
 
@@ -138,4 +140,11 @@ export async function getHousemateOccupancy() {
       rentAmount: 1
     };
   });
+}
+
+// Staff: save which room items were handed to the tenant / returned by them.
+export async function setRoomItemsCheck(id, check) {
+  const { data, error } = await supabase.from('tenants').update({ room_items_check: check || {} }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
 }

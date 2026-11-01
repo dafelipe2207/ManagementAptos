@@ -3138,3 +3138,32 @@ details[open] > summary .rules-chev{transform:rotate(90deg);}
 details.rules-edit-section{margin-bottom:8px;}
 details.rules-edit-section[open] > .res-sum{background:color-mix(in srgb, var(--tone) 6%, transparent);}
 @media (prefers-reduced-motion: reduce){.rules-chev{transition:none;}}
+
+/* Room items: editor (room modal) + delivery / return checklist */
+.ri-editor{margin:14px 0 4px;}
+.ri-title{display:block;font-weight:650;font-size:13.5px;margin-bottom:2px;}
+.ri-hint{font-size:12px;color:var(--text-faint);margin:0 0 8px;line-height:1.4;}
+.ri-empty{font-size:12.5px;color:var(--text-dim);margin:6px 0;}
+.ri-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;margin-bottom:6px;}
+.ri-name{min-width:0;}
+.ri-qty{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:10px;background:var(--bg-elevated);}
+.ri-qty button{width:34px;height:36px;border:0;background:transparent;font-size:18px;line-height:1;color:var(--text);cursor:pointer;}
+.ri-qty b{min-width:20px;text-align:center;font-size:14px;}
+.ri-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+.ri-card .ri-sum{margin-left:auto;font-size:12px;font-weight:650;color:var(--status-due);background:var(--status-due-bg);border-radius:999px;padding:3px 10px;}
+.ri-card .ri-sum.ok{color:var(--status-paid);background:var(--status-paid-bg);}
+.ri-check-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--border);}
+.ri-check-row:first-of-type{border-top:0;}
+.ri-check-main{min-width:0;display:flex;flex-direction:column;gap:2px;}
+.ri-check-name{font-size:14px;font-weight:600;}
+.ri-check-name i{font-style:normal;font-weight:650;color:var(--text-dim);margin-left:4px;}
+.ri-check-date{font-size:11px;color:var(--text-faint);}
+.ri-check-btns{display:flex;gap:6px;flex:none;}
+.ri-chip{font:inherit;font-size:12px;font-weight:650;padding:6px 10px;min-height:34px;border-radius:999px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-dim);cursor:pointer;}
+.ri-chip.on{color:var(--status-paid);background:var(--status-paid-bg);border-color:color-mix(in srgb, var(--status-paid) 30%, transparent);}
+.ri-chip.ret.on{color:var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent);border-color:color-mix(in srgb, var(--accent) 30%, transparent);}
+.ri-state{font-size:12px;font-weight:650;color:var(--text-faint);}
+.ri-state.on{color:var(--status-paid);}
+.ri-bulk{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;}
+.ri-bulk .mini-btn{width:100%;margin:0;min-height:40px;box-sizing:border-box;}
+@media (max-width:420px){ .ri-check-row{flex-direction:column;align-items:stretch;gap:8px;} .ri-check-btns{justify-content:flex-start;} }
