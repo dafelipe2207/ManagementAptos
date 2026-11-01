@@ -1774,7 +1774,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var bond = bondOf(t.id);
     var rentDone = paymentRecords.some(function(p){ return p.tenantId === t.id; });
     var bondDone = !!bond && bond.amountRequired > 0 && bond.amountPaid >= bond.amountRequired - 0.004;
-    var moveInPhotos = inspectionSubmissionsFor(t.id, 'move_in');
+    var moveInPhotos = inspectionTenantSubsFor(t.id, 'move_in');
     var photosDone = INSPECTION_AREAS.every(function(a){ return moveInPhotos.some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
     var done = { rent:rentDone, bond:bondDone, photos:photosDone };
     return ONBOARDING_STEPS_META.map(function(m){ return { key:m.key, icon:m.icon, label:m.label, done: done[m.key] }; });
@@ -3779,8 +3779,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       tenantRentHistoryHtml(t.id) +
       bondCard +
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
-      inspectionSectionHtml(t.id, 'move_in', false) +
-      inspectionSectionHtml(t.id, 'move_out', false) +
+      inspectionSectionHtml(t.id, 'move_in', false) + inspectionAdminSectionHtml(t.id, 'move_in', false) +
+      inspectionSectionHtml(t.id, 'move_out', false) + inspectionAdminSectionHtml(t.id, 'move_out', false) +
       moveOutSettlementCardHtml(t) +
       bondSettlementSummaryHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
@@ -9807,7 +9807,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       if (mpt.rentAmount <= 0 || !mpt.authUserId || !mpt.moveInDate) continue;
       var mpDaysLeft = moveInPhotosDaysLeft(mpt);
       if (mpDaysLeft == null || mpDaysLeft < 0 || mpDaysLeft > 2) continue;
-      var mpDone = INSPECTION_AREAS.every(function(a){ return inspectionSubmissionsFor(mpt.id, 'move_in').some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
+      var mpDone = INSPECTION_AREAS.every(function(a){ return inspectionTenantSubsFor(mpt.id, 'move_in').some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
       if (mpDone) continue;
       await notificationService.notifyOnce(mpt.authUserId, 'moveinphotos-reminder:' + mpt.id + (mpt.moveInPhotosExtendedUntil ? ':' + mpt.moveInPhotosExtendedUntil : ''),
         'Your move-in photos window is closing',
@@ -14456,7 +14456,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   function moveInPhotosDaysLeft(t){ var d = moveInPhotosDeadline(t); return d ? daysBetween(TODAY, d) : null; }
   function moveInPhotosWindowClosed(t){ var d = moveInPhotosDaysLeft(t); return d != null && d < 0; }
   function moveInPhotosAllAreasDone(tenantId){
-    var subs = inspectionSubmissionsFor(tenantId, 'move_in');
+    var subs = inspectionTenantSubsFor(tenantId, 'move_in');
     return INSPECTION_AREAS.every(function(a){ return subs.some(function(s){ return s.area === a.key && (s.photoPaths||[]).length > 0; }); });
   }
   /** Whether the current user may add photos of this type right now — staff always can. A tenant can
@@ -14471,6 +14471,20 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   function inspectionSubmissionsFor(tenantId, type){
     return inspectionSubmissions.filter(function(s){ return s.tenantId===tenantId && s.type===type; });
+  }
+  /** Was this submission uploaded by the tenant themselves (as opposed to a staff member)? */
+  function inspectionIsTenantUpload(s){
+    var t = tenantOf(s.tenantId);
+    return !!(s.uploadedBy && t && t.authUserId && s.uploadedBy === t.authUserId);
+  }
+  /** The tenant's own uploads — what counts toward THEIR move-in progress and the tenant's photo set. */
+  function inspectionTenantSubsFor(tenantId, type){
+    return inspectionSubmissionsFor(tenantId, type).filter(inspectionIsTenantUpload);
+  }
+  /** Photos a staff member took. They stay private to staff until the admin ticks "Show to tenant"
+   *  (shared_with_tenant); the database only hands the shared ones to the tenant's session. */
+  function inspectionAdminSubsFor(tenantId, type){
+    return inspectionSubmissionsFor(tenantId, type).filter(function(s){ return !inspectionIsTenantUpload(s); });
   }
   function inspectionCommentsFor(tenantId, type){
     return inspectionComments.filter(function(c){ return c.tenantId===tenantId && c.type===type; });
@@ -14634,7 +14648,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var day = (s.createdAt||'').slice(0,10);
       var who = inspectionUploader(s);
       var area = s.area || null;
-      var key = day + '|' + who.label + '|' + (area || '');
+      var key = day + '|' + who.label + '|' + (area || '') + '|' + (s.sharedWithTenant ? '1' : '0');
       var g = byDay.length && byDay[byDay.length-1].key === key ? byDay[byDay.length-1] : null;
       if (!g){ g = { key: key, day: day, who: who, area: area, subs: [] }; byDay.push(g); }
       g.subs.push(s);
@@ -14660,7 +14674,13 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       });
       var whoHtml = g.who.label ? '<span class="ph-who'+(g.who.byTenant ? ' is-tenant' : ' is-manager')+'">'+esc(g.who.label)+'</span>' : '';
       var areaHtml = g.area ? '<span class="ph-area">'+inspectionAreaLabel(g.area)+'</span>' : '';
-      return '<div class="ph-day"><div class="ph-day-head"><span>'+areaHtml+fullDate(g.day)+whoHtml+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
+      // Staff photos: the admin decides whether the tenant gets to see them (one tick per group).
+      var shareHtml = '';
+      if (isStaff() && !g.who.byTenant){
+        var shared = !!g.subs[0].sharedWithTenant;
+        shareHtml = '<label class="ph-share'+(shared?' is-on':'')+'"><input type="checkbox"'+(shared?' checked':'')+(isViewer()?' disabled':'')+' onchange="setInspectionShared(this,\''+g.subs.map(function(x){ return x.id; }).join(',')+'\')" /> Show to tenant</label>';
+      }
+      return '<div class="ph-day"><div class="ph-day-head"><span>'+areaHtml+fullDate(g.day)+whoHtml+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+shareHtml+notes+
         '<div class="ph-grid">'+tiles+'</div></div>';
     }).join('');
   }
@@ -14923,7 +14943,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
 
   function inspectionSectionHtml(tenantId, type, canAdd, canComment){
     // Submissions emptied by a tenant's delete (photo_paths = []) simply drop out of view.
-    var subs = inspectionSubmissionsFor(tenantId, type).filter(function(s){ return (s.photoPaths||[]).length; });
+    // Staff: this card is the tenant's own photos — the admin's are in their own card below
+    // (inspectionAdminSectionHtml). A tenant gets their own plus whatever the admin chose to show.
+    var subs = inspectionSubmissionsFor(tenantId, type).filter(function(s){ return (s.photoPaths||[]).length && (!isStaff() || inspectionIsTenantUpload(s)); });
     var comments = inspectionCommentsFor(tenantId, type);
     var photoTotal = subs.reduce(function(n, s){ return n + s.photoPaths.length; }, 0);
     var photosHtml = subs.length===0
@@ -14992,7 +15014,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<button class="mini-btn" onclick="saveInspectionComment(\''+tenantId+'\',\''+type+'\')">Add comment</button>';
     var canSelect = photoTotal > 0;
     var t = tenantOf(tenantId);
-    var allowAdd = canAdd && !isViewer() && canAddInspectionPhotosNow(t, type);
+    var allowAdd = canAdd && !isViewer() && !isStaff() && canAddInspectionPhotosNow(t, type);
     // Tenant-facing deadline note: only on move-in, only for the tenant themselves, only while
     // they still have (or just lost) the window — staff never see it, they have no deadline.
     var deadlineHtml = '';
@@ -15025,20 +15047,20 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       deadlineHtml = '<p class="insp-deadline">🔒 Move-out photos open once you give your move-out notice — you\'re not leaving yet.</p>';
     }
     var areasHtml = '<div class="insp-areas">'+INSPECTION_AREAS.map(function(a){
-      var done = subs.some(function(s){ return s.area === a.key; });
+      var done = subs.some(function(s){ return s.area === a.key && inspectionIsTenantUpload(s); });
       var go = "openInspectionSubmitModal('"+tenantId+"','"+type+"','"+a.key+"')";
       return '<button type="button" class="area-chip'+(done?' done':'')+(allowAdd?'':' no-add')+'" '+(allowAdd?'onclick="'+go+'"':'disabled')+' title="'+esc(a.hint)+'">'+
         '<i>'+(done?'✓':a.icon)+'</i>'+esc(a.label)+(allowAdd?(done?' · Add more':' · Add'):'')+'</button>';
     }).join('')+'</div>';
     return '<div class="card insp-photos" style="margin-bottom:10px;" data-tenant="'+tenantId+'" data-type="'+type+'">'+
       '<div class="detail-head insp-photos-head" style="margin-top:0;align-items:center;">'+
-        '<h2 style="margin:0;font-size:14px;">'+INSPECTION_TYPE_LABEL[type]+' photos'+(photoTotal ? ' <span class="ph-total">'+photoTotal+'</span>' : '')+'</h2>'+
+        '<h2 style="margin:0;font-size:14px;">'+(isStaff() ? 'Tenant\'s '+INSPECTION_TYPE_LABEL[type].toLowerCase() : INSPECTION_TYPE_LABEL[type])+' photos'+(photoTotal ? ' <span class="ph-total">'+photoTotal+'</span>' : '')+'</h2>'+
         '<div class="insp-photos-actions">'+
           (canSelect ? '<button class="mini-btn ph-btn-evidence" onclick="shareInspectionEvidence(\''+tenantId+'\',\''+type+'\', this)">Share evidence</button>' : '')+
           (canSelect ? '<button class="mini-btn ph-btn-select" onclick="inspectionToggleSelect(this)">Select</button><button class="mini-btn ph-btn-done" onclick="inspectionToggleSelect(this)">Done</button>' : '')+
         '</div>'+
       '</div>'+
-      deadlineHtml+(canAdd ? areasHtml : '')+
+      deadlineHtml+(canAdd && !isStaff() ? areasHtml : '')+
       (canSelect ? '<div class="ph-selbar"><span class="ph-selcount">Tap photos to select them</span>'+
         '<button class="mini-btn ph-sel-all" onclick="inspectionSelectAll(this)">Select all</button>'+
         '<button class="mini-btn ph-sel-download" disabled onclick="inspectionDownloadSelected(this)">Download</button>'+
@@ -15046,12 +15068,68 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       photosHtml+commentsHtml+commentFormHtml+'</div>';
   }
 
+  /** Staff only: the admin's own move-in / move-out photos, kept apart from the tenant's. Private by
+   *  default; each group has a "Show to tenant" tick. (Never rendered for a tenant.) */
+  function inspectionAdminSectionHtml(tenantId, type, canAdd){
+    if (!isStaff()) return '';
+    var subs = inspectionAdminSubsFor(tenantId, type).filter(function(s){ return (s.photoPaths||[]).length; });
+    var t = tenantOf(tenantId);
+    var allowAdd = canAdd && !isViewer() && t && t.roomId;
+    if (!subs.length && !allowAdd) return '';
+    var total = subs.reduce(function(n, s){ return n + s.photoPaths.length; }, 0);
+    var shown = subs.filter(function(s){ return s.sharedWithTenant; }).reduce(function(n, s){ return n + s.photoPaths.length; }, 0);
+    var photosHtml = subs.length === 0
+      ? '<div class="ph-empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/></svg><span>No admin photos yet</span></div>'
+      : inspectionPhotoGridHtml(tenantId, type, subs);
+    var areasHtml = !allowAdd ? '' : '<div class="insp-areas">'+INSPECTION_AREAS.map(function(a){
+      var done = subs.some(function(s){ return s.area === a.key; });
+      return '<button type="button" class="area-chip'+(done?' done':'')+'" onclick="openInspectionSubmitModal(\''+tenantId+'\',\''+type+'\',\''+a.key+'\')" title="'+esc(a.hint)+'">'+
+        '<i>'+(done?'✓':a.icon)+'</i>'+esc(a.label)+(done?' · Add more':' · Add')+'</button>';
+    }).join('')+'</div>';
+    return '<div class="card insp-photos insp-admin" style="margin-bottom:10px;" data-tenant="'+tenantId+'" data-type="'+type+'">'+
+      '<div class="detail-head insp-photos-head" style="margin-top:0;align-items:center;">'+
+        '<h2 style="margin:0;font-size:14px;">Admin '+INSPECTION_TYPE_LABEL[type].toLowerCase()+' photos'+(total ? ' <span class="ph-total">'+total+'</span>' : '')+'</h2>'+
+        '<div class="insp-photos-actions">'+
+          (total ? '<button class="mini-btn ph-btn-select" onclick="inspectionToggleSelect(this)">Select</button><button class="mini-btn ph-btn-done" onclick="inspectionToggleSelect(this)">Done</button>' : '')+
+        '</div>'+
+      '</div>'+
+      '<p class="insp-deadline" style="margin:0 0 8px;">🔒 '+(total ? (shown ? shown+' of '+total+' photo'+(total===1?'':'s')+' shown to the tenant.' : 'Private — the tenant can\'t see these.') : 'Private by default — the tenant only sees what you choose to show.')+'</p>'+
+      areasHtml+
+      (total ? '<div class="ph-selbar"><span class="ph-selcount">Tap photos to select them</span>'+
+        '<button class="mini-btn ph-sel-all" onclick="inspectionSelectAll(this)">Select all</button>'+
+        '<button class="mini-btn ph-sel-download" disabled onclick="inspectionDownloadSelected(this)">Download</button>'+
+        '<button class="mini-btn ph-sel-delete" disabled onclick="inspectionDeleteSelected(this)">Delete</button></div>' : '')+
+      photosHtml+'</div>';
+  }
+
+  /** Staff: tick / untick "Show to tenant" on a group of the admin's photos. */
+  window.setInspectionShared = async function(input, idsCsv){
+    var ids = String(idsCsv || '').split(',').filter(Boolean);
+    var shared = !!input.checked;
+    var card = input.closest ? input.closest('.insp-photos') : null;
+    var tenantId = card ? card.getAttribute('data-tenant') : null;
+    input.disabled = true;
+    try {
+      for (var i = 0; i < ids.length; i++){
+        var updated = await inspectionService.setShared(ids[i], shared);
+        var s = inspectionSubmissions.find(function(x){ return x.id === updated.id; });
+        if (s) s.sharedWithTenant = updated.sharedWithTenant;
+      }
+      showToast(shared ? 'The tenant can now see these photos.' : 'Photos hidden from the tenant.', 'success');
+    } catch(err){
+      input.checked = !shared;
+      showToast('Could not change who sees these photos. ' + friendlyErrorMessage(err), 'error');
+    }
+    input.disabled = false;
+    refreshInspectionViews(tenantId);
+  };
+
   function renderInspection(){
     if (isStaff()) return renderInspectionStaff();
     var t = myTenantRecord();
     if (!t) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a tenant record yet — ask your Super Admin.</p></div>';
     if (!t.roomId) return pageHeaderIcon('Inspection', '', 'inspect', 'inspection') + '<div class="card"><p style="font-size:13.5px;color:var(--text-dim);margin:0;">Your account isn\'t linked to a room yet — ask your Super Admin.</p></div>';
-    return pageHeaderIcon('Inspection', 'How the room was when you moved in and when you move out. You and your property manager can both add photos, and both see all of them.', 'inspect', 'inspection') + realEstateInspectionBannerHtml(true) +
+    return pageHeaderIcon('Inspection', 'How the room was when you moved in and when you move out. Add your photos here — your property manager may also share photos with you.', 'inspect', 'inspection') + realEstateInspectionBannerHtml(true) +
       inspectionSectionHtml(t.id, 'move_in', true, false) +
       inspectionSectionHtml(t.id, 'move_out', true, false);
   }
@@ -15400,7 +15478,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     inspectionDetailTenantId = tenantId;
     document.getElementById('inspection-detail-title').textContent = t.fullName;
     document.getElementById('inspection-detail-body').innerHTML =
-      inspectionSectionHtml(tenantId, 'move_in', true, true) + inspectionSectionHtml(tenantId, 'move_out', true, true);
+      inspectionSectionHtml(tenantId, 'move_in', true, true) + inspectionAdminSectionHtml(tenantId, 'move_in', true) +
+      inspectionSectionHtml(tenantId, 'move_out', true, true) + inspectionAdminSectionHtml(tenantId, 'move_out', true);
     document.getElementById('inspection-detail-modal-error').hidden = true;
     document.getElementById('inspection-detail-modal').hidden = false;
     hydrateLazyThumbs();
@@ -15541,6 +15620,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     document.getElementById('inspection-submit-title').textContent = (INSPECTION_TYPE_LABEL[type]||'') + ' photos' + (areaMeta ? ' — ' + areaMeta.label : '');
     document.getElementById('phc-hint').textContent = areaMeta ? areaMeta.hint : 'Photograph every wall, the floor, windows, furniture and anything already damaged. You can add as many photos as you like.';
     document.getElementById('inspection-submit-note').value = '';
+    // Staff photos are private unless the admin ticks "Show these photos to the tenant".
+    document.getElementById('inspection-share-wrap').hidden = !isStaff();
+    document.getElementById('inspection-share').checked = false;
     document.getElementById('inspection-submit-modal-error').hidden = true;
     phcBindDrop();
     phcRender();
@@ -15706,7 +15788,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     try {
       var note = document.getElementById('inspection-submit-note').value.trim();
       var paths = phc.items.map(function(it){ return it.path; });
-      var created = await inspectionService.create(t.propertyId, t.roomId, t.id, phc.type, paths, note, phc.area);
+      var shareBox = document.getElementById('inspection-share');
+      var created = await inspectionService.create(t.propertyId, t.roomId, t.id, phc.type, paths, note, phc.area, isStaff() && !!(shareBox && shareBox.checked));
       inspectionSubmissions.push(created);
       phc.busy = false;
       var n = paths.length, tenantId = t.id;
@@ -16553,7 +16636,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           : '<div class="wg-note">Your administrator hasn\'t added the house rules yet — you\'ll get a notification when they do.</div>')+
         (top.length ? '<a class="wg-cta" href="#/rules" onclick="closeWelcomeGuide(true)">Read all the house rules ›</a>' : '');
     }
-    var photos = inspectionSubmissionsFor(t.id, 'move_in');
+    var photos = inspectionTenantSubsFor(t.id, 'move_in');
     var nPhotos = photos.reduce(function(n, sub){ return n + ((sub.photoPaths || []).length); }, 0);
     var areasDone = INSPECTION_AREAS.filter(function(a){ return photos.some(function(s){ return s.area===a.key; }); }).length;
     var daysLeft = moveInPhotosDaysLeft(t);

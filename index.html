@@ -1115,6 +1115,9 @@
         <div class="ph-grid phc-grid" id="phc-grid"></div>
       </div>
       <div class="form-row" style="margin-top:12px;"><label for="inspection-submit-note">Note (optional)</label><textarea id="inspection-submit-note" rows="2" placeholder="e.g. Bedroom — carpet stain near the window"></textarea></div>
+      <div id="inspection-share-wrap" hidden>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--text-dim);margin-top:10px;"><input type="checkbox" id="inspection-share" style="width:auto;margin-top:2px;" /> <span>Show these photos to the tenant<br><small style="color:var(--text-faint);">Leave unticked to keep them private — you can show them later.</small></span></label>
+      </div>
       <p id="inspection-submit-modal-error" class="form-error" hidden></p>
       <div class="modal-actions">
         <button class="mini-btn" id="phc-cancel" onclick="closeInspectionSubmitModal()">Cancel</button>

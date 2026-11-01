@@ -16,6 +16,8 @@ function fromRow(row) {
     photoPaths: Array.isArray(row.photo_paths) ? row.photo_paths : [],
     note: row.note || '',
     uploadedBy: row.user_id || null, // auth uid of whoever uploaded (the tenant or a staff member)
+    // Staff uploads are private until the admin ticks "Show to tenant" (tenant uploads are always theirs to see).
+    sharedWithTenant: row.shared_with_tenant === true,
     createdAt: row.created_at
   };
 }
@@ -26,12 +28,15 @@ export async function getAll() {
   return data.map(fromRow);
 }
 
-export async function create(propertyId, roomId, tenantId, type, photoPaths, note, area) {
+export async function create(propertyId, roomId, tenantId, type, photoPaths, note, area, sharedWithTenant) {
   const userId = await getCurrentUserId();
-  const { data, error } = await supabase.from('inspection_submissions').insert({
+  const row = {
     user_id: userId, property_id: propertyId, room_id: roomId, tenant_id: tenantId,
     type: type, photo_paths: photoPaths || [], note: note || null, area: area || null
-  }).select().single();
+  };
+  // Only sent when true: the column defaults to false, so tenant uploads never depend on it.
+  if (sharedWithTenant === true) row.shared_with_tenant = true;
+  const { data, error } = await supabase.from('inspection_submissions').insert(row).select().single();
   if (error) throw error;
   return fromRow(data);
 }
@@ -39,6 +44,13 @@ export async function create(propertyId, roomId, tenantId, type, photoPaths, not
 /** Replaces a submission's photo list (used when photos are removed from it). */
 export async function updatePhotos(id, photoPaths) {
   const { data, error } = await supabase.from('inspection_submissions').update({ photo_paths: photoPaths || [] }).eq('id', id).select().single();
+  if (error) throw error;
+  return fromRow(data);
+}
+
+/** Staff only (RLS): show or hide one of the admin's own submissions to the tenant. */
+export async function setShared(id, shared) {
+  const { data, error } = await supabase.from('inspection_submissions').update({ shared_with_tenant: shared === true }).eq('id', id).select().single();
   if (error) throw error;
   return fromRow(data);
 }
