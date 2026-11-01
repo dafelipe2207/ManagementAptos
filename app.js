@@ -12529,7 +12529,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         assignRow = '<div class="mail-fact"><span class="mail-fact-k">Responsable</span>'+
           '<select class="mail-assign" aria-label="Responsable del seguimiento" onchange="assignAgencyEmail(\''+n.id+'\', this.value)">'+
             '<option value=""'+(who ? '' : ' selected')+'>Sin asignar</option>'+
-            staffDirectory.map(function(s){ return '<option value="'+s.id+'"'+(who === s.id ? ' selected' : '')+'>'+esc(staffName(s.id))+'</option>'; }).join('')+
+            // Only Administrators can be given a follow-up — the Super Admin isn't offered (kept in the list
+            // only if this email was already assigned to it, so the selection doesn't look blank).
+            staffDirectory.filter(function(s){ return s.role !== 'super_admin' || who === s.id; })
+              .map(function(s){ return '<option value="'+s.id+'"'+(who === s.id ? ' selected' : '')+'>'+esc(staffName(s.id))+'</option>'; }).join('')+
           '</select>'+
           (who && c && c.assignedAt ? '<span class="mail-fact-sub">desde '+esc(whenEs(c.assignedAt))+(c.assignedByProfileId && c.assignedByProfileId !== who && staffName(c.assignedByProfileId) ? ' · lo asignó '+esc(staffName(c.assignedByProfileId)) : '')+'</span>' : '')+
         '</div>';
