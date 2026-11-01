@@ -14644,9 +14644,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var day = (s.createdAt||'').slice(0,10);
       var who = inspectionUploader(s);
       var area = s.area || null;
-      var key = day + '|' + who.label + '|' + (area || '');
+      var key = day + '|' + who.label;
       var g = byDay.length && byDay[byDay.length-1].key === key ? byDay[byDay.length-1] : null;
-      if (!g){ g = { key: key, day: day, who: who, area: area, subs: [] }; byDay.push(g); }
+      if (!g){ g = { key: key, day: day, who: who, subs: [] }; byDay.push(g); }
       g.subs.push(s);
     });
     var idx = 0;
@@ -14656,6 +14656,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var tiles = '', gi = 0;
       g.subs.forEach(function(s){
         var deletable = inspectionCanDeleteSubmission(s);
+        var areaMeta = s.area ? inspectionAreaMeta(s.area) : null;
+        var areaTag = areaMeta ? '<span class="ph-tile-area" aria-hidden="true">'+areaMeta.icon+'</span>' : '';
         (s.photoPaths||[]).forEach(function(path){
           var i = idx++, j = gi++;
           // Each group (day + who took them) shows its first rows; the rest sit behind "+N".
@@ -14663,14 +14665,13 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
           var more = (j === INSPECTION_GRID_COLLAPSE - 1 && count > INSPECTION_GRID_COLLAPSE)
             ? '<span class="ph-more" aria-hidden="true">+'+(count - INSPECTION_GRID_COLLAPSE)+'</span>' : '';
           tiles += '<button type="button" class="ph-tile'+hiddenCls+(more?' has-more':'')+(deletable?' can-delete':'')+'" data-sub="'+s.id+'" data-path="'+esc(path)+'" onclick="inspectionTileTap(this)" aria-label="'+esc(label)+' photo '+(i+1)+' of '+total+'">'+
-            '<img class="lazy-thumb ph-img" data-noclick="1" data-bucket="inspection-photos" data-path="'+esc(path)+'" data-thumb="'+esc(storageService.thumbPathFor(path))+'" data-group="'+groupId+'" data-index="'+i+'" data-caption="'+esc(label + (g.area ? ' · ' + inspectionAreaLabel(g.area).replace(/^\S+\s/,'') : '') + ' · ' + fullDate(g.day) + (g.who.label ? ' · ' + g.who.label : ''))+'" alt="" draggable="false" />'+
-            '<span class="ph-check" aria-hidden="true"></span>'+more+
+            '<img class="lazy-thumb ph-img" data-noclick="1" data-bucket="inspection-photos" data-path="'+esc(path)+'" data-thumb="'+esc(storageService.thumbPathFor(path))+'" data-group="'+groupId+'" data-index="'+i+'" data-caption="'+esc(label + (s.area ? ' · ' + inspectionAreaLabel(s.area).replace(/^\S+\s/,'') : '') + ' · ' + fullDate(g.day) + (g.who.label ? ' · ' + g.who.label : ''))+'" alt="" draggable="false" />'+
+            areaTag+'<span class="ph-check" aria-hidden="true"></span>'+more+
           '</button>';
         });
       });
       var whoHtml = g.who.label ? '<span class="ph-who'+(g.who.byTenant ? ' is-tenant' : ' is-manager')+'">'+esc(g.who.label)+'</span>' : '';
-      var areaHtml = g.area ? '<span class="ph-area">'+inspectionAreaLabel(g.area)+'</span>' : '';
-      return '<div class="ph-day"><div class="ph-day-head"><span>'+areaHtml+fullDate(g.day)+whoHtml+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
+      return '<div class="ph-day"><div class="ph-day-head"><span>'+fullDate(g.day)+whoHtml+'</span><span class="ph-day-count">'+count+' photo'+(count===1?'':'s')+'</span></div>'+notes+
         '<div class="ph-grid">'+tiles+'</div></div>';
     }).join('');
   }
@@ -15039,7 +15040,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var done = subs.some(function(s){ return s.area === a.key; });
       var go = "openInspectionSubmitModal('"+tenantId+"','"+type+"','"+a.key+"')";
       return '<button type="button" class="area-chip'+(done?' done':'')+(allowAdd?'':' no-add')+'" '+(allowAdd?'onclick="'+go+'"':'disabled')+' title="'+esc(a.hint)+'">'+
-        '<i>'+(done?'✓':a.icon)+'</i>'+esc(a.label)+(allowAdd?(done?' · Add more':' · Add'):'')+'</button>';
+        '<i>'+(done?'✓':a.icon)+'</i><span class="area-chip-txt">'+esc(a.label)+'</span>'+(allowAdd?'<em>'+(done?'Add more':'Add')+'</em>':'')+'</button>';
     }).join('')+'</div>';
     return '<div class="card insp-photos" style="margin-bottom:10px;" data-tenant="'+tenantId+'" data-type="'+type+'">'+
       '<div class="detail-head insp-photos-head" style="margin-top:0;align-items:center;">'+
