@@ -121,3 +121,21 @@ export async function markOwnWelcomeSeen() {
   const { error } = await supabase.rpc('mark_own_welcome_seen');
   if (error) throw error;
 }
+
+// Tenant: the dates and bill factor of the OTHER tenants of their property (no names or contact details,
+// SECURITY DEFINER RPC) — the move-out estimate needs to know how many people share the bills.
+export async function getHousemateOccupancy() {
+  const { data, error } = await supabase.rpc('my_housemates_occupancy');
+  if (error) throw error;
+  return (data || []).map(function (r) {
+    return {
+      id: null,
+      propertyId: r.property_id,
+      moveInDate: r.move_in_date,
+      expectedMoveOutDate: r.expected_move_out_date || null,
+      actualMoveOutDate: r.actual_move_out_date || null,
+      billOccupancyFactor: Number(r.bill_occupancy_factor) || 1,
+      rentAmount: 1
+    };
+  });
+}

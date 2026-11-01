@@ -10,7 +10,7 @@ import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './li
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
 import * as propertyService from './services/propertyService.js?v=5';
 import * as roomService from './services/roomService.js?v=3';
-import * as tenantService from './services/tenantService.js?v=11';
+import * as tenantService from './services/tenantService.js?v=12';
 import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
@@ -4123,7 +4123,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var amt = 0, days = 0;
     recent.forEach(function(b){ amt += b.amount; days += daysBetween(b.billingPeriodStart, b.billingPeriodEnd) + 1; });
     var houseDaily = days > 0 ? amt / days : 0;
-    var propTenants = tenantsOfProperty(t.propertyId);
+    var propTenants = tenantsOfProperty(t.propertyId).concat(housemateStubs.filter(function(x){ return x.propertyId === t.propertyId; }));
     var total = 0, n = 0, first = null, last = null;
     // The leaving tenant is charged THROUGH their move-out day (leaving on the 3rd = billed to the
     // 3rd), the same way their last rent period is prorated up to and including that day.
@@ -12251,6 +12251,16 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var s = agencyStatusInfo(key);
     return '<span class="mail-st st-'+s.key+'" title="Estado">'+s.ic+' '+esc(s.short)+'</span>';
   }
+  /** Anonymous housemates (dates + bill factor only) for a TENANT's session: a tenant can read only their
+   *  own row, so without these the move-out estimate sees one person in the house and charges them the
+   *  house's whole cost. Empty for staff (they have every tenant). */
+  var housemateStubs = [];
+  function housemateStubsFrom(list, excludeIds){
+    return (list || []).filter(function(x){ return excludeIds.indexOf(x.id) < 0 && x.rentAmount > 0; }).map(function(x, i){
+      return { id:'housemate-'+i, propertyId:x.propertyId, moveInDate:x.moveInDate, expectedMoveOutDate:x.expectedMoveOutDate || null,
+        actualMoveOutDate:x.actualMoveOutDate || null, billOccupancyFactor:x.billOccupancyFactor || 1, rentAmount:x.rentAmount, stub:true };
+    });
+  }
   var agencyCases = [], agencyLastCheck = null, staffDirectory = [], agencyUpdates = [];
   /** Newest first by last activity: the email arriving, or a follow-up email ("Update") filed under it,
    *  so a case that just got an update comes back to the top. */
@@ -18563,6 +18573,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     };
   }
   function viewAsRestore(s){
+    housemateStubs = [];
     properties = s.properties; rooms = s.rooms; tenants = s.tenants; bonds = s.bonds; rentSchedules = s.rentSchedules;
     paymentRecords = s.paymentRecords; bills = s.bills; tenantDocuments = s.tenantDocuments;
     maintenanceRequests = s.maintenanceRequests; notificationsList = s.notificationsList; recurringBills = s.recurringBills;
@@ -18602,6 +18613,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       .map(function(p){ return safeById[p.id] || p; });
     rooms = s.rooms.filter(function(r){ return roomIds.indexOf(r.id) > -1; });
     tenants = mine;
+    housemateStubs = housemateStubsFrom(s.tenants, mine.map(function(m){ return m.id; }));
     bonds = s.bonds.filter(own);
     rentSchedules = s.rentSchedules.filter(own);
     paymentRecords = s.paymentRecords.filter(own);
@@ -20272,7 +20284,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getStaff().catch(function(){ return []; })),
       (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getUpdates().catch(function(e){ console.error('agency email updates', e); return []; })),
       (isTenantRole() ? Promise.resolve([]) : whatsappSendService.getAll().catch(function(e){ console.error('whatsapp sends', e); return []; })),
-      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getReceipts().catch(function(e){ console.error('agency receipts', e); return []; }))
+      (isTenantRole() ? Promise.resolve([]) : agencyEmailService.getReceipts().catch(function(e){ console.error('agency receipts', e); return []; })),
+      (isTenantRole() ? tenantService.getHousemateOccupancy().catch(function(e){ console.error('housemate occupancy', e); return []; }) : Promise.resolve([]))
     ]);
     // Fingerprint of everything just loaded — a background refresh that brings back exactly the
     // same data doesn't redraw the page (no flicker, no lost scroll, no swallowed taps).
@@ -20317,6 +20330,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     agencyUpdates = results[37] || [];
     waSends = results[38] || [];
     agencyReceipts = results[39] || [];
+    housemateStubs = housemateStubsFrom(results[40], []);
     if (isAdminLike()){ allProfiles = withStaffStubs(results[32] || []); propertyAssignments = results[33] || []; }
     recomputeRentCharges();
     refreshStaticSelects();
