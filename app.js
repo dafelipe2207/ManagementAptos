@@ -17282,13 +17282,10 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       }).join('')+'</div>'+
       (r && r.filePath ? '<button class="mini-btn" style="margin-top:12px;" onclick="viewReceipt(\'house-rules\',\''+r.filePath+'\')">📄 Open the full document'+(r.fileName?' ('+esc(r.fileName)+')':'')+'</button>' : '')+
       '</div>';
-    var nav = doc.sections.length > 1 ? '<div class="rules-jump">'+doc.sections.map(function(s){
-      var tp = ruleTopic(s.topic);
-      return '<button type="button" class="rules-chip" style="--tone:'+tp.tone+'" onclick="document.getElementById(\'rsec-'+s.id+'\').scrollIntoView({behavior:\'smooth\',block:\'start\'})">'+tp.emoji+' '+esc(s.title||tp.label)+'</button>';
-    }).join('')+'</div>' : '';
     var search = '<div class="rules-search"><input type="search" id="rules-search-input" placeholder="Search the rules — e.g. guests, bins, shower" value="'+esc(tenantRulesQuery)+'" oninput="setTenantRulesQuery(this.value)" /></div>';
     var closing = doc.closing ? '<div class="card rules-closing">✍️ '+esc(doc.closing)+'</div>' : '';
-    return header + hero + search + nav + '<div id="rules-sections">'+tenantRulesSectionsHtml(doc)+'</div>' + closing;
+    var allBtns = doc.sections.length > 1 ? '<div class="rules-expand"><button type="button" class="text-link" onclick="rulesToggleAllTenant(true)">Expand all</button><span aria-hidden="true">·</span><button type="button" class="text-link" onclick="rulesToggleAllTenant(false)">Collapse all</button></div>' : '';
+    return header + hero + search + allBtns + '<div id="rules-sections">'+tenantRulesSectionsHtml(doc)+'</div>' + closing;
   }
   function tenantRulesSectionsHtml(doc){
     var q = tenantRulesQuery.trim().toLowerCase();
@@ -17299,16 +17296,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       if (!rules.length) return '';
       shown += rules.length;
       rules = rules.slice().sort(function(a,b){ return RULE_LEVEL_ORDER.indexOf(a.level) - RULE_LEVEL_ORDER.indexOf(b.level); });
-      return '<section class="card rules-section" id="rsec-'+s.id+'" style="--tone:'+tp.tone+'">'+
-        '<header class="rules-section-head">'+topicTile(s.topic)+'<h2>'+esc(s.title||tp.label)+'</h2><span class="rules-count">'+rules.length+'</span></header>'+
+      // One collapsed row per topic (23 open topics were a wall of text); a search opens what matched.
+      return '<details class="card rules-section" id="rsec-'+s.id+'" style="--tone:'+tp.tone+'"'+(q ? ' open' : '')+'>'+
+        '<summary class="rules-section-head">'+topicTile(s.topic)+'<h2>'+esc(s.title||tp.label)+'</h2><span class="rules-count">'+rules.length+'</span><span class="rules-chev" aria-hidden="true">›</span></summary>'+
         '<ul class="rules-items">'+rules.map(function(r){
           return '<li class="rule rule-'+r.level+'">'+ruleLevelPill(r.level)+'<div class="rule-body"><div class="rule-text">'+esc(r.text)+'</div>'+
             (r.note ? '<div class="rule-note">'+esc(r.note)+'</div>' : '')+'</div></li>';
-        }).join('')+'</ul></section>';
+        }).join('')+'</ul></details>';
     }).join('');
     if (!shown) return '<div class="card rules-empty"><p>No rule mentions “'+esc(tenantRulesQuery)+'”.</p></div>';
     return html;
   }
+  /** Expand / collapse every topic in the tenant's rules list. */
+  window.rulesToggleAllTenant = function(open){
+    document.querySelectorAll('#rules-sections details.rules-section, .rules-preview details.rules-section').forEach(function(d){ d.open = !!open; });
+  };
   function setTenantRulesQuery(v){
     tenantRulesQuery = v || '';
     var t = myTenantRecord(); if (!t) return;
@@ -17323,6 +17325,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   var rulesDrafts = {};   // propertyId -> { sections } being edited
   var rulesDirty = {};    // propertyId -> true when there are unsaved changes
   var rulesPreview = false;
+  var rulesOpen = {};     // section id -> open in the editor (kept across re-renders)
+  window.rulesOpen = rulesOpen;
+  window.rulesToggleAll = function(pid, open){ rulesDraftFor(pid).sections.forEach(function(sec){ rulesOpen[sec.id] = !!open; }); refreshRulesEditor(); };
   function rulesDraftFor(pid){
     if (!rulesDrafts[pid]){ var r = houseRulesOf(pid); rulesDrafts[pid] = parseHouseRules(r ? r.content : ''); }
     return rulesDrafts[pid];
@@ -17366,7 +17371,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     }
     var sectionsHtml = doc.sections.map(function(s, si){
       var tp = ruleTopic(s.topic);
-      return '<section class="card rules-edit-section" style="--tone:'+tp.tone+'">'+
+      var nFilled = s.rules.filter(function(r){ return (r.text||'').trim(); }).length;
+      return '<details class="card rules-edit-section" style="--tone:'+tp.tone+'"'+(rulesOpen[s.id] ? ' open' : '')+' ontoggle="rulesOpen[\''+s.id+'\']=this.open">'+
+        '<summary class="res-sum">'+topicTile(s.topic)+'<span class="res-sum-title">'+esc(s.title||tp.label)+'</span><span class="rules-count">'+nFilled+'</span><span class="rules-chev" aria-hidden="true">›</span></summary>'+
         '<div class="res-head">'+
           '<label class="res-topic" title="Change topic">'+topicTile(s.topic)+
             '<select onchange="rulesSetTopic(\''+pid+'\','+si+',this.value)">'+RULE_TOPICS.map(function(x){ return '<option value="'+x.key+'"'+(x.key===s.topic?' selected':'')+'>'+x.emoji+' '+esc(x.label)+'</option>'; }).join('')+'</select></label>'+
@@ -17392,8 +17399,9 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
             '</div></div>';
         }).join('')+
         '<button type="button" class="res-add" onclick="rulesAddRule(\''+pid+'\','+si+')">+ Add a rule</button></div>'+
-        '</section>';
+        '</details>';
     }).join('');
+    var openAllBar = '<div class="rules-expand"><button type="button" class="text-link" onclick="rulesToggleAll(\''+pid+'\',true)">Expand all</button><span aria-hidden="true">·</span><button type="button" class="text-link" onclick="rulesToggleAll(\''+pid+'\',false)">Collapse all</button></div>';
     var introHtml = '<div class="card rules-textblock"><label>Introduction <span>(shown at the top)</span></label>'+
       '<textarea rows="2" class="res-text" oninput="autoGrow(this);rulesSetDoc(\''+pid+'\',\'intro\',this.value)" placeholder="e.g. To keep the apartment clean, respectful and safe, all residents agree to follow these rules.">'+esc(doc.intro||'')+'</textarea></div>';
     var closingHtml = '<div class="card rules-textblock"><label>Closing note <span>(shown at the end — e.g. the acknowledgement)</span></label>'+
@@ -17403,7 +17411,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       RULE_TOPICS.filter(function(t){ return used.indexOf(t.key)===-1 || t.key==='other'; }).map(function(t){
         return '<button type="button" class="rules-chip" style="--tone:'+t.tone+'" onclick="rulesAddSection(\''+pid+'\',\''+t.key+'\')">'+t.emoji+' '+esc(t.label)+'</button>';
       }).join('')+'</div></div>';
-    return toolbar + introHtml + sectionsHtml + addTopic + closingHtml + rulesPublishBarHtml(pid, saved);
+    return toolbar + introHtml + openAllBar + sectionsHtml + addTopic + closingHtml + rulesPublishBarHtml(pid, saved);
   }
   function tenantRulesSectionsHtmlFor(doc){
     var keep = tenantRulesQuery; tenantRulesQuery = '';
@@ -17434,7 +17442,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   window.rulesUseStarter = function(pid){ rulesDrafts[pid] = starterHouseRules(); rulesDirty[pid] = true; refreshRulesEditor(); };
   window.rulesAddSection = function(pid, topic){
     var d = rulesDraftFor(pid);
-    d.sections.push({ id:newRuleId(), topic:topic, title:ruleTopic(topic).label, rules:[{ id:newRuleId(), text:'', note:'', level:'please' }] });
+    var newSec = { id:newRuleId(), topic:topic, title:ruleTopic(topic).label, rules:[{ id:newRuleId(), text:'', note:'', level:'please' }] };
+    d.sections.push(newSec); rulesOpen[newSec.id] = true;
     rulesDirty[pid] = true; refreshRulesEditor();
     var last = document.querySelectorAll('.rules-edit-section'); if (last.length){ var ta = last[last.length-1].querySelector('textarea'); if (ta){ last[last.length-1].scrollIntoView({behavior:'smooth',block:'center'}); ta.focus(); } }
   };
