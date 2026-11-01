@@ -16490,6 +16490,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       moveOutEstimateBodyHtml(est, manual, 'tenant')+'</div>';
   }
 
+  /** Tenant side: what already left the bond before this settlement (earlier deductions / money already
+   *  returned). Part of the refund maths, so it must be visible or the figures don't add up. */
+  function tenantBondEarlierHtml(bond, settlement){
+    if (!bond) return { rows:'', ded:0, ret:0 };
+    var ded = round2(bond.deduction || 0), ret = round2(bond.amountReturned || 0);
+    var lines = (bond.discounts && bond.discounts.length) ? bond.discounts.filter(function(d){ return d.settlementId !== settlement.id; }) : (ded > 0 ? [{ label:'Deduction', amount:ded }] : []);
+    var rows = '';
+    if (ded > 0.004){
+      rows += '<h3 style="font-size:12.5px;">Already deducted from your bond</h3>'+
+        lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label || d.description || 'Deduction')+'</span><span class="v">'+(d.amount < 0 ? '+'+money(-d.amount) : money(d.amount))+'</span></div>'; }).join('');
+    }
+    if (ret > 0.004) rows += '<div class="field-row"><span class="k">Already returned to you</span><span class="v">'+money(ret)+'</span></div>';
+    return { rows:rows, ded:ded, ret:ret };
+  }
+
   function renderTenantMyBondHtml(t){
     var bond = bondOf(t.id);
     var settlement = moveOutSettlementOf(t.id);
@@ -16499,7 +16514,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var lines = (bond && bond.discounts || []).filter(function(d){ return d.settlementId === settlement.id; });
       return '<div class="card"><h2>My Bond</h2>'+
         '<div class="field-row"><span class="k">Status</span><span class="v">Move-Out Completed</span></div>'+rows+
-        '<h3 style="font-size:12.5px;">Deductions</h3>'+
+        tenantBondEarlierHtml(bond, settlement).rows+
+        '<h3 style="font-size:12.5px;">'+(tenantBondEarlierHtml(bond, settlement).ded > 0.004 ? 'Deductions in this settlement' : 'Deductions')+'</h3>'+
         lines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label)+'</span>'+bondLineValueHtml(d, false, t.id)+'</div>'; }).join('')+
         (bond ? (bondShortfall(bond) > 0
           ? '<div class="field-row"><span class="k" style="font-weight:650;">Still to pay beyond the bond</span><span class="v" style="font-weight:650;color:var(--status-overdue);">'+money(bondShortfall(bond))+'</span></div>'
@@ -16511,14 +16527,15 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var candidates = computeCandidateDeductions(t.id);
     // pending_approval: the FROZEN totals stored on the settlement row at Calculate time.
     var totals = { totalDeductions: settlement.totalDeductions, bondRefund: settlement.bondRefund };
+    var earlier = tenantBondEarlierHtml(bond, settlement);
     return '<div class="card"><h2>My Bond</h2>'+
-      '<div class="field-row"><span class="k">Status</span><span class="v">Settlement pending approval</span></div>'+rows+
-      '<h3 style="font-size:12.5px;">Deductions (estimated)</h3>'+
+      '<div class="field-row"><span class="k">Status</span><span class="v">Settlement pending approval</span></div>'+rows+earlier.rows+
+      '<h3 style="font-size:12.5px;">'+(earlier.ded > 0.004 ? 'Deductions in this settlement (estimated)' : 'Deductions (estimated)')+'</h3>'+
       (candidates.rentAmount > 0 ? '<div class="field-row"><span class="k">Rent</span><span class="v">'+money(candidates.rentAmount)+'</span></div>' : '')+
       candidates.billLines.map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
       (candidates.estimatedLines || []).map(function(l){ return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+(l.includedInRent ? ' (included in rent)' : ' (estimated — not billed yet)')+'</span><span class="v">'+money(l.amount)+'</span></div>'; }).join('')+
       settlement.manualDeductions.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.description)+'</span><span class="v">'+money(d.amount)+'</span></div>'; }).join('')+
-      '<div class="field-row"><span class="k">Total deductions</span><span class="v">'+money(totals.totalDeductions)+'</span></div>'+
+      '<div class="field-row"><span class="k">'+(earlier.ded > 0.004 ? 'Total in this settlement' : 'Total deductions')+'</span><span class="v">'+money(totals.totalDeductions)+'</span></div>'+
       '<div class="field-row"><span class="k" style="font-weight:650;">Estimated refund</span><span class="v" style="font-weight:650;">'+(totals.bondRefund!=null?money(totals.bondRefund):'—')+'</span></div>'+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:6px 0 0;">Pending administrator approval — this is not final.</p></div>';
   }
