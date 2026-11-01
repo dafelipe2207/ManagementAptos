@@ -3779,8 +3779,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       tenantRentHistoryHtml(t.id) +
       bondCard +
       '<div class="card"><h2>Dates</h2><div class="field-list">'+datesRows+'</div></div>'+
-      inspectionSectionHtml(t.id, 'move_in', false) +
-      inspectionSectionHtml(t.id, 'move_out', false) +
+      inspectionSectionHtml(t.id, 'move_in', !isViewer()) +
+      inspectionSectionHtml(t.id, 'move_out', !isViewer()) +
       moveOutSettlementCardHtml(t) +
       bondSettlementSummaryHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
@@ -14451,7 +14451,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   function moveInPhotosDeadline(t){
     if (!t || !t.moveInDate) return null;
     var base = stepDateIso(t.moveInDate, MOVE_IN_PHOTOS_WINDOW_DAYS);
-    return t.moveInPhotosExtendedUntil && t.moveInPhotosExtendedUntil > base ? t.moveInPhotosExtendedUntil : base;
+    // Once staff set a date it IS the deadline (they can move it later or earlier than the default).
+    return t.moveInPhotosExtendedUntil ? t.moveInPhotosExtendedUntil : base;
   }
   function moveInPhotosDaysLeft(t){ var d = moveInPhotosDeadline(t); return d ? daysBetween(TODAY, d) : null; }
   function moveInPhotosWindowClosed(t){ var d = moveInPhotosDaysLeft(t); return d != null && d < 0; }
@@ -15011,13 +15012,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       }
     }
     // Staff: see the tenant's window and give them more days when they haven't uploaded everything.
-    if (type === 'move_in' && isStaff() && t && t.moveInDate && t.rentAmount > 0 && !tenantHasMovedOut(t) && (!moveInPhotosAllAreasDone(t.id) || t.moveInPhotosExtensionRequestedAt)){
+    if (type === 'move_in' && isStaff() && t && t.moveInDate && t.rentAmount > 0 && !tenantHasMovedOut(t)){
       var sLeft = moveInPhotosDaysLeft(t), sUntil = moveInPhotosDeadline(t), sAsked = !!t.moveInPhotosExtensionRequestedAt;
       deadlineHtml = '<div class="insp-deadline'+(sLeft < 0 || sAsked ? ' urgent' : '')+'" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">'+
         '<span>'+(sLeft < 0 ? '⌛ Tenant\'s upload window closed '+shortDate(sUntil) : '⏳ Tenant can upload until '+shortDate(sUntil)+' ('+sLeft+' day'+(sLeft===1?'':'s')+' left)')+
           (sAsked ? ' · <b>asked for more days</b>' : '')+'</span>'+
         (isViewer() ? '' : '<select id="insp-ext-days-'+t.id+'" class="mail-assign" aria-label="Days to add">'+[1,2,3,5,7].map(function(d){ return '<option value="'+d+'"'+(d===3?' selected':'')+'>'+d+' day'+(d===1?'':'s')+'</option>'; }).join('')+'</select>'+
-          '<button type="button" class="mini-btn primary" onclick="extendMoveInPhotos(\''+t.id+'\')">➕ Add days</button>')+
+          '<button type="button" class="mini-btn primary" onclick="extendMoveInPhotos(\''+t.id+'\',1)">➕ Add days</button>'+
+          '<button type="button" class="mini-btn" onclick="extendMoveInPhotos(\''+t.id+'\',-1)">➖ Remove days</button>')+
       '</div>';
     }
     // Tenant, move-out photos: locked until they've given a move-out date (they haven't left yet).
@@ -15493,12 +15495,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
 
   /** Staff: give a tenant more days to upload their move-in photos (counted from today, or from the
    *  current deadline if it hasn't passed yet). The tenant is told in the app. */
-  window.extendMoveInPhotos = async function(tenantId){
+  window.extendMoveInPhotos = async function(tenantId, sign){
     var t = tenantOf(tenantId); if (!t || !isStaff() || isViewer()) return;
     var sel = document.getElementById('insp-ext-days-' + tenantId);
     var days = parseInt(sel && sel.value, 10) || 3;
     var cur = moveInPhotosDeadline(t);
-    var until = stepDateIso(cur && cur > TODAY ? cur : TODAY, days);
+    var until;
+    if (sign === -1){
+      // Remove days from the current deadline (never before the move-in date).
+      until = stepDateIso(cur, -days);
+      if (until < t.moveInDate) until = t.moveInDate;
+      days = -days;
+    } else {
+      // Add days, counted from today if the window has already closed.
+      until = stepDateIso(cur && cur > TODAY ? cur : TODAY, days);
+    }
     try {
       var saved = await tenantService.setMoveInPhotosExtension(tenantId, until);
       Object.assign(t, saved);
@@ -15506,10 +15517,13 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       showToast('Could not add the days. ' + friendlyErrorMessage(err), 'error');
       return;
     }
-    notificationService.notify(t.authUserId, 'More time for your move-in photos',
-      'Your administrator gave you ' + days + ' more day' + (days === 1 ? '' : 's') + ' — you can upload your move-in photos until ' + fullDate(until) + '. Go to Inspection in the app.',
+    var nAbs = Math.abs(days), removed = days < 0;
+    notificationService.notify(t.authUserId, removed ? 'Your move-in photos deadline changed' : 'More time for your move-in photos',
+      removed
+        ? 'Your administrator moved your move-in photos deadline to ' + fullDate(until) + '. Go to Inspection in the app.'
+        : 'Your administrator gave you ' + nAbs + ' more day' + (nAbs === 1 ? '' : 's') + ' — you can upload your move-in photos until ' + fullDate(until) + '. Go to Inspection in the app.',
       'tenants', t.id, { category:'check_in', propertyId:t.propertyId, tenantId:t.id, createdByProfileId: currentProfile ? currentProfile.id : null });
-    showToast(days + ' more day' + (days === 1 ? '' : 's') + ' given — until ' + shortDate(until) + '.', 'success');
+    showToast(removed ? nAbs + ' day' + (nAbs === 1 ? '' : 's') + ' removed — now until ' + shortDate(until) + '.' : nAbs + ' more day' + (nAbs === 1 ? '' : 's') + ' given — until ' + shortDate(until) + '.', 'success');
     render();
   };
   /** Tenant: the move-in photos window has closed — ask the administrators to enable more days. */
