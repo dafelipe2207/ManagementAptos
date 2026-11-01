@@ -8,7 +8,7 @@ import { friendlyErrorMessage } from './lib/errors.js?v=2';
 import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
   // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
-import * as propertyService from './services/propertyService.js?v=5';
+import * as propertyService from './services/propertyService.js?v=6';
 import * as roomService from './services/roomService.js?v=4';
 import * as tenantService from './services/tenantService.js?v=14';
 import * as bondService from './services/bondService.js?v=5';
@@ -3792,6 +3792,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       inspectionSectionHtml(t.id, 'move_in', !isViewer()) +
       inspectionSectionHtml(t.id, 'move_out', !isViewer()) +
       moveOutSettlementCardHtml(t) +
+      ((t.actualMoveOutDate || t.expectedMoveOutDate) ? moveOutItemsReportHtml(t) : '') +
       bondSettlementSummaryHtml(t) +
       (t.notes ? '<div class="card"><h2>Notes</h2><p style="margin:0;font-size:13.5px;color:var(--text-dim);">'+esc(t.notes)+'</p></div>' : '');
   }
@@ -4996,6 +4997,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     L = L.concat(T);
     L.push('```');
     L.push('');
+    moveOutItemsMessageLines(t).forEach(function(x){ L.push(x); });
     if (d.final){
       L.push(d.beyond > 0 ? '⚠️ *Amount to pay beyond your bond: '+money(d.beyond)+'*' : '✅ *Bond back to you: '+money(d.bondBack)+'*');
       L.push('');
@@ -5064,6 +5066,22 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     rows.push({ kind:'sub', label:'Subtotal', amount:d.estimatedTotal });
     rows.push({ kind:'gap' });
     rows.push({ kind:'kv', label:'Total owed + estimated', amount:d.total, bold:true });
+    var itemsRep = moveOutItemsReport(t);
+    if (itemsRep){
+      var imgItems = [];
+      itemsRep.room.forEach(function(r){ imgItems.push({ r:r, g:'room' }); });
+      itemsRep.house.forEach(function(r){ imgItems.push({ r:r, g:'house' }); });
+      // Items that need attention first, then the rest — the image stays a sensible height.
+      imgItems.sort(function(a2, b2){ return (a2.r.status === 'ok' ? 1 : 0) - (b2.r.status === 'ok' ? 1 : 0) || (b2.r.note ? 1 : 0) - (a2.r.note ? 1 : 0); });
+      var shown = imgItems.slice(0, 12);
+      rows.push({ kind:'gap' });
+      rows.push({ kind:'head', label:'Items · room & house', color:'#2563eb' });
+      shown.forEach(function(x){
+        var nt = x.r.note ? '💬 ' + (x.r.note.length > 62 ? x.r.note.slice(0, 61) + '…' : x.r.note) : '';
+        rows.push({ kind:'txt', label:x.r.name + (x.r.qty > 1 ? ' ×' + x.r.qty : ''), sub:nt, text:moveOutItemStatusLabel(x.r, x.g), ok:x.r.status === 'ok', bad:x.r.status === 'missing' });
+      });
+      if (imgItems.length > shown.length) rows.push({ kind:'txt', label:'+ ' + (imgItems.length - shown.length) + ' more in your app', text:'', ok:true });
+    }
     var heights = rows.map(function(r){ return r.kind === 'head' ? 86 : r.kind === 'gap' ? 20 : (r.sub ? rowH + 34 : rowH); });
     var Hd = 230 + heights.reduce(function(s,h){ return s + h; }, 0) + 190 + 170;
     var card = imageCard(Wd, Hd), g = card.g, rr = card.rr;
@@ -5081,6 +5099,14 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         g.fillStyle = r.color; g.font = '700 28px ' + font;
         g.fillText(r.label.toUpperCase(), L, y + 56);
         g.fillStyle = '#e5e7eb'; g.fillRect(L, y + 72, R - L, 2);
+        y += h; return;
+      }
+      if (r.kind === 'txt'){
+        var m2 = y + 40;
+        g.font = '400 32px ' + font; g.fillStyle = '#1d2433'; g.textAlign = 'left'; g.fillText(r.label, L, m2);
+        if (r.sub){ g.save(); g.font = '400 26px ' + font; g.fillStyle = '#6b7280'; g.fillText(r.sub, L, m2 + 36); g.restore(); }
+        g.font = '600 28px ' + font; g.fillStyle = r.ok ? '#137a45' : (r.bad ? '#b42318' : '#9aa1ad'); g.textAlign = 'right';
+        g.fillText(r.text, R, m2); g.textAlign = 'left';
         y += h; return;
       }
       var mid = y + 40;
@@ -16487,7 +16513,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var manual = settlement ? (settlement.manualDeductions || []) : [];
     return '<div class="card"><h2>Your move-out estimate</h2>'+
       '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">What you owe is taken from your bond. "What you already owe" are real amounts; "Estimated bills" are an estimate for the days not billed yet, based on your average. Anything you pay before you leave lowers what\'s taken from the bond. The final figure is confirmed once the last bills arrive and your administrator approves it.</p>'+
-      moveOutEstimateBodyHtml(est, manual, 'tenant')+'</div>';
+      moveOutEstimateBodyHtml(est, manual, 'tenant')+'</div>'+moveOutItemsReportHtml(t);
   }
 
   /** Tenant side: what already left the bond before this settlement (earlier deductions / money already
@@ -17679,6 +17705,8 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     document.getElementById('property-bank-account').value = p ? (p.bankAccountNumber||'') : '';
     onPropertyPaymentMethodChange();
     onPropertyLeaseFrequencyChange();
+    propInvDraft = ((p && p.inventory) || []).map(function(x){ return { id:x.id, name:x.name, qty:x.qty || 1, area:x.area || 'Other' }; });
+    renderPropInvEditor();
     document.getElementById('property-modal-error').hidden = true;
     document.getElementById('property-modal').hidden = false;
   }
@@ -17759,6 +17787,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       var existingForEdit = propertyModalEditId ? propertyOf(propertyModalEditId) : null;
       var draft = { name:name, address:address, bedrooms:bedrooms, bathrooms:bathrooms, notes:notes,
         whatsappGroupLink:whatsappGroupLink, binDutyRequired:binDutyRequired,
+        inventory: cleanPropInventory(propInvDraft),
         wifiSsid: document.getElementById('property-wifi-ssid').value.trim(),
         wifiPassword: document.getElementById('property-wifi-password').value,
         wifiNotes: document.getElementById('property-wifi-notes').value.trim(),
@@ -17879,6 +17908,43 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       (roomItemsDraft.length ? '' : '<button type="button" class="mini-btn" onclick="roomItemsStarter()">Use starter set</button>')+'</div></div>';
     if (focusLast){ var ins = box.querySelectorAll('.ri-name'); if (ins.length) ins[ins.length-1].focus(); }
   }
+  /* Shared-house inventory on the property (TV, sofa, pots, vacuum, air fryer…). */
+  var propInvDraft = [];
+  var PROP_INV_AREAS = ['Living room', 'Kitchen', 'Laundry', 'Bathroom', 'Outdoor', 'Other'];
+  var PROP_INV_STARTER = [
+    ['TV',1,'Living room'], ['Sofa',1,'Living room'], ['Coffee table',1,'Living room'], ['Dining table + chairs',1,'Kitchen'],
+    ['Pots & pans set',1,'Kitchen'], ['Plates, bowls & cutlery',1,'Kitchen'], ['Air fryer',1,'Kitchen'], ['Microwave',1,'Kitchen'],
+    ['Kettle',1,'Kitchen'], ['Toaster',1,'Kitchen'], ['Fridge',1,'Kitchen'], ['Vacuum cleaner',1,'Laundry'], ['Washing machine',1,'Laundry'],
+    ['Iron + board',1,'Laundry'], ['Broom + mop',1,'Laundry']
+  ];
+  function cleanPropInventory(list){
+    return (list || []).filter(function(x){ return (x.name || '').trim(); })
+      .map(function(x){ return { id:x.id || newRoomItemId(), name:x.name.trim(), qty:Math.max(1, parseInt(x.qty, 10) || 1), area:x.area || 'Other' }; });
+  }
+  function renderPropInvEditor(focusLast){
+    var box = document.getElementById('property-inventory-editor'); if (!box) return;
+    var rows = propInvDraft.map(function(x, i){
+      return '<div class="ri-row ri-row-area">'+
+        '<input class="ri-name" type="text" value="'+esc(x.name)+'" placeholder="e.g. Air fryer" aria-label="Item name" oninput="propInvSet('+i+',this.value)" />'+
+        '<select class="ri-area" aria-label="Area" onchange="propInvArea('+i+',this.value)">'+PROP_INV_AREAS.map(function(a2){ return '<option'+((x.area || 'Other') === a2 ? ' selected' : '')+'>'+a2+'</option>'; }).join('')+'</select>'+
+        '<div class="ri-qty" role="group" aria-label="Quantity"><button type="button" aria-label="Less" onclick="propInvQty('+i+',-1)">−</button><b>'+(x.qty || 1)+'</b>'+
+        '<button type="button" aria-label="More" onclick="propInvQty('+i+',1)">+</button></div>'+
+        '<button type="button" class="icon-mini-btn danger" title="Remove item" aria-label="Remove item" onclick="propInvRemove('+i+')">✕</button></div>';
+    }).join('');
+    box.innerHTML = '<div class="ri-editor"><label class="ri-title">Shared house inventory</label>'+
+      '<p class="ri-hint">TV, sofa, pots, vacuum, air fryer… Every tenant sees this list and you check it on their page at move-in and move-out.</p>'+
+      (rows || '<p class="ri-empty">No items yet.</p>')+
+      '<div class="ri-actions"><button type="button" class="mini-btn" onclick="propInvAdd()">Add item</button>'+
+      (propInvDraft.length ? '' : '<button type="button" class="mini-btn" onclick="propInvStarter()">Use starter set</button>')+'</div></div>';
+    if (focusLast){ var ins = box.querySelectorAll('.ri-name'); if (ins.length) ins[ins.length-1].focus(); }
+  }
+  window.propInvSet = function(i, v){ if (propInvDraft[i]) propInvDraft[i].name = v; };
+  window.propInvArea = function(i, v){ if (propInvDraft[i]) propInvDraft[i].area = v; };
+  window.propInvQty = function(i, d){ if (!propInvDraft[i]) return; propInvDraft[i].qty = Math.max(1, (propInvDraft[i].qty || 1) + d); renderPropInvEditor(); };
+  window.propInvRemove = function(i){ propInvDraft.splice(i, 1); renderPropInvEditor(); };
+  window.propInvAdd = function(){ propInvDraft.push({ id:newRoomItemId(), name:'', qty:1, area:'Kitchen' }); renderPropInvEditor(true); };
+  window.propInvStarter = function(){ propInvDraft = PROP_INV_STARTER.map(function(x){ return { id:newRoomItemId(), name:x[0], qty:x[1], area:x[2] }; }); renderPropInvEditor(); };
+
   window.roomItemSet = function(i, v){ if (roomItemsDraft[i]) roomItemsDraft[i].name = v; };
   window.roomItemQty = function(i, d){ if (!roomItemsDraft[i]) return; roomItemsDraft[i].qty = Math.max(1, (roomItemsDraft[i].qty || 1) + d); renderRoomItemsEditor(); };
   window.roomItemRemove = function(i){ roomItemsDraft.splice(i, 1); renderRoomItemsEditor(); };
@@ -17889,11 +17955,64 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
    * the tenant sees the same list read-only. Stored on tenants.room_items_check = { itemId: { d, r } }. */
   function roomItemsFor(t){
     var room = t && t.roomId ? roomOf(t.roomId) : null;
+    var prop = t && t.propertyId ? propertyOf(t.propertyId) : (room ? propertyOf(room.propertyId) : null);
     var chk = (t && t.roomItemsCheck) || {};
-    return ((room && room.items) || []).map(function(x){
+    function mk(x, group){
       var c = chk[x.id] || {};
-      return { id:x.id, name:x.name, qty:x.qty || 1, delivered:c.d || null, returned:c.r || null, note:c.n || '', noteDate:c.na || null, reviewed:c.v || null };
+      return { id:x.id, name:x.name, qty:x.qty || 1, group:group, area:x.area || '', delivered:c.d || null, returned:c.r || null, note:c.n || '', noteDate:c.na || null, reviewed:c.v || null };
+    }
+    return ((room && room.items) || []).map(function(x){ return mk(x, 'room'); })
+      .concat(((prop && prop.inventory) || []).map(function(x){ return mk(x, 'house'); }));
+  }
+  /** What the move-out report says about the items: per item, back / not back, plus the tenant's observations. */
+  function moveOutItemsReport(t){
+    var items = roomItemsFor(t);
+    if (!items.length) return null;
+    function st(x){
+      if (x.group === 'house') return x.returned ? 'ok' : (x.delivered ? 'pending' : 'unknown');
+      return x.returned ? 'ok' : (x.delivered ? 'missing' : 'unknown');
+    }
+    var out = { room:[], house:[], notes:[] };
+    items.forEach(function(x){
+      var r = { name:x.name, qty:x.qty, area:x.area, status:st(x), note:x.note, noteDate:x.noteDate, reviewed:x.reviewed };
+      out[x.group].push(r);
+      if (x.note) out.notes.push(r);
     });
+    return out;
+  }
+  function moveOutItemStatusLabel(r, group){
+    return r.status === 'ok' ? (group === 'house' ? 'Checked ✓' : 'Returned ✓')
+      : r.status === 'missing' ? 'Not returned' : r.status === 'pending' ? 'To be checked' : 'Not recorded';
+  }
+  function moveOutItemsReportHtml(t){
+    var rep = moveOutItemsReport(t); if (!rep) return '';
+    function block(title, list, group){
+      if (!list.length) return '';
+      return '<h3 style="font-size:12.5px;">'+title+'</h3>'+list.map(function(r){
+        var col = r.status === 'ok' ? 'var(--status-paid)' : r.status === 'missing' ? 'var(--status-overdue)' : 'var(--text-faint)';
+        return '<div class="field-row"><span class="k">'+esc(r.name)+(r.qty > 1 ? ' ×'+r.qty : '')+
+          (r.note ? '<br><span style="font-size:11.5px;color:var(--text-faint);">💬 Tenant: '+esc(r.note)+' · '+(r.reviewed ? 'reviewed' : 'not reviewed yet')+'</span>' : '')+
+          '</span><span class="v" style="color:'+col+';font-size:12.5px;">'+moveOutItemStatusLabel(r, group)+'</span></div>';
+      }).join('');
+    }
+    return '<div class="card"><h2>Items check</h2>'+
+      '<p style="font-size:11.5px;color:var(--text-faint);margin:0 0 8px;">What was handed over and what came back, including what the tenant reported about each item.</p>'+
+      block('Room', rep.room, 'room')+block('Shared house items', rep.house, 'house')+'</div>';
+  }
+  function moveOutItemsMessageLines(t){
+    var rep = moveOutItemsReport(t); if (!rep) return [];
+    var L = [];
+    function block(title, list, group){
+      if (!list.length) return;
+      L.push('*'+title+'*');
+      list.forEach(function(r){
+        L.push((r.status === 'ok' ? '✅ ' : r.status === 'missing' ? '❌ ' : '▫️ ')+r.name+(r.qty > 1 ? ' ×'+r.qty : '')+' — '+moveOutItemStatusLabel(r, group).replace(' ✓',''));
+        if (r.note) L.push('   💬 '+r.note);
+      });
+      L.push('');
+    }
+    block('Your room', rep.room, 'room'); block('Shared house items', rep.house, 'house');
+    return L;
   }
   var roomItemNoteEditing = null; // item id whose observation the tenant is writing right now
   function roomItemNoteHtml(t, x, editable){
@@ -17929,17 +18048,21 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var nd = items.filter(function(x){ return x.delivered; }).length, nr = items.filter(function(x){ return x.returned; }).length;
     var toReview = items.filter(function(x){ return x.note && !x.reviewed; }).length;
     var leaving = !!(t.actualMoveOutDate || t.expectedMoveOutDate);
+    var lastGroup = null, hasHouse = items.some(function(x){ return x.group === 'house'; });
     var rows = items.map(function(x){
       var dBtn, rBtn;
       if (editable){
-        dBtn = '<button type="button" class="ri-chip'+(x.delivered ? ' on' : '')+'" aria-pressed="'+(x.delivered ? 'true' : 'false')+'" onclick="toggleRoomItem(\''+t.id+'\',\''+x.id+'\',\'d\')">'+(x.delivered ? '✓ ' : '')+'Delivered</button>';
-        rBtn = '<button type="button" class="ri-chip ret'+(x.returned ? ' on' : '')+'" aria-pressed="'+(x.returned ? 'true' : 'false')+'" onclick="toggleRoomItem(\''+t.id+'\',\''+x.id+'\',\'r\')">'+(x.returned ? '✓ ' : '')+'Returned</button>';
+        var dl = x.group === 'house' ? 'In place' : 'Delivered', rl = x.group === 'house' ? 'Checked' : 'Returned';
+        dBtn = '<button type="button" class="ri-chip'+(x.delivered ? ' on' : '')+'" aria-pressed="'+(x.delivered ? 'true' : 'false')+'" onclick="toggleRoomItem(\''+t.id+'\',\''+x.id+'\',\'d\')">'+(x.delivered ? '✓ ' : '')+dl+'</button>';
+        rBtn = '<button type="button" class="ri-chip ret'+(x.returned ? ' on' : '')+'" aria-pressed="'+(x.returned ? 'true' : 'false')+'" onclick="toggleRoomItem(\''+t.id+'\',\''+x.id+'\',\'r\')">'+(x.returned ? '✓ ' : '')+rl+'</button>';
       } else {
-        dBtn = '<span class="ri-state'+(x.delivered ? ' on' : '')+'">'+(x.delivered ? '✓ Delivered' : 'Pending')+'</span>';
-        rBtn = (x.returned ? '<span class="ri-state on">✓ Returned</span>' : '');
+        dBtn = '<span class="ri-state'+(x.delivered ? ' on' : '')+'">'+(x.delivered ? (x.group === 'house' ? '✓ In place' : '✓ Delivered') : 'Pending')+'</span>';
+        rBtn = (x.returned ? '<span class="ri-state on">✓ '+(x.group === 'house' ? 'Checked' : 'Returned')+'</span>' : '');
       }
       var dates = (x.delivered ? 'Delivered '+shortDate(x.delivered) : '') + (x.returned ? ' · Returned '+shortDate(x.returned) : '');
-      return '<div class="ri-item"><div class="ri-check-row"><div class="ri-check-main"><span class="ri-check-name">'+esc(x.name)+(x.qty > 1 ? ' <i>×'+x.qty+'</i>' : '')+'</span>'+
+      var gh = '';
+      if (hasHouse && x.group !== lastGroup){ lastGroup = x.group; gh = '<h3 class="ri-group">'+(x.group === 'house' ? 'Shared house items' : (staff ? 'Room' : 'Your room'))+'</h3>'; }
+      return gh+'<div class="ri-item"><div class="ri-check-row"><div class="ri-check-main"><span class="ri-check-name">'+esc(x.name)+(x.qty > 1 ? ' <i>×'+x.qty+'</i>' : '')+'</span>'+
         (dates && editable ? '<span class="ri-check-date">'+dates+'</span>' : '')+'</div><div class="ri-check-btns">'+dBtn+rBtn+'</div></div>'+
         roomItemNoteHtml(t, x, editable)+'</div>';
     }).join('');
@@ -17947,7 +18070,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var allBtns = editable ? '<div class="ri-bulk"><button type="button" class="mini-btn" onclick="markAllRoomItems(\''+t.id+'\',\'d\')">Mark all delivered</button>'+
       '<button type="button" class="mini-btn" onclick="markAllRoomItems(\''+t.id+'\',\'r\')">Mark all returned</button></div>' : '';
     var note = staff ? '' : '<p class="ri-hint" style="margin:0 0 10px;">Your administrator ticks each item when it is handed to you. If something is not right — a stain, damage, something missing — add an observation on that item; your administrator always reviews it. Please return everything in the same condition when you leave'+(leaving ? '.' : ' — the list comes back here for the check-out.')+'</p>';
-    return '<div class="card ri-card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">'+(staff ? 'Room items' : 'Items in your room')+'</h2>'+
+    return '<div class="card ri-card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">'+(staff ? 'Room & house items' : 'Items in your room & house')+'</h2>'+
       '<span class="ri-sum'+(nd === items.length ? ' ok' : '')+'">'+summary+'</span></div>'+
       (staff && toReview ? '<p class="ri-review-banner">💬 '+toReview+' observation'+(toReview === 1 ? '' : 's')+' from the tenant to review</p>' : '')+
       note+rows+allBtns+'</div>';

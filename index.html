@@ -17,13 +17,13 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Start-up: fetch the app and everything it imports in parallel, instead of discovering each
      file only after app.js has downloaded. Keep these URLs (with their ?v=) in step with app.js. -->
-<link rel="modulepreload" href="app.js?v=353">
+<link rel="modulepreload" href="app.js?v=354">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin>
 <link rel="modulepreload" href="lib/auth.js">
 <link rel="modulepreload" href="lib/db.js">
 <link rel="modulepreload" href="lib/errors.js?v=2">
 <link rel="modulepreload" href="lib/supabaseClient.js">
-<link rel="modulepreload" href="services/propertyService.js?v=5">
+<link rel="modulepreload" href="services/propertyService.js?v=6">
 <link rel="modulepreload" href="services/roomService.js?v=4">
 <link rel="modulepreload" href="services/tenantService.js?v=14">
 <link rel="modulepreload" href="services/bondService.js?v=5">
@@ -61,7 +61,7 @@
 <link rel="modulepreload" href="lib/tenantInvoice.js?v=1">
 <!-- Inter is only a fallback (Apple devices use their own SF font), so it must never hold up the first paint. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="styles.css?v=164">
+<link rel="stylesheet" href="styles.css?v=165">
 </head>
 <body>
 <div class="ios-wall" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -681,6 +681,8 @@
         <div><label for="property-wifi-password">Wi-Fi password</label><input id="property-wifi-password" type="text" autocomplete="off" placeholder="Shown to this property's tenants" /></div>
       </div>
       <div class="form-row"><label for="property-wifi-notes">Wi-Fi notes (optional)</label><input id="property-wifi-notes" type="text" maxlength="160" placeholder="e.g. Router is in the living room — restart it if it's slow" /></div>
+
+      <div id="property-inventory-editor"></div>
 
       <div class="form-row" style="display:flex;align-items:center;gap:8px;">
         <input id="property-bin-duty-required" type="checkbox" style="width:auto;" checked />
@@ -1392,6 +1394,6 @@
 <input id="payment-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handlePaymentReceiptFile(event)" />
 <input id="lease-receipt-input" type="file" accept="image/*,application/pdf" hidden onchange="handleLeaseReceiptFile(event)" />
 <script src="lib/qr.js?v=1"></script>
-<script type="module" src="app.js?v=353"></script>
+<script type="module" src="app.js?v=354"></script>
 </body>
 </html>
