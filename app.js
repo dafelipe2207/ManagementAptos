@@ -3692,8 +3692,16 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       return '<div class="field-row"><span class="k">'+esc(billTypeLabel(l.billType))+' bill <span class="badge" style="font-size:11px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>'+
         '<br><span style="font-size:11px;color:var(--text-faint);">'+(l.includedInRent ? 'Included in rent' : gapDaysLabel(l.gapDays, l.gapFrom, l.gapTo)+' (not billed yet)')+'</span></span><span class="v">'+money(l.amount)+'</span></div>';
     }).join('');
+    // What already left the bond before this settlement (earlier deductions, money already returned):
+    // it is part of the refund maths, so it has to be visible or the figures look wrong.
+    var prevDed = bond ? round2(bond.deduction || 0) : 0, prevRet = bond ? round2(bond.amountReturned || 0) : 0;
+    var prevLines = bond ? ((bond.discounts && bond.discounts.length) ? bond.discounts.filter(function(d){ return d.settlementId !== settlement.id; }) : (prevDed > 0 ? [{ label:'Deduction', amount:prevDed }] : [])) : [];
+    var prevHtml = (prevDed > 0.004 ? '<h3 style="font-size:12.5px;">Already deducted from the bond</h3>'+
+      prevLines.map(function(d){ return '<div class="field-row"><span class="k">'+esc(d.label || d.description || 'Deduction')+'</span><span class="v">'+(d.amount < 0 ? '+'+money(-d.amount) : money(d.amount))+'</span></div>'; }).join('') : '');
     var summaryHtml = '<div class="field-row"><span class="k">Original bond</span><span class="v">'+(bond?money(bond.amountPaid):'No bond on file')+'</span></div>'+
-      '<div class="field-row"><span class="k">Total deductions</span><span class="v" style="color:var(--status-overdue);">-'+money(totals.totalDeductions)+'</span></div>'+
+      (prevDed > 0.004 ? '<div class="field-row"><span class="k">Deducted earlier</span><span class="v" style="color:var(--status-overdue);">-'+money(prevDed)+'</span></div>' : '')+
+      (prevRet > 0.004 ? '<div class="field-row"><span class="k">Already returned to the tenant</span><span class="v" style="color:var(--status-overdue);">-'+money(prevRet)+'</span></div>' : '')+
+      '<div class="field-row"><span class="k">'+((prevDed > 0.004 || prevRet > 0.004) ? 'Deductions in this settlement' : 'Total deductions')+'</span><span class="v" style="color:var(--status-overdue);">-'+money(totals.totalDeductions)+'</span></div>'+
       (totals.bondRefund != null ? '<div class="field-row"><span class="k" style="font-weight:650;">Refund to tenant</span><span class="v" style="font-weight:650;">'+money(totals.bondRefund)+'</span></div>' : '');
 
     if (settlement.status === 'in_progress'){
@@ -3704,6 +3712,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         (creditRowsHtml ? '<h3 style="font-size:12.5px;">Credits to the tenant</h3>'+creditRowsHtml : '')+
         '<h3 style="font-size:12.5px;">Other deductions</h3>'+(deductionRowsHtml||'<p style="font-size:12.5px;color:var(--text-dim);">None added yet.</p>')+
         '<button class="mini-btn" onclick="openMoveOutDeductionModal(\''+settlement.id+'\')">Add deduction</button>'+
+        prevHtml+
         '<h3 style="font-size:12.5px;">Bond Summary (preview — not final)</h3>'+summaryHtml+
         '<button class="mini-btn primary" onclick="calculateMoveOutSettlement(\''+settlement.id+'\')">Calculate Move-Out Settlement</button></div>';
     }
@@ -3720,7 +3729,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       settlement.billsSnapshot.map(function(l){ return '<div class="field-row"><span class="k">'+esc(l.label)+
         (l.kind === 'estimated' ? ' <span class="badge" style="font-size:11px;padding:1px 6px;border-radius:8px;background:var(--status-due-bg, rgba(255,170,0,.15));color:var(--status-due);">Estimated</span>' : '')+
         '</span><span class="v"'+(l.amount < 0 ? ' style="color:var(--status-paid);">+'+money(-l.amount) : '>'+money(l.amount))+'</span></div>'; }).join('')+
-      deductionRowsHtml+
+      deductionRowsHtml+prevHtml+
       '<h3 style="font-size:12.5px;">Bond Summary</h3>'+summaryHtml+
       '<div class="actions-row">'+
       '<button class="mini-btn'+(stale ? '' : ' primary')+'" onclick="confirmApproveMoveOutSettlement(\''+settlement.id+'\')">Approve Deduction & Finalise Bond</button>'+
