@@ -10,7 +10,7 @@ import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './li
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
 import * as propertyService from './services/propertyService.js?v=5';
 import * as roomService from './services/roomService.js?v=4';
-import * as tenantService from './services/tenantService.js?v=13';
+import * as tenantService from './services/tenantService.js?v=14';
 import * as bondService from './services/bondService.js?v=5';
 import * as rentScheduleService from './services/rentScheduleService.js';
 import * as paymentService from './services/paymentService.js?v=2';
@@ -17875,8 +17875,29 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var chk = (t && t.roomItemsCheck) || {};
     return ((room && room.items) || []).map(function(x){
       var c = chk[x.id] || {};
-      return { id:x.id, name:x.name, qty:x.qty || 1, delivered:c.d || null, returned:c.r || null };
+      return { id:x.id, name:x.name, qty:x.qty || 1, delivered:c.d || null, returned:c.r || null, note:c.n || '', noteDate:c.na || null, reviewed:c.v || null };
     });
+  }
+  var roomItemNoteEditing = null; // item id whose observation the tenant is writing right now
+  function roomItemNoteHtml(t, x, editable){
+    var staff = isStaff();
+    if (!staff && roomItemNoteEditing === x.id){
+      return '<div class="ri-note-form"><textarea id="ri-note-input" rows="3" maxlength="400" placeholder="Describe what you noticed — e.g. a stain, something broken or missing.">'+esc(x.note)+'</textarea>'+
+        '<div class="ri-note-actions"><button type="button" class="mini-btn primary" onclick="saveRoomItemNote(\''+x.id+'\')">Send to administrator</button>'+
+        '<button type="button" class="mini-btn" onclick="cancelRoomItemNote()">Cancel</button></div>'+
+        '<p class="ri-hint" style="margin:6px 0 0;">Your administrator will review it.</p></div>';
+    }
+    if (x.note){
+      var status = x.reviewed
+        ? '<span class="ri-review done">✓ Reviewed by admin '+shortDate(x.reviewed)+'</span>'
+        : '<span class="ri-review wait">⏳ Waiting for admin review</span>';
+      var act = staff
+        ? (editable ? '<button type="button" class="mini-btn" onclick="reviewRoomItemNote(\''+t.id+'\',\''+x.id+'\')">'+(x.reviewed ? 'Mark as not reviewed' : 'Mark as reviewed')+'</button>' : '')
+        : '<button type="button" class="text-link" onclick="openRoomItemNote(\''+x.id+'\')">Edit observation</button>';
+      return '<div class="ri-note'+(x.reviewed ? '' : ' pending')+'"><div class="ri-note-text">💬 '+esc(x.note)+'</div>'+
+        '<div class="ri-note-foot">'+status+(x.noteDate ? '<span class="ri-check-date">'+(staff ? 'Tenant · ' : '')+shortDate(x.noteDate)+'</span>' : '')+act+'</div></div>';
+    }
+    return staff ? '' : '<button type="button" class="text-link ri-add-note" onclick="openRoomItemNote(\''+x.id+'\')">Add an observation</button>';
   }
   function roomItemsCardHtml(t){
     if (!t) return '';
@@ -17889,6 +17910,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '<button type="button" class="mini-btn primary" onclick="openRoomModal(\''+(r0 ? r0.propertyId : t.propertyId)+'\',\''+t.roomId+'\')">Set up room items</button></div>';
     }
     var nd = items.filter(function(x){ return x.delivered; }).length, nr = items.filter(function(x){ return x.returned; }).length;
+    var toReview = items.filter(function(x){ return x.note && !x.reviewed; }).length;
     var leaving = !!(t.actualMoveOutDate || t.expectedMoveOutDate);
     var rows = items.map(function(x){
       var dBtn, rBtn;
@@ -17900,16 +17922,49 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         rBtn = (x.returned ? '<span class="ri-state on">✓ Returned</span>' : '');
       }
       var dates = (x.delivered ? 'Delivered '+shortDate(x.delivered) : '') + (x.returned ? ' · Returned '+shortDate(x.returned) : '');
-      return '<div class="ri-check-row"><div class="ri-check-main"><span class="ri-check-name">'+esc(x.name)+(x.qty > 1 ? ' <i>×'+x.qty+'</i>' : '')+'</span>'+
-        (dates && editable ? '<span class="ri-check-date">'+dates+'</span>' : '')+'</div><div class="ri-check-btns">'+dBtn+rBtn+'</div></div>';
+      return '<div class="ri-item"><div class="ri-check-row"><div class="ri-check-main"><span class="ri-check-name">'+esc(x.name)+(x.qty > 1 ? ' <i>×'+x.qty+'</i>' : '')+'</span>'+
+        (dates && editable ? '<span class="ri-check-date">'+dates+'</span>' : '')+'</div><div class="ri-check-btns">'+dBtn+rBtn+'</div></div>'+
+        roomItemNoteHtml(t, x, editable)+'</div>';
     }).join('');
     var summary = nd+' of '+items.length+' delivered'+(nr ? ' · '+nr+' returned' : '');
     var allBtns = editable ? '<div class="ri-bulk"><button type="button" class="mini-btn" onclick="markAllRoomItems(\''+t.id+'\',\'d\')">Mark all delivered</button>'+
       '<button type="button" class="mini-btn" onclick="markAllRoomItems(\''+t.id+'\',\'r\')">Mark all returned</button></div>' : '';
-    var note = staff ? '' : '<p class="ri-hint" style="margin:0 0 10px;">Your administrator ticks each item when it is handed to you. Please return everything in the same condition when you leave'+(leaving ? '.' : ' — the list comes back here for the check-out.')+'</p>';
+    var note = staff ? '' : '<p class="ri-hint" style="margin:0 0 10px;">Your administrator ticks each item when it is handed to you. If something is not right — a stain, damage, something missing — add an observation on that item; your administrator always reviews it. Please return everything in the same condition when you leave'+(leaving ? '.' : ' — the list comes back here for the check-out.')+'</p>';
     return '<div class="card ri-card"><div class="detail-head" style="margin-top:0;align-items:center;"><h2 style="margin:0;">'+(staff ? 'Room items' : 'Items in your room')+'</h2>'+
-      '<span class="ri-sum'+(nd === items.length ? ' ok' : '')+'">'+summary+'</span></div>'+note+rows+allBtns+'</div>';
+      '<span class="ri-sum'+(nd === items.length ? ' ok' : '')+'">'+summary+'</span></div>'+
+      (staff && toReview ? '<p class="ri-review-banner">💬 '+toReview+' observation'+(toReview === 1 ? '' : 's')+' from the tenant to review</p>' : '')+
+      note+rows+allBtns+'</div>';
   }
+  window.openRoomItemNote = function(itemId){
+    roomItemNoteEditing = itemId; renderPreservingScroll();
+    setTimeout(function(){ var ta = document.getElementById('ri-note-input'); if (ta){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }, 30);
+  };
+  window.cancelRoomItemNote = function(){ roomItemNoteEditing = null; renderPreservingScroll(); };
+  window.saveRoomItemNote = async function(itemId){
+    var t = myTenantRecord(); var ta = document.getElementById('ri-note-input'); if (!t || !ta) return;
+    var text = ta.value.trim();
+    try {
+      await tenantService.setOwnRoomItemNote(itemId, text);
+      var check = JSON.parse(JSON.stringify(t.roomItemsCheck || {}));
+      var c = check[itemId] || {};
+      if (text){ c.n = text.slice(0, 400); c.na = TODAY; delete c.v; } else { delete c.n; delete c.na; delete c.v; }
+      check[itemId] = c; t.roomItemsCheck = check;
+      roomItemNoteEditing = null;
+      showToast(text ? 'Sent — your administrator will review it.' : 'Observation removed.', 'success');
+      renderPreservingScroll();
+    } catch(err){
+      showToast('Could not send it. ' + friendlyErrorMessage(err), 'error');
+    }
+  };
+  /** Staff: mark a tenant's observation as reviewed (or back to pending). */
+  window.reviewRoomItemNote = function(tenantId, itemId){
+    var t = tenantOf(tenantId); if (!t || !isStaff() || isViewer()) return;
+    var check = JSON.parse(JSON.stringify(t.roomItemsCheck || {}));
+    var c = check[itemId]; if (!c || !c.n) return;
+    if (c.v) delete c.v; else c.v = TODAY;
+    check[itemId] = c;
+    saveRoomItemsCheck(t, check);
+  };
   async function saveRoomItemsCheck(t, check){
     try {
       var saved = await tenantService.setRoomItemsCheck(t.id, check);
@@ -21476,7 +21531,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     [/^import|bank statement/, 'bank'], [/csv/, 'upload'],
     [/^submit photos/, 'camera'],
     [/^(steps|room ad)/, 'doc'],
-    [/^mark all/, 'check'], [/^set up room items/, 'plus'], [/^use starter set/, 'sparkle'],
+    [/^mark all/, 'check'], [/^mark as (not )?reviewed/, 'check'], [/^send to administrator/, 'send'], [/^set up room items/, 'plus'], [/^use starter set/, 'sparkle'],
     [/^share evidence/, 'doc'], [/^select all/, 'check'], [/^select$/, 'list'], [/^done$/, 'check'],
     [/attach|receipt|my transfer|^add document/, 'attach'],
     [/view as tenant|^switch tenant/, 'user'],

@@ -148,3 +148,10 @@ export async function setRoomItemsCheck(id, check) {
   if (error) throw error;
   return fromRow(data);
 }
+
+// Tenant: leave (or clear, with an empty note) an observation about one item of their room. The
+// administrator always has to review it (SECURITY DEFINER RPC — tenants can't update `tenants`).
+export async function setOwnRoomItemNote(itemId, note) {
+  const { error } = await supabase.rpc('set_own_room_item_note', { p_item_id: itemId, p_note: note || '' });
+  if (error) throw error;
+}
