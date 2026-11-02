@@ -86,15 +86,18 @@ function toRow(p) {
   };
 }
 
-// Columns safe to hand to a tenant session: never the landlord's own lease/bank/bpay details with
-// the real estate agent — a tenant should never see what's paid to the real estate, or how.
-const TENANT_SAFE_COLUMNS = 'id, name, address, bedrooms, bathrooms, notes, whatsapp_group_link, wifi_ssid, wifi_password, wifi_notes, has_parking, parking_cost, parking_tenant_id, inventory, created_at';
-
-/** `restricted: true` (pass for a tenant session) fetches only tenant-safe columns from the
- *  server itself — not just hiding them in the UI — so the real-estate lease/bpay/bank fields
- *  never reach a tenant's browser at all. */
+/** `restricted: true` (pass for a tenant session) reads through the SECURITY DEFINER function
+ *  my_properties(), which returns only the tenant-safe columns of the tenant's own property. The
+ *  properties table itself is closed to tenants in the database (20261102b_properties_staff_only.sql),
+ *  so the real-estate lease / BPAY / bank details can never reach a tenant — not even by calling
+ *  the API directly. */
 export async function getAll(restricted) {
-  const { data, error } = await supabase.from('properties').select(restricted ? TENANT_SAFE_COLUMNS : '*').order('created_at', { ascending: true });
+  if (restricted) {
+    const { data, error } = await supabase.rpc('my_properties');
+    if (error) throw error;
+    return (data || []).map(fromRow);
+  }
+  const { data, error } = await supabase.from('properties').select('*').order('created_at', { ascending: true });
   if (error) throw error;
   return data.map(fromRow);
 }

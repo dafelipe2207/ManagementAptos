@@ -8,7 +8,7 @@ import { friendlyErrorMessage } from './lib/errors.js?v=2';
 import { supabase as realtimeClient, setViewOnly, VIEW_ONLY_MESSAGE } from './lib/supabaseClient.js';
   // Last time this device wrote to the database (set by lib/supabaseClient.js; 0 if unknown).
   function getLastLocalWriteAt(){ return realtimeClient.__lastLocalWriteAt || 0; }
-import * as propertyService from './services/propertyService.js?v=6';
+import * as propertyService from './services/propertyService.js?v=7';
 import * as roomService from './services/roomService.js?v=4';
 import * as tenantService from './services/tenantService.js?v=14';
 import * as bondService from './services/bondService.js?v=5';
