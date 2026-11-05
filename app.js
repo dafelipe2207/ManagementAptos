@@ -1490,11 +1490,41 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   /** iOS segmented control. items: [[value,label],…]; fn: name of a window function taking the value. */
   function segHtml(items, active, fn){
-    return '<div class="seg seg-wide" role="tablist">'+items.map(function(t){
+    return '<div class="seg seg-wide has-glider" role="tablist" data-seg="'+fn+'"><span class="seg-glider" aria-hidden="true"></span>'+items.map(function(t){
       var on = String(active)===String(t[0]);
       return '<button type="button" role="tab" aria-selected="'+on+'" class="seg-btn'+(on?' active':'')+'" onclick="'+fn+'(\''+t[0]+'\')">'+t[1]+'</button>';
     }).join('')+'</div>';
   }
+  /** Segmented controls: a frosted "glider" slides from the option that was selected to the new
+   *  one (the page re-renders on every tap, so the last position is remembered per control), and
+   *  the content under a control marked .seg-panel slides in from the side the tap went to. */
+  var segLast = {};
+  function placeSegGliders(animate){
+    document.querySelectorAll('.seg.has-glider[data-seg]').forEach(function(seg){
+      var g = seg.querySelector('.seg-glider'), btns = seg.querySelectorAll('.seg-btn');
+      var on = seg.querySelector('.seg-btn.active'); if (!g) return;
+      if (!on){ g.style.opacity = '0'; return; }
+      var key = seg.getAttribute('data-seg'), idx = Array.prototype.indexOf.call(btns, on);
+      var now = { x: on.offsetLeft, w: on.offsetWidth, i: idx }, prev = segLast[key];
+      var moved = animate && prev && (prev.x !== now.x || prev.w !== now.w);
+      g.style.transition = 'none';
+      g.style.opacity = '1';
+      g.style.width = (moved ? prev.w : now.w) + 'px';
+      g.style.transform = 'translateX(' + (moved ? prev.x : now.x) + 'px)';
+      if (moved){
+        void g.offsetWidth; // commit the start position before sliding
+        g.style.transition = '';
+        g.style.width = now.w + 'px';
+        g.style.transform = 'translateX(' + now.x + 'px)';
+        if (prev.i !== now.i){
+          var panel = seg.parentNode && seg.parentNode.querySelector('.seg-panel[data-seg-for="'+key+'"]');
+          if (panel) panel.classList.add(now.i > prev.i ? 'seg-in-right' : 'seg-in-left');
+        }
+      }
+      segLast[key] = now;
+    });
+  }
+  window.addEventListener('resize', function(){ placeSegGliders(false); });
   /** Pill dropdown. optionsHtml are ready <option>s; onchange is JS using this.value. */
   function pillSelectHtml(icon, aria, optionsHtml, onchange, id){
     return '<label class="pill-select">'+(icon?'<span aria-hidden="true">'+icon+'</span>':'')+
@@ -6356,7 +6386,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         '<button type="button" class="text-link" onclick="setPaymentsTenantStatusFilter(\'moved_out\')">View moved-out tenants</button></div>'
       : '';
     // Payments has 4 dropdowns + sort: switch on its own line, dropdowns on the next (sort pinned right).
-    return chipsHtml + filterBarHtml('', tenantFilterHtml) + staffRentReportsHtml() + statHtml + owingNote + rows;
+    return chipsHtml + filterBarHtml('', tenantFilterHtml) + staffRentReportsHtml() + statHtml + owingNote + '<div class="seg-panel" data-seg-for="setPaymentsFilter">' + rows + '</div>';
   }
 
   function renderPayments(){
@@ -9438,14 +9468,22 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     var tab = normBillsFilter(billsFilter);
     billsTenantTabs = billsTenantTabs.filter(function(id){ return !!tenantOf(id); });
     if (tab.indexOf('tenant:') === 0 && billsTenantTabs.indexOf(tab.slice(7)) === -1) tab = billsFilter = 'tenants';
-    var chipsHtml = '<div class="filter-chips">' + BILLS_FILTERS.map(function(f){
-      return '<button class="chip'+(tab===f[0]?' active':'')+'" onclick="setBillsFilter(\''+f[0]+'\')">'+f[1]+'</button>';
-    }).join('') + billsTenantTabs.map(function(id){
-      var t = tenantOf(id);
-      return '<span class="chip tenant-tab'+(tab==='tenant:'+id?' active':'')+'">'+
-        '<button type="button" onclick="setBillsFilter(\'tenant:'+id+'\')">👤 '+esc(tenantFirstName(t.fullName))+'</button>'+
-        '<button type="button" class="tt-x" aria-label="Close '+esc(t.fullName)+'" title="Close" onclick="closeBillsTenantTab(\''+id+'\')">✕</button></span>';
-    }).join('') + '</div>';
+    // One sliding segmented control (same as Payments). A tenant opened from "By tenant" shows
+    // inside that segment — "👤 Delfina ✕" — and ✕ goes back to the list of tenants.
+    var openTenant = tab.indexOf('tenant:') === 0 ? tenantOf(tab.slice(7)) : null;
+    var collectN = propertyScoped.filter(function(b){ return billMatchesFilter(b, 'collect'); }).length;
+    var BILLS_SEG_ICONS = { collect:'coins', history:'history', tenants:'tenants' };
+    var chipsHtml = '<div class="seg seg-wide has-glider bills-seg" role="tablist" data-seg="setBillsFilter"><span class="seg-glider" aria-hidden="true"></span>' +
+      BILLS_FILTERS.map(function(f){
+        var on = tab === f[0] || (f[0] === 'tenants' && !!openTenant);
+        var label = f[1], count = f[0] === 'collect' && collectN ? '<span class="seg-count">'+collectN+'</span>' : '';
+        if (f[0] === 'tenants' && openTenant){
+          label = '<span class="seg-tenant-name">'+esc(tenantFirstName(openTenant.fullName))+'</span>'+
+            '<span class="seg-x" role="button" aria-label="Back to all tenants" title="Back to all tenants" onclick="event.stopPropagation();closeBillsTenantTab(\''+openTenant.id+'\')">✕</span>';
+        }
+        return '<button type="button" role="tab" aria-selected="'+on+'" class="seg-btn'+(on?' active':'')+'" onclick="setBillsFilter(\''+(f[0] === 'tenants' && openTenant ? 'tenant:'+openTenant.id : f[0])+'\')">'+
+          svg(BILLS_SEG_ICONS[f[0]], 'class="seg-ic" aria-hidden="true"')+'<span class="seg-label">'+label+'</span>'+count+'</button>';
+      }).join('') + '</div>';
 
     var filtered = sortBillsList(propertyScoped.filter(function(b){ return billMatchesFilter(b, tab); }));
     var rows = tab.indexOf('tenant:') === 0 ? billsTenantDetailHtml(tab.slice(7))
@@ -9472,7 +9510,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
       '<div id="bills-list-anchor" style="scroll-margin-top:72px;"></div>'+
       billsSelectionHtml()+
       billsMissingAlertHtml() +
-      importQueueCard() + statHtml + chipsHtml + rows;
+      importQueueCard() + statHtml + chipsHtml + '<div class="seg-panel" data-seg-for="setBillsFilter">' + rows + '</div>';
   }
 
   /* ============ "Missing invoices" tab — local calculation based on the average of past invoices ============
@@ -19144,6 +19182,7 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
     else html = (ROUTES[hash] || ROUTES['#/'])();
     content.innerHTML = html;
     if (hash === '#/view-as' && viewAsSearch) viewAsFilter(viewAsSearch);
+    placeSegGliders(true);
     compactAddButtons();
     setActiveNav(hash);
     updateNotifNavBadge();
