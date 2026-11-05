@@ -10760,13 +10760,15 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
         :
         // Phone: the share sheet sends the image itself (WhatsApp Business → pick the tenant).
         // Opening the chat and pasting didn't work reliably on iPhone — the image never arrived.
-        (touch && st.chatUrl && st.imageBlob && navigator.clipboard && window.ClipboardItem
-          ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Copy image &amp; open '+esc(who1)+'\'s chat</span></button>'+
-            '<p class="send-howto">It copies the image and opens <b>'+esc(who1)+'</b>\'s chat in <b>WhatsApp Business</b> → touch and hold the message box → <b>Paste</b> → send.</p>'+
-            (canShare1 ? '<button type="button" class="send-alt-btn" onclick="groupSendShare(this)">Or share the image instead (pick the chat yourself)</button>' : '')
-        : touch && canShare1
+        // Phone: the share sheet hands WhatsApp the actual image file (works every time). Copy +
+        // paste stays only as a fallback — on iPhone WhatsApp often doesn't offer "Paste" for it.
+        (touch && canShare1
           ? '<button type="button" class="wa-send-one" onclick="groupSendShare(this)">'+WA_ICON+'<span>Send image to '+esc(who1)+'</span></button>'+
-            '<p class="send-howto">Tap it → <b>WhatsApp Business</b> → pick <b>'+esc(who1)+'</b> → send.</p>'
+            '<p class="send-howto">Tap it → <b>WhatsApp Business</b> → pick <b>'+esc(who1)+'</b> → send.</p>'+
+            (st.chatUrl && st.imageBlob && navigator.clipboard && window.ClipboardItem ? '<button type="button" class="send-alt-btn" onclick="groupSendToTenant(this)">Or copy the image and open '+esc(who1)+'\'s chat</button>' : '')
+        : touch && st.chatUrl && st.imageBlob && navigator.clipboard && window.ClipboardItem
+          ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Copy image &amp; open '+esc(who1)+'\'s chat</span></button>'+
+            '<p class="send-howto">It copies the image and opens <b>'+esc(who1)+'</b>\'s chat in <b>WhatsApp Business</b> → touch and hold the message box → <b>Paste</b> → send.</p>'
         : st.chatUrl
           ? '<button type="button" class="wa-send-one" onclick="groupSendToTenant(this)">'+WA_ICON+'<span>Send to '+esc(who1)+' on WhatsApp</span></button>'+
             '<p class="send-howto">Opens '+esc(who1)+'\'s chat with the image copied'+(st.message && st.chatUrl.indexOf('?text=') > -1 ? ' and the link to the bills already typed' : '')+' — '+(touch ? 'touch and hold in the message box → <b>Paste</b>' : 'press <b>Ctrl+V</b>')+', then send.</p>'
