@@ -3222,3 +3222,6 @@ details.rules-edit-section[open] > .res-sum{background:color-mix(in srgb, var(--
 .seg.has-glider .seg-count{flex-shrink:0;margin-left:0;}
 .seg.seg-wide.bills-seg .seg-btn{flex:1 1 auto;}
 @media (max-width:640px){ .seg.seg-wide.bills-seg .seg-btn:not(.active) .seg-count{display:none;} }
+.bt-inactive-tag{display:inline-block;margin-left:6px;padding:0 7px;border-radius:9px;font-size:11px;font-weight:600;line-height:17px;
+  background:rgba(120,120,128,.16);color:var(--text-dim);vertical-align:1px;}
+.bt-inactive-toggle{display:block;margin:8px auto 2px;font-size:13px;}

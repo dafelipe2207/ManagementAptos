@@ -9404,22 +9404,35 @@ import * as tenantInvoice from './lib/tenantInvoice.js?v=2';
   }
   /** "By tenant" tab: one row per tenant (who owes first, biggest first; then by name). Tapping a
    *  row opens that tenant in their own tab (billsTenantDetailHtml). */
+  /** Inactive (moved-out) tenants who are all paid stay hidden in "By tenant" until asked for. */
+  var billsShowInactiveTenants = false;
+  window.toggleBillsInactiveTenants = function(){ billsShowInactiveTenants = !billsShowInactiveTenants; renderPreservingScroll(); };
   function billsByTenantHtml(scopedBills){
-    var rows = billSharesByTenant(scopedBills).sort(function(a, b){
+    // Active tenants only. An inactive one still shows while they owe money (tagged "moved out");
+    // inactive tenants with nothing owing are behind "Show N inactive tenants".
+    var all = billSharesByTenant(scopedBills);
+    var isInactive = function(r){ return !!(r.tenant && r.tenant.isActive === false); };
+    var hiddenInactive = all.filter(function(r){ return isInactive(r) && r.owed <= 0.004; });
+    var rows = all.filter(function(r){ return billsShowInactiveTenants || !isInactive(r) || r.owed > 0.004; }).sort(function(a, b){
       if ((a.owed > 0.004) !== (b.owed > 0.004)) return a.owed > 0.004 ? -1 : 1;
       if (a.owed !== b.owed) return b.owed - a.owed;
       return (a.tenant ? a.tenant.fullName : '').localeCompare(b.tenant ? b.tenant.fullName : '');
     });
-    if (!rows.length) return emptyState('receipt', 'No tenant shares yet', 'Split a bill among the tenants and it shows up here, per tenant.', '');
+    if (!rows.length && !hiddenInactive.length) return emptyState('receipt', 'No tenant shares yet', 'Split a bill among the tenants and it shows up here, per tenant.', '');
     var body = rows.map(function(r){
       var prop = r.tenant ? properties.find(function(p){ return p.id === r.tenant.propertyId; }) : null;
       return '<button type="button" class="field-row bt-tenant-row" onclick="openBillsTenantTab(\'' + r.id + '\')">' +
         '<span class="k">' + esc(r.tenant ? r.tenant.fullName : 'Unknown tenant') +
-        (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· ' + esc(prop.name) + '</span>' : '') + '</span>' +
+        (prop ? ' <span style="color:var(--text-faint);font-weight:400;">· ' + esc(prop.name) + '</span>' : '') +
+        (isInactive(r) ? ' <span class="bt-inactive-tag">moved out</span>' : '') + '</span>' +
         '<span class="v">' + owedPaidHtml(r) + ' <span aria-hidden="true" class="bt-go">›</span></span></button>';
     }).join('');
     var owedTotal = rows.reduce(function(s, r){ return s + r.owed; }, 0);
-    return '<div class="card"><div class="field-list">' + body + '</div>' +
+    var inactiveToggle = hiddenInactive.length
+      ? '<button type="button" class="text-link bt-inactive-toggle" onclick="toggleBillsInactiveTenants()">' +
+          (billsShowInactiveTenants ? 'Hide inactive tenants' : 'Show ' + hiddenInactive.length + ' inactive tenant' + (hiddenInactive.length === 1 ? '' : 's') + ' (all paid)') + '</button>'
+      : '';
+    return '<div class="card"><div class="field-list">' + body + '</div>' + inactiveToggle +
       '<div class="field-row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">' +
       '<span class="k" style="font-weight:600;">Still owed by tenants</span><span class="v" style="font-weight:600;">' + money(owedTotal) + '</span></div></div>';
   }
